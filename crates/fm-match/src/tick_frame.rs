@@ -125,7 +125,7 @@ impl TickFrame {
                 self.phase(p.side),
                 team.tactics,
                 state.frame(p.side),
-                &state.tuning,
+                &state.tuning.anchor,
             );
         }
     }

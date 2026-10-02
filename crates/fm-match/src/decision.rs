@@ -27,21 +27,6 @@ pub enum Action {
     },
 }
 
-/// Distance at which an opponent counts as pressing the carrier.
-pub const PRESSURE_RADIUS: f32 = 2.5;
-/// Distance from which a tackle can be attempted.
-pub const TACKLE_RANGE: f32 = 1.8;
-/// A carrier needs this many ticks on the ball before releasing it, unless
-/// pressed (first touch + look up ≈ 0.4 s).
-pub const MIN_HOLD_TICKS: u32 = 4;
-/// Keepers take longer to distribute (≈ 1.5 s).
-pub const KEEPER_HOLD_TICKS: u32 = 15;
-/// Maximum shooting distance considered (m).
-pub const SHOOT_RANGE: f32 = 25.0;
-/// Minimum shot score to pull the trigger (≈ inside 15 m for an average
-/// finisher, central).
-pub const SHOOT_THRESHOLD: f32 = 0.60;
-
 pub struct DecisionSystem;
 
 /// Shortest distance from `p` to the segment `a`→`b`.
@@ -59,6 +44,7 @@ impl DecisionSystem {
     /// What the carrier `me` does this tick. Call only for the ball holder.
     #[must_use]
     pub fn choose_action(state: &MatchState, frame: &TickFrame, me: usize) -> Action {
+        let t = &state.tuning.decision;
         let p = &state.players[me];
         let my_pos = frame.pos(me);
         let goal = state.attacking(p.side).goal_centre();
@@ -71,11 +57,11 @@ impl DecisionSystem {
             .filter(|(_, o)| o.side != p.side && o.active())
             .map(|(j, _)| frame.pos(j).distance(my_pos))
             .fold(f32::MAX, f32::min);
-        let pressed = nearest_opp < PRESSURE_RADIUS;
+        let pressed = nearest_opp < t.pressure_radius;
         let min_hold = if p.role == Role::Goalkeeper {
-            KEEPER_HOLD_TICKS
+            t.keeper_hold_ticks
         } else {
-            MIN_HOLD_TICKS
+            t.min_hold_ticks
         };
         if state.holder_ticks < min_hold && !pressed {
             return Action::Hold;
@@ -86,7 +72,9 @@ impl DecisionSystem {
         let (best_pass, best_to) = Self::best_pass(state, frame, me, my_pos, forward);
         let dribble_score = Self::dribble_score(state, frame, me, my_pos, forward, dist_goal);
 
-        if shoot_score > SHOOT_THRESHOLD && shoot_score >= best_pass && shoot_score >= dribble_score
+        if shoot_score > t.shoot_threshold
+            && shoot_score >= best_pass
+            && shoot_score >= dribble_score
         {
             return Action::Shoot;
         }
@@ -97,7 +85,7 @@ impl DecisionSystem {
         }
         if dribble_score > f32::MIN {
             let target = Vec2::new(
-                (my_pos.x + forward * 5.0).clamp(1.0, pitch::LENGTH - 1.0),
+                (my_pos.x + forward * t.dribble_step).clamp(1.0, pitch::LENGTH - 1.0),
                 // Drift slightly toward the goal's centre line.
                 my_pos.y + (goal.y - my_pos.y).clamp(-1.0, 1.0),
             );
@@ -116,17 +104,19 @@ impl DecisionSystem {
         my_pos: Vec2,
         goal: Vec2,
     ) -> f32 {
+        let t = &state.tuning.decision;
         let p = &state.players[me];
         let dist_goal = my_pos.distance(goal);
-        if dist_goal >= SHOOT_RANGE || p.role == Role::Goalkeeper {
+        if dist_goal >= t.shoot_range || p.role == Role::Goalkeeper {
             return 0.0;
         }
-        let skill = if dist_goal > 20.0 {
+        let skill = if dist_goal > t.long_shot_dist {
             f32::from(p.attrs.technical.long_shots)
         } else {
             f32::from(p.attrs.technical.finishing)
         } / 100.0;
-        let central = (1.0 - (my_pos.y - pitch::HALF_WIDTH).abs() / 30.0).clamp(0.2, 1.0);
+        let central = (1.0 - (my_pos.y - pitch::HALF_WIDTH).abs() / t.central_width)
+            .clamp(t.central_min, 1.0);
         // Bodies in the shooting lane (outfield only) block most shots.
         let lane = state
             .players
@@ -135,8 +125,16 @@ impl DecisionSystem {
             .filter(|(_, o)| o.side != p.side && o.active() && o.role != Role::Goalkeeper)
             .map(|(j, _)| dist_to_segment(frame.pos(j), my_pos, goal))
             .fold(f32::MAX, f32::min);
-        let blocked = if lane < 1.0 { 0.3 } else { 1.0 };
-        (0.25 + 0.75 * skill) * (1.0 - dist_goal / SHOOT_RANGE) * central * blocked * 2.2
+        let blocked = if lane < t.shot_block_dist {
+            t.shot_blocked_factor
+        } else {
+            1.0
+        };
+        (t.shoot_base + t.shoot_skill * skill)
+            * (1.0 - dist_goal / t.shoot_range)
+            * central
+            * blocked
+            * t.shoot_gain
     }
 
     /// Best pass target and its score: progress toward goal, open lane, not
@@ -148,6 +146,7 @@ impl DecisionSystem {
         my_pos: Vec2,
         forward: f32,
     ) -> (f32, Option<u8>) {
+        let k = &state.tuning.decision;
         let p = &state.players[me];
         let mut best_pass = f32::MIN;
         let mut best_to = None;
@@ -157,7 +156,7 @@ impl DecisionSystem {
             }
             let tp = frame.pos(i);
             let d = my_pos.distance(tp);
-            if !(4.0..=45.0).contains(&d) {
+            if !(k.pass_min_dist..=k.pass_max_dist).contains(&d) {
                 continue;
             }
             let progress = (tp.x - my_pos.x) * forward;
@@ -167,14 +166,16 @@ impl DecisionSystem {
                 .enumerate()
                 .filter(|(_, o)| o.side != p.side && o.active())
                 .map(|(j, _)| dist_to_segment(frame.pos(j), my_pos, tp))
-                .fold(6.0_f32, f32::min);
-            let mut score = 0.4 + progress / 40.0 + openness / 10.0 - d / 80.0;
+                .fold(k.pass_lane_cap, f32::min);
+            let mut score =
+                k.pass_base + progress / k.pass_progress_div + openness / k.pass_open_div
+                    - d / k.pass_len_div;
             // Lanes narrower than ~2.5 m tend to get cut out.
-            if openness < 2.5 {
-                score -= (2.5 - openness) * 0.25;
+            if openness < k.pass_narrow_lane {
+                score -= (k.pass_narrow_lane - openness) * k.pass_narrow_penalty;
             }
             if t.role == Role::Goalkeeper {
-                score -= 0.3;
+                score -= k.pass_to_keeper_penalty;
             }
             // Strict `>` keeps the lowest index on ties: deterministic.
             if score > best_pass {
@@ -194,11 +195,12 @@ impl DecisionSystem {
         forward: f32,
         dist_goal: f32,
     ) -> f32 {
+        let t = &state.tuning.decision;
         let p = &state.players[me];
         if p.role == Role::Goalkeeper {
             return f32::MIN;
         }
-        let ahead = Vec2::new(my_pos.x + forward * 6.0, my_pos.y);
+        let ahead = Vec2::new(my_pos.x + forward * t.dribble_probe_ahead, my_pos.y);
         let space = state
             .players
             .iter()
@@ -209,13 +211,21 @@ impl DecisionSystem {
         // Long carries are rare: the value of dribbling decays after ~2.5 s
         // on the ball, pushing the carrier to release it.
         #[allow(clippy::cast_precision_loss)] // ticks on the ball ≪ 2^23
-        let carry_decay = (1.0 - (state.holder_ticks.saturating_sub(25) as f32) / 30.0).max(0.0);
+        let carry_decay = (1.0
+            - (state.holder_ticks.saturating_sub(t.carry_decay_start) as f32) / t.carry_decay_span)
+            .max(0.0);
         // Near goal, running into a packed box rarely beats a pass.
-        let near_goal = if dist_goal < 22.0 { 0.5 } else { 1.0 };
-        if space > 5.0 {
-            (0.55 + space.min(20.0) / 40.0) * carry_decay * near_goal
+        let near_goal = if dist_goal < t.near_goal_dist {
+            t.near_goal_factor
         } else {
-            0.15 * carry_decay * near_goal
+            1.0
+        };
+        if space > t.dribble_space_min {
+            (t.dribble_base + space.min(t.dribble_space_cap) / t.dribble_space_div)
+                * carry_decay
+                * near_goal
+        } else {
+            t.dribble_cramped * carry_decay * near_goal
         }
     }
 

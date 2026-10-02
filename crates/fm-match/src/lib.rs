@@ -20,6 +20,7 @@ pub mod snapshot;
 pub mod state;
 pub mod tactics;
 pub mod tick_frame;
+pub mod tuning;
 
 pub use anchor::{AnchorTuning, FormationAnchor, PhaseShape};
 pub use ball::BallFlight;
@@ -36,3 +37,4 @@ pub use snapshot::{LodLevel, MatchSnapshot, PlayerSnapshot};
 pub use state::MatchState;
 pub use tactics::{LineHeight, Mentality, Tactics, Width};
 pub use tick_frame::TickFrame;
+pub use tuning::TuningParams;

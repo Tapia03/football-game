@@ -6,32 +6,12 @@
 use fm_core::{pitch, Rng, Vec2, Vec3};
 
 use crate::ball::BallFlight;
-use crate::decision::{Action, PRESSURE_RADIUS};
+use crate::decision::Action;
 use crate::events::{CardKind, EventKind, MatchEvent, RestartKind};
 use crate::formation::Role;
 use crate::phase::Side;
 use crate::state::{BallState, FlightIntent, MatchState, ShotOutcome, PLAYERS};
 use crate::tick_frame::TickFrame;
-
-/// Radius within which a player can play a loose ball at foot height (m).
-pub const CONTROL_RADIUS: f32 = 1.2;
-/// The intended receiver of a pass is set for it and reaches further.
-pub const RECEIVER_RADIUS: f32 = 1.5;
-/// A player cutting across someone else's pass has to react: shorter reach.
-pub const INTERCEPT_RADIUS: f32 = 0.9;
-/// Keepers reach further and higher inside their own box.
-pub const KEEPER_REACH: f32 = 2.2;
-/// Speed a ground pass should still have when it reaches the receiver (m/s).
-pub const PASS_ARRIVAL_SPEED: f32 = 8.0;
-/// After any challenge, the whole team waits this long before the next one
-/// (~7 s): real teams make ~30-40 tackles a match, not a continuous scrum.
-pub const TEAM_TACKLE_GAP: u32 = 70;
-/// Ticks a kicker must wait before touching the ball again.
-const RETOUCH_TICKS: u32 = 5;
-/// Ticks a tackler waits after any attempt (recovery, ~2.5 s); longer if
-/// beaten (~4 s). Real teams attempt ~20-40 tackles per match.
-const TACKLE_COOLDOWN: u32 = 25;
-const BEATEN_COOLDOWN: u32 = 40;
 
 #[inline]
 fn unit(v: u8) -> f32 {
@@ -70,9 +50,11 @@ impl ActionResolver {
     fn pressure_on(state: &MatchState, frame: &TickFrame, actor: usize) -> f32 {
         let me = &state.players[actor];
         let pos = frame.pos(actor);
-        let close = state.players.iter().enumerate().any(|(j, o)| {
-            o.side != me.side && o.active() && frame.pos(j).distance(pos) < PRESSURE_RADIUS
-        });
+        let radius = state.tuning.decision.pressure_radius;
+        let close =
+            state.players.iter().enumerate().any(|(j, o)| {
+                o.side != me.side && o.active() && frame.pos(j).distance(pos) < radius
+            });
         if close {
             1.0
         } else {
@@ -94,7 +76,7 @@ impl ActionResolver {
             intent,
         };
         state.last_touch = state.players[actor].side;
-        state.players[actor].touch_ready_tick = state.tick + RETOUCH_TICKS;
+        state.players[actor].touch_ready_tick = state.tick + state.tuning.control.retouch_ticks;
         state.holder_ticks = 0;
     }
 
@@ -102,6 +84,7 @@ impl ActionResolver {
     /// distribution); error grows with pressure and distance.
     pub fn resolve_pass(state: &mut MatchState, frame: &TickFrame, actor: usize, to: usize) {
         let mut rng = state.next_rng(actor);
+        let k = state.tuning.pass;
         let p = state.players[actor];
         let from = frame.ball(state).xy();
         let target = frame.pos(to);
@@ -116,19 +99,19 @@ impl ActionResolver {
         let d = from.distance(target);
         // Rationale: elite passers miss by ~2-3°, poor ones by ~12°, more
         // when pressed; length error up to ±15% for the worst.
-        let max_angle = 0.22 - 0.18 * skill + 0.08 * pressure;
+        let max_angle = k.angle_base - k.angle_skill * skill + k.angle_pressure * pressure;
         let angle_err = max_angle * tri(&mut rng);
-        let len_err = 1.0 + (0.15 - 0.12 * skill) * tri(&mut rng);
+        let len_err = 1.0 + (k.length_base - k.length_skill * skill) * tri(&mut rng);
         let dir = rotate((target - from).normalize(), angle_err);
         let aim_d = (d * len_err).max(1.0);
 
-        let v = if d > 28.0 {
+        let v = if d > k.lofted_dist {
             // Lofted: hang time grows with distance.
-            BallFlight::lofted_velocity(dir, aim_d, 0.9 + aim_d / 30.0)
+            BallFlight::lofted_velocity(dir, aim_d, k.lofted_base_s + aim_d / k.lofted_per_m)
         } else {
             // Arrives at ~8 m/s: firm enough to beat interceptors, soft
             // enough to control (a 20 m pass takes ~1.8 s).
-            (dir * BallFlight::rolling_speed_arriving(aim_d, PASS_ARRIVAL_SPEED)).extend(0.0)
+            (dir * BallFlight::rolling_speed_arriving(aim_d, k.arrival_speed)).extend(0.0)
         };
         state.team_mut(p.side).passes += 1;
         Self::kick(
@@ -146,13 +129,14 @@ impl ActionResolver {
     /// ball reaches the goal line (spec Fase 4 decisions).
     pub fn resolve_shot(state: &mut MatchState, frame: &TickFrame, actor: usize, penalty: bool) {
         let mut rng = state.next_rng(actor);
+        let st = state.tuning.shot;
         let now = state.now_ms();
         let p = state.players[actor];
         let from = frame.ball(state);
         let end = state.attacking(p.side);
         let goal = end.goal_centre();
         let dist = from.xy().distance(goal);
-        let shot_skill = if dist > 20.0 {
+        let shot_skill = if dist > state.tuning.decision.long_shot_dist {
             0.6 * unit(p.attrs.technical.long_shots)
         } else {
             0.6 * unit(p.attrs.technical.finishing)
@@ -164,40 +148,8 @@ impl ActionResolver {
             Self::pressure_on(state, frame, actor)
         };
 
-        // On target: better finishers and closer shots; pressure hurts.
-        let p_on = if penalty {
-            0.8 + 0.12 * shot_skill
-        } else {
-            (0.25 + 0.5 * shot_skill - dist / 60.0 - 0.1 * pressure).clamp(0.05, 0.85)
-        };
-        let on_target = rng.chance(p_on);
-
-        let defending = p.side.other();
-        let keeper = state.keeper(defending);
-        let outcome = if on_target {
-            let p_save = keeper.map_or(0.0, |k| {
-                let g = &state.players[k].attrs.goalkeeping;
-                // One-on-ones matter more close in; reflexes always.
-                let close = if dist < 12.0 { 0.25 } else { 0.1 };
-                let gk = 0.4 * unit(g.reflexes)
-                    + 0.3 * unit(g.positioning_gk)
-                    + 0.15 * unit(g.handling)
-                    + close * unit(g.one_on_ones);
-                if penalty {
-                    (0.12 + 0.2 * gk - 0.1 * shot_skill).clamp(0.05, 0.35)
-                } else {
-                    // ~70% of on-target shots are saved in real football.
-                    (0.5 + 0.4 * gk - 0.3 * shot_skill + dist / 80.0).clamp(0.15, 0.92)
-                }
-            });
-            if rng.chance(p_save) {
-                ShotOutcome::Saved
-            } else {
-                ShotOutcome::Goal
-            }
-        } else {
-            ShotOutcome::OffTarget
-        };
+        let (on_target, outcome) =
+            Self::shot_outcome(state, &mut rng, p.side, dist, shot_skill, pressure, penalty);
 
         // Aim point on the goal line: inside the frame if on target.
         let half = pitch::GOAL_WIDTH / 2.0;
@@ -214,7 +166,7 @@ impl ActionResolver {
             )
         };
         let target = Vec3::new(goal.x, goal.y + dy, z);
-        let speed = 20.0 + 8.0 * shot_skill;
+        let speed = st.speed_base + st.speed_skill * shot_skill;
         let flight_s = (dist / speed).max(0.15);
         let v = BallFlight::aimed_velocity(from, target, flight_s);
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // < 5 s
@@ -246,51 +198,119 @@ impl ActionResolver {
         );
     }
 
+    /// Draws whether a shot is on target and, if so, whether the keeper saves
+    /// it. Draw order is fixed (on-target, then save) — it is part of the
+    /// replay contract.
+    fn shot_outcome(
+        state: &MatchState,
+        rng: &mut Rng,
+        side: Side,
+        dist: f32,
+        shot_skill: f32,
+        pressure: f32,
+        penalty: bool,
+    ) -> (bool, ShotOutcome) {
+        let st = state.tuning.shot;
+        // On target: better finishers and closer shots; pressure hurts.
+        let p_on = if penalty {
+            st.penalty_on_base + st.penalty_on_skill * shot_skill
+        } else {
+            (st.on_target_base + st.on_target_skill * shot_skill
+                - dist / st.on_target_dist_div
+                - st.on_target_pressure * pressure)
+                .clamp(st.on_target_range.0, st.on_target_range.1)
+        };
+        let on_target = rng.chance(p_on);
+
+        let defending = side.other();
+        let keeper = state.keeper(defending);
+        let outcome = if on_target {
+            let p_save = keeper.map_or(0.0, |k| {
+                let g = &state.players[k].attrs.goalkeeping;
+                // One-on-ones matter more close in; reflexes always.
+                let close = if dist < st.one_on_one_dist {
+                    st.one_on_one_close
+                } else {
+                    st.one_on_one_far
+                };
+                let gk = 0.4 * unit(g.reflexes)
+                    + 0.3 * unit(g.positioning_gk)
+                    + 0.15 * unit(g.handling)
+                    + close * unit(g.one_on_ones);
+                if penalty {
+                    (st.penalty_save_base + st.penalty_save_keeper * gk
+                        - st.penalty_save_skill * shot_skill)
+                        .clamp(st.penalty_save_range.0, st.penalty_save_range.1)
+                } else {
+                    (st.save_base + st.save_keeper * gk - st.save_skill * shot_skill
+                        + dist / st.save_dist_div)
+                        .clamp(st.save_range.0, st.save_range.1)
+                }
+            });
+            if rng.chance(p_save) {
+                ShotOutcome::Saved
+            } else {
+                ShotOutcome::Goal
+            }
+        } else {
+            ShotOutcome::OffTarget
+        };
+
+        (on_target, outcome)
+    }
+
     /// Tackle on the carrier `on`: foul, clean win, ball knocked loose, or
     /// beaten.
     pub fn resolve_tackle(state: &mut MatchState, frame: &TickFrame, actor: usize, on: usize) {
         let mut rng = state.next_rng(actor);
+        let du = state.tuning.duel;
+        let di = state.tuning.discipline;
         let tackler = state.players[actor];
         let carrier = state.players[on];
         let t = &tackler.attrs;
         let c = &carrier.attrs;
         // Rationale: tackling vs dribbling decides most duels; base ~35-45%.
-        let p_win = (0.35
-            + 0.35
+        let p_win = (du.win_base
+            + du.win_tackler
                 * (0.6 * unit(t.technical.tackling)
                     + 0.2 * unit(t.mental.anticipation)
                     + 0.2 * unit(t.physical.strength))
-            - 0.3
+            - du.win_carrier
                 * (0.6 * unit(c.technical.dribbling)
                     + 0.2 * unit(c.physical.agility)
                     + 0.2 * unit(c.physical.balance)))
-        .clamp(0.1, 0.75);
+        .clamp(du.win_range.0, du.win_range.1);
         // Aggressive, clumsy tacklers foul more (~2-12% of challenges;
         // ~10-14 fouls per team per match overall).
-        let p_foul = (0.03 + 0.08 * unit(t.mental.aggression) - 0.03 * unit(t.technical.tackling))
-            .clamp(0.02, 0.15);
+        let p_foul = (di.foul_base + di.foul_aggression * unit(t.mental.aggression)
+            - di.foul_tackling * unit(t.technical.tackling))
+        .clamp(di.foul_range.0, di.foul_range.1);
         // Defenders are far more careful inside their own box (penalty risk;
         // ~0.3 penalties per match in real football).
         let own_box = state.attacking(tackler.side).opposite();
         let in_box = pitch::in_penalty_area(frame.ball(state).xy(), own_box);
-        let p_foul = if in_box { p_foul * 0.05 } else { p_foul };
+        let p_foul = if in_box {
+            p_foul * di.own_box_factor
+        } else {
+            p_foul
+        };
         // A booked player goes in much more carefully (avoids a second yellow).
         let p_foul = if tackler.yellow_cards > 0 {
-            p_foul * 0.3
+            p_foul * di.booked_factor
         } else {
             p_foul
         };
         let roll = rng.next_f32();
-        state.players[actor].tackle_ready_tick = state.tick + TACKLE_COOLDOWN;
+        state.players[actor].tackle_ready_tick = state.tick + du.cooldown_ticks;
         let tick = state.tick;
         let team = state.team_mut(tackler.side);
         team.tackles += 1;
-        team.next_tackle_tick = tick + TEAM_TACKLE_GAP;
+        team.next_tackle_tick = tick + du.team_gap_ticks;
 
         if roll < p_foul {
             Self::foul(state, frame, actor, on, &mut rng);
         } else if roll < p_foul + p_win {
-            if rng.chance(0.6) {
+            if rng.chance(du.clean_win) {
                 // Clean: tackler comes away with it.
                 state.ball = BallState::Held {
                     holder: idx_u8(actor),
@@ -304,7 +324,7 @@ impl ActionResolver {
                 Self::kick(state, frame, actor, v, FlightIntent::Loose);
             }
         } else {
-            state.players[actor].tackle_ready_tick = state.tick + BEATEN_COOLDOWN;
+            state.players[actor].tackle_ready_tick = state.tick + du.beaten_cooldown_ticks;
         }
     }
 
@@ -320,10 +340,11 @@ impl ActionResolver {
         });
         // Booking odds rise with aggression: ~1 card per 6-7 fouls; direct
         // reds ~1 per 250 fouls.
+        let di = state.tuning.discipline;
         let aggression = unit(tackler.attrs.mental.aggression);
-        let card = if rng.chance(0.004) {
+        let card = if rng.chance(di.red_direct) {
             Some(CardKind::Red)
-        } else if rng.chance(0.07 + 0.13 * aggression) {
+        } else if rng.chance(di.yellow_base + di.yellow_aggression * aggression) {
             Some(CardKind::Yellow)
         } else {
             None
@@ -370,6 +391,7 @@ impl ActionResolver {
     /// Returns true if they now hold it.
     pub fn try_receive(state: &mut MatchState, frame: &TickFrame, actor: usize) -> bool {
         let mut rng = state.next_rng(actor);
+        let k = state.tuning.control;
         let now = state.now_ms();
         let p = state.players[actor];
         let BallState::Flight { flight, intent } = state.ball else {
@@ -388,11 +410,19 @@ impl ActionResolver {
         // Cutting out an opponent's pass is a reaction, not a prepared touch.
         let intercepting = matches!(intent, FlightIntent::Pass { receiver }
             if state.players[usize::from(receiver)].side != p.side);
-        let p_control = (0.6 + 0.37 * touch
-            - 0.015 * (speed - 12.0).max(0.0)
-            - if height > 1.0 && !is_keeper { 0.2 } else { 0.0 }
-            - if intercepting { 0.25 } else { 0.0 })
-        .clamp(0.15, 0.97);
+        let p_control = (k.base + k.touch * touch
+            - k.speed_penalty * (speed - k.easy_speed).max(0.0)
+            - if height > 1.0 && !is_keeper {
+                k.high_ball_penalty
+            } else {
+                0.0
+            }
+            - if intercepting {
+                k.intercept_penalty
+            } else {
+                0.0
+            })
+        .clamp(k.range.0, k.range.1);
 
         if rng.chance(p_control) {
             if let FlightIntent::Pass { receiver } = intent {
@@ -427,6 +457,7 @@ impl ActionResolver {
             return 0;
         };
         let ball = frame.ball(state);
+        let k = &state.tuning.control;
         let shot_in_flight = matches!(intent, FlightIntent::Shot { .. });
         let pass = match intent {
             FlightIntent::Pass { receiver } => Some((
@@ -448,12 +479,12 @@ impl ActionResolver {
             }
             let own_box = pitch::in_penalty_area(frame.pos(i), state.attacking(p.side).opposite());
             let (reach, max_h) = if is_keeper && own_box {
-                (KEEPER_REACH, 2.6)
+                (k.keeper_reach, k.keeper_max_height)
             } else {
                 match pass {
-                    Some((r, _)) if r == i => (RECEIVER_RADIUS, 1.8),
-                    Some((_, side)) if side != p.side => (INTERCEPT_RADIUS, 1.8),
-                    _ => (CONTROL_RADIUS, 1.8),
+                    Some((r, _)) if r == i => (k.receiver_radius, k.max_height),
+                    Some((_, side)) if side != p.side => (k.intercept_radius, k.max_height),
+                    _ => (k.control_radius, k.max_height),
                 }
             };
             let d = frame.pos(i).distance(ball.xy());

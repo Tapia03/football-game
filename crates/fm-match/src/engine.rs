@@ -5,8 +5,8 @@
 use fm_core::{pitch, GoalEnd, Vec2};
 use fm_entities::{PlayerDatabase, PlayerId};
 
-use crate::anchor::{AnchorTuning, FormationAnchor};
-use crate::decision::{Action, DecisionSystem, TACKLE_RANGE};
+use crate::anchor::FormationAnchor;
+use crate::decision::{Action, DecisionSystem};
 use crate::events::{EventKind, EventLog, MatchEvent, RestartKind};
 use crate::formation::{Formation, Role};
 use crate::kinematics::PlayerKinematics;
@@ -20,6 +20,7 @@ use crate::state::{
 };
 use crate::tactics::Tactics;
 use crate::tick_frame::TickFrame;
+use crate::tuning::TuningParams;
 
 /// 45 minutes of logical ticks.
 pub const HALF_TICKS: u32 = 45 * 60 * 1_000 / LOGICAL_DT_MS;
@@ -40,21 +41,11 @@ pub struct MatchSetup {
     pub match_seed: u64,
     pub home: TeamSheet,
     pub away: TeamSheet,
-    pub tuning: AnchorTuning,
+    pub tuning: TuningParams,
 }
 
 pub struct MatchEngine {
     state: MatchState,
-}
-
-fn restart_wait_ticks(kind: RestartKind) -> u32 {
-    // Time to set up each restart (celebration, retrieving the ball, ...).
-    match kind {
-        RestartKind::KickOff => 30,
-        RestartKind::ThrowIn => 15,
-        RestartKind::GoalKick | RestartKind::FreeKick => 25,
-        RestartKind::Corner | RestartKind::Penalty => 40,
-    }
 }
 
 /// Puts the ball dead at `spot` for `side` to restart with `kind`.
@@ -99,7 +90,7 @@ pub fn set_restart(
         side,
         spot,
         taker: u8::try_from(taker).expect("< 22"),
-        ready_tick: state.tick + restart_wait_ticks(kind),
+        ready_tick: state.tick + state.tuning.restart.wait(kind),
     });
     state.holder_ticks = 0;
     state.events.push(MatchEvent {
@@ -303,7 +294,7 @@ fn line_up_for_kickoff(s: &mut MatchState, kicking: Side) {
             Phase::SetPiece,
             team.tactics,
             s.frame(p.side),
-            &s.tuning,
+            &s.tuning.anchor,
         );
         s.players[i].traj = PlayerKinematics::plan_trajectory(at, at, 1.0, now);
     }
@@ -508,11 +499,11 @@ fn on_ball(
             match action {
                 Action::Dribble { target } => {
                     targets[h] = target;
-                    urgency[h] = 0.6; // running with the ball is ~60% of sprint
+                    urgency[h] = s.tuning.decision.carry_urgency;
                 }
                 Action::Hold => {
                     targets[h] = here;
-                    urgency[h] = 0.3;
+                    urgency[h] = s.tuning.decision.hold_urgency;
                 }
                 Action::Pass { .. } | Action::Shoot | Action::Tackle { .. } => {}
             }
@@ -525,9 +516,9 @@ fn on_ball(
                 let own_goal = s.attacking(defending).opposite().goal_centre();
                 let (first, second) = two_nearest(s, frame, defending, hpos);
                 if let Some(d) = second {
-                    // Cover: 4 m goal-side of the carrier.
-                    targets[d] = hpos + (own_goal - hpos).normalize() * 4.0;
-                    urgency[d] = 0.9;
+                    // Cover: goal-side of the carrier.
+                    targets[d] = hpos + (own_goal - hpos).normalize() * s.tuning.duel.cover_dist;
+                    urgency[d] = s.tuning.duel.cover_urgency;
                 }
                 if let Some(d) = first {
                     targets[d] = hpos;
@@ -536,7 +527,9 @@ fn on_ball(
                 // Any defender within reach and recovered may challenge; the
                 // closest goes first (index breaks ties). A fresh receiver
                 // gets a moment before the challenge.
-                if s.holder_ticks >= 3 && s.tick >= s.team(defending).next_tackle_tick {
+                if s.holder_ticks >= s.tuning.duel.settle_ticks
+                    && s.tick >= s.team(defending).next_tackle_tick
+                {
                     if let Some(d) = challenger(s, frame, defending, hpos) {
                         ActionResolver::resolve(s, frame, d, Action::Tackle { on: holder });
                     }
@@ -565,7 +558,7 @@ fn on_ball(
         }
         BallState::Dead(r) => {
             targets[r.taker as usize] = r.spot;
-            urgency[r.taker as usize] = 0.9;
+            urgency[r.taker as usize] = s.tuning.restart.taker_urgency;
         }
     }
 }
@@ -589,7 +582,7 @@ fn intercept_point(flight: &crate::ball::BallFlight, now: u32, from: Vec2, speed
 /// Closest outfield player of `side` within tackle range of `at` and ready.
 fn challenger(s: &MatchState, frame: &TickFrame, side: Side, at: Vec2) -> Option<usize> {
     let mut best = None;
-    let mut best_d = TACKLE_RANGE;
+    let mut best_d = s.tuning.duel.tackle_range;
     for (i, p) in s.players.iter().enumerate() {
         if p.side != side || !p.active() || p.role == Role::Goalkeeper {
             continue;

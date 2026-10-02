@@ -4,7 +4,6 @@
 use fm_core::{GoalEnd, Vec2, Vec3};
 use fm_entities::{PlayerAttributes, PlayerId};
 
-use crate::anchor::AnchorTuning;
 use crate::ball::BallFlight;
 use crate::events::{EventLog, RestartKind};
 use crate::formation::{Formation, Role};
@@ -12,6 +11,7 @@ use crate::frame::TeamFrame;
 use crate::kinematics::{PlayerKinematics, Trajectory};
 use crate::phase::{Phase, PhaseStateMachine, Side};
 use crate::tactics::Tactics;
+use crate::tuning::TuningParams;
 
 pub const PLAYERS: usize = 22;
 
@@ -126,7 +126,7 @@ pub struct MatchState {
     pub phases: [Phase; 2],
     pub second_half: bool,
     pub finished: bool,
-    pub tuning: AnchorTuning,
+    pub tuning: TuningParams,
     pub events: EventLog,
 }
 

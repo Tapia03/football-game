@@ -3,10 +3,10 @@
 
 use fm_entities::{generate_database, PlayerDatabase, PlayerId, Position};
 
-use crate::anchor::AnchorTuning;
 use crate::engine::{MatchSetup, TeamSheet};
 use crate::formation::{Formation, Role};
 use crate::tactics::Tactics;
+use crate::tuning::TuningParams;
 
 fn fits(role: Role, pos: Position) -> bool {
     use Position as P;
@@ -63,7 +63,7 @@ pub fn demo_match(seed: u64) -> (PlayerDatabase, MatchSetup) {
             tactics: Tactics::default(),
             players: away,
         },
-        tuning: AnchorTuning::default(),
+        tuning: TuningParams::default(),
     };
     (db, setup)
 }
