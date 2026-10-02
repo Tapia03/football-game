@@ -7,67 +7,150 @@ use fm_core::Vec2;
 use crate::formation::{Line, Slot};
 use crate::frame::{Rel, TeamFrame};
 use crate::phase::Phase;
-use crate::tactics::Tactics;
+use crate::tactics::{LineHeight, Mentality, Tactics, Width};
 
-/// How the block deforms in each phase.
-struct PhaseShape {
+/// How the block deforms in one phase.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PhaseShape {
     /// Vertical spread of the lines around the block centre (1 = base shape).
-    spread: f32,
+    pub spread: f32,
     /// How far the block centre follows the ball's depth (0..1).
-    follow_depth: f32,
+    pub follow_depth: f32,
     /// How far each player slides toward the ball's side (0..1).
-    follow_lateral: f32,
+    pub follow_lateral: f32,
     /// Extra depth for the whole block (fraction of pitch length).
-    push: f32,
-    /// Lateral spread when the formation's width does not apply.
-    compact_width: f32,
+    pub push: f32,
+    /// Lateral spread when the formation's width instruction does not apply.
+    pub compact_width: f32,
 }
 
-const fn shape(phase: Phase) -> PhaseShape {
-    // In possession the team stretches to create space; out of possession it
-    // compresses and slides to the ball; transitions exaggerate each.
-    match phase {
-        Phase::InPossession => PhaseShape {
-            spread: 1.1,
-            follow_depth: 0.5,
-            follow_lateral: 0.15,
-            push: 0.0,
-            compact_width: 1.0,
-        },
-        Phase::TransitionAttack => PhaseShape {
-            spread: 1.15,
-            follow_depth: 0.5,
-            follow_lateral: 0.1,
-            push: 0.05,
-            compact_width: 1.0,
-        },
-        Phase::OutOfPossession => PhaseShape {
-            spread: 0.8,
-            follow_depth: 0.6,
-            follow_lateral: 0.3,
-            push: 0.0,
-            compact_width: 0.7,
-        },
-        Phase::TransitionDefense => PhaseShape {
-            spread: 0.85,
-            follow_depth: 0.5,
-            follow_lateral: 0.25,
-            push: -0.05,
-            compact_width: 0.75,
-        },
-        Phase::SetPiece => PhaseShape {
-            spread: 1.0,
-            follow_depth: 0.4,
-            follow_lateral: 0.1,
-            push: 0.0,
-            compact_width: 0.85,
-        },
+/// Every tunable constant of `FormationAnchor`, in one place. `Default` is
+/// the Phase 3 calibration; Phase 5 retunes here without touching code.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AnchorTuning {
+    /// Indexed by `phase_index`: `InPossession`, `OutOfPossession`,
+    /// `TransitionAttack`, `TransitionDefense`, `SetPiece`.
+    pub phase: [PhaseShape; 5],
+    /// Rest depth of the block centre (team-relative).
+    pub block_centre: f32,
+    /// Whole-block depth shift per `Mentality`, Defensive..=Attacking.
+    pub mentality_shift: [f32; 5],
+    /// Lateral stretch in possession per `Width`, Narrow..=Wide.
+    pub width_factor: [f32; 3],
+    /// Defensive-line depth shift per `LineHeight`, Deep..=High.
+    pub line_shift: [f32; 3],
+    /// Share of `line_shift` applied to defence / midfield / attack.
+    pub line_weight: [f32; 3],
+    /// Keeper depth: `base + per_ball_depth * ball_depth`, clamped.
+    pub gk_depth_base: f32,
+    pub gk_depth_per_ball: f32,
+    pub gk_depth_range: (f32, f32),
+    /// Keeper lateral shading toward the ball, clamped.
+    pub gk_lateral_follow: f32,
+    pub gk_lateral_limit: f32,
+    /// Outfield clamps that keep anchors inside the pitch.
+    pub depth_range: (f32, f32),
+    pub lateral_range: (f32, f32),
+}
+
+impl Default for AnchorTuning {
+    fn default() -> Self {
+        // In possession the team stretches to create space; out of possession
+        // it compresses and slides to the ball; transitions exaggerate each.
+        Self {
+            phase: [
+                PhaseShape {
+                    spread: 1.1,
+                    follow_depth: 0.5,
+                    follow_lateral: 0.15,
+                    push: 0.0,
+                    compact_width: 1.0,
+                },
+                PhaseShape {
+                    spread: 0.8,
+                    follow_depth: 0.6,
+                    follow_lateral: 0.3,
+                    push: 0.0,
+                    compact_width: 0.7,
+                },
+                PhaseShape {
+                    spread: 1.15,
+                    follow_depth: 0.5,
+                    follow_lateral: 0.1,
+                    push: 0.05,
+                    compact_width: 1.0,
+                },
+                PhaseShape {
+                    spread: 0.85,
+                    follow_depth: 0.5,
+                    follow_lateral: 0.25,
+                    push: -0.05,
+                    compact_width: 0.75,
+                },
+                PhaseShape {
+                    spread: 1.0,
+                    follow_depth: 0.4,
+                    follow_lateral: 0.1,
+                    push: 0.0,
+                    compact_width: 0.85,
+                },
+            ],
+            block_centre: 0.4,
+            // ±0.08 ≈ ±8.4 m: Defensive→Attacking moves the block ~17 m
+            // (criterion 19 needs ≥ 5 m), leaving room for other modifiers.
+            mentality_shift: [-0.08, -0.04, 0.0, 0.04, 0.08],
+            width_factor: [0.75, 0.9, 1.0],
+            // ≈ ±5 m for the back line.
+            line_shift: [-0.05, 0.0, 0.05],
+            // Defenders carry the full instruction, midfield half, attackers
+            // none (free to stay high).
+            line_weight: [1.0, 0.5, 0.0],
+            gk_depth_base: 0.02,
+            gk_depth_per_ball: 0.08,
+            gk_depth_range: (0.01, 0.12),
+            gk_lateral_follow: 0.15,
+            gk_lateral_limit: 0.1,
+            depth_range: (0.04, 0.96),
+            lateral_range: (-0.95, 0.95),
+        }
     }
 }
 
-/// Keeps outfield anchors inside the pitch with a small margin.
-const DEPTH_RANGE: (f32, f32) = (0.04, 0.96);
-const LATERAL_RANGE: (f32, f32) = (-0.95, 0.95);
+const fn phase_index(phase: Phase) -> usize {
+    match phase {
+        Phase::InPossession => 0,
+        Phase::OutOfPossession => 1,
+        Phase::TransitionAttack => 2,
+        Phase::TransitionDefense => 3,
+        Phase::SetPiece => 4,
+    }
+}
+
+const fn mentality_index(m: Mentality) -> usize {
+    match m {
+        Mentality::Defensive => 0,
+        Mentality::Cautious => 1,
+        Mentality::Balanced => 2,
+        Mentality::Positive => 3,
+        Mentality::Attacking => 4,
+    }
+}
+
+const fn width_index(w: Width) -> usize {
+    match w {
+        Width::Narrow => 0,
+        Width::Normal => 1,
+        Width::Wide => 2,
+    }
+}
+
+const fn line_index(l: LineHeight) -> usize {
+    match l {
+        LineHeight::Deep => 0,
+        LineHeight::Normal => 1,
+        LineHeight::High => 2,
+    }
+}
 
 pub struct FormationAnchor;
 
@@ -81,54 +164,56 @@ impl FormationAnchor {
         phase: Phase,
         tactics: Tactics,
         frame: TeamFrame,
+        tuning: &AnchorTuning,
     ) -> Vec2 {
         let b = frame.to_rel(ball);
         let rel = if slot.role.line() == Line::Goalkeeper {
             // Keeper edges off the line as the ball goes upfield, and shades
             // toward the ball's side to cover the near post.
+            let lim = tuning.gk_lateral_limit;
             Rel::new(
-                (0.02 + 0.08 * b.depth).clamp(0.01, 0.12),
-                (0.15 * b.lateral).clamp(-0.1, 0.1),
+                (tuning.gk_depth_base + tuning.gk_depth_per_ball * b.depth)
+                    .clamp(tuning.gk_depth_range.0, tuning.gk_depth_range.1),
+                (tuning.gk_lateral_follow * b.lateral).clamp(-lim, lim),
             )
         } else {
-            outfield(slot, b, phase, tactics)
+            outfield(slot, b, phase, tactics, tuning)
         };
         frame.to_pitch(rel)
     }
 }
 
-fn outfield(slot: &Slot, ball: Rel, phase: Phase, tactics: Tactics) -> Rel {
-    let sh = shape(phase);
-    // Defenders carry the full line-height instruction, midfield half,
-    // attackers none (they are free to stay high).
+fn outfield(slot: &Slot, ball: Rel, phase: Phase, tactics: Tactics, t: &AnchorTuning) -> Rel {
+    let sh = &t.phase[phase_index(phase)];
     let line_weight = match slot.role.line() {
-        Line::Defence => 1.0,
-        Line::Midfield => 0.5,
-        Line::Goalkeeper | Line::Attack => 0.0,
+        Line::Defence => t.line_weight[0],
+        Line::Midfield => t.line_weight[1],
+        Line::Attack => t.line_weight[2],
+        Line::Goalkeeper => 0.0,
     };
-    let centre = 0.4 + (ball.depth - 0.5) * sh.follow_depth;
+    let centre = t.block_centre + (ball.depth - 0.5) * sh.follow_depth;
     let depth = centre
-        + (slot.base.depth - 0.4) * sh.spread
+        + (slot.base.depth - t.block_centre) * sh.spread
         + sh.push
-        + tactics.mentality.depth_shift()
-        + tactics.line_height.depth_shift() * line_weight;
+        + t.mentality_shift[mentality_index(tactics.mentality)]
+        + t.line_shift[line_index(tactics.line_height)] * line_weight;
 
     let width = if phase.has_ball() {
-        tactics.width.factor()
+        t.width_factor[width_index(tactics.width)]
     } else {
         sh.compact_width
     };
     let lateral = slot.base.lateral * width + ball.lateral * sh.follow_lateral;
 
     Rel::new(
-        depth.clamp(DEPTH_RANGE.0, DEPTH_RANGE.1),
-        lateral.clamp(LATERAL_RANGE.0, LATERAL_RANGE.1),
+        depth.clamp(t.depth_range.0, t.depth_range.1),
+        lateral.clamp(t.lateral_range.0, t.lateral_range.1),
     )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::FormationAnchor;
+    use super::{AnchorTuning, FormationAnchor};
     use crate::formation::{Formation, Line};
     use crate::frame::TeamFrame;
     use crate::phase::Phase;
@@ -147,7 +232,16 @@ mod tests {
     fn anchors(f: Formation, ball: Vec2, phase: Phase, t: Tactics, end: GoalEnd) -> Vec<Vec2> {
         f.slots()
             .iter()
-            .map(|s| FormationAnchor::compute(s, ball, phase, t, TeamFrame::new(end)))
+            .map(|s| {
+                FormationAnchor::compute(
+                    s,
+                    ball,
+                    phase,
+                    t,
+                    TeamFrame::new(end),
+                    &AnchorTuning::default(),
+                )
+            })
             .collect()
     }
 
@@ -293,6 +387,44 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)] // exact on purpose: these are pinned literals
+    fn default_tuning_is_the_phase3_calibration() {
+        // Pinned so an accidental edit of the defaults shows up in review.
+        let t = AnchorTuning::default();
+        assert_eq!(t.mentality_shift, [-0.08, -0.04, 0.0, 0.04, 0.08]);
+        assert_eq!(t.width_factor, [0.75, 0.9, 1.0]);
+        assert_eq!(t.line_shift, [-0.05, 0.0, 0.05]);
+        assert_eq!(t.line_weight, [1.0, 0.5, 0.0]);
+        assert!((t.block_centre - 0.4).abs() < f32::EPSILON);
+        assert!((t.phase[1].spread - 0.8).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn tuning_changes_anchor_output() {
+        let mut t = AnchorTuning::default();
+        t.mentality_shift[2] = 0.1;
+        let slot = &Formation::F442.slots()[5];
+        let frame = TeamFrame::new(GoalEnd::Right);
+        let base = FormationAnchor::compute(
+            slot,
+            CENTRE,
+            Phase::InPossession,
+            Tactics::default(),
+            frame,
+            &AnchorTuning::default(),
+        );
+        let tuned = FormationAnchor::compute(
+            slot,
+            CENTRE,
+            Phase::InPossession,
+            Tactics::default(),
+            frame,
+            &t,
+        );
+        assert!((tuned.x - base.x - 0.1 * 105.0).abs() < 1e-3);
     }
 
     #[test]

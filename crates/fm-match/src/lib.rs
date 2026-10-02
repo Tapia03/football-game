@@ -12,7 +12,7 @@ pub mod phase;
 pub mod role;
 pub mod tactics;
 
-pub use anchor::FormationAnchor;
+pub use anchor::{AnchorTuning, FormationAnchor, PhaseShape};
 pub use formation::{Formation, Line, Role, Slot};
 pub use frame::{Rel, TeamFrame};
 pub use kinematics::{PlayerKinematics, Trajectory};
