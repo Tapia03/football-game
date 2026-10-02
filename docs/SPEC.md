@@ -953,8 +953,18 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
     4. Testados sem efeito suficiente: só avaliar corredores a ≤ 3 m do
        ponto legal (E1: 0,1 por partida) e +0,5 s de giro para defensores
        de linha (E1+E2: 0,4–0,5 por partida).
-  - Decisão pendente com o usuário: como estimar a corrida até a bola e o
-    passe pelo alto antes de religar, e o orçamento do item.
+  - **Retomado (2026-10-02), em três passos com commit e medida cada:**
+    1. ligar só `lofted_lane`; 2. redesenhar a disputa pela bola; 3.
+    passe em profundidade só para corredores perto da linha. Meta: 5–15
+    passes em profundidade por partida, ≤ +1,5% de instruções sobre o
+    item 4 por passo.
+  - **Passo 1 — `lofted_lane` ligado:** 532,6M instruções (−0,56%). Jogo
+    (180 partidas, contra o item 4): passes 1.616 → **1.401** (−13%),
+    acerto 85,7% → **79,2%** (mais passes longos, menos precisos; real
+    ~80%), gols 4,57 → 5,21 (+14%, ~2 EP), posse contínua 23,8 → 15,9 s
+    (jogo mais direto), xG por partida 7,9 → 8,6. **Posse do mandante
+    63% → 75%:** a assimetria 4-4-2 × 4-3-3 cresce de novo; para (c2)
+    (separar formação de qualidade de elenco). Golden regenerado.
 - **Impedimento — só a linha, sem apito `[ALTERADO v2.1]`:**
   - a linha é dado do `TickFrame`: o penúltimo defensor (o goleiro conta),
     calculado uma vez por tick a partir das posições;

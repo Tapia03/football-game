@@ -322,7 +322,7 @@ impl Default for ValueTuning {
             dribble_keep_cramped_base: 0.45,
             dribble_keep_cramped_skill: 0.4,
             through_balls: false,
-            lofted_lane: false,
+            lofted_lane: true,
             race_scale_s: 1.5,
             through_control_penalty: 0.05,
             hold_keep_pressed: 0.85,
