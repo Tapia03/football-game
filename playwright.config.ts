@@ -17,14 +17,6 @@ export default defineConfig({
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
     { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
-    // DIAGNÓSTICO TEMPORÁRIO (fase-3): será revertido antes do PR.
-    {
-      name: 'firefox-forced',
-      use: {
-        ...devices['Desktop Firefox'],
-        launchOptions: { firefoxUserPrefs: { 'webgl.force-enabled': true } },
-      },
-    },
     { name: 'webkit', use: { ...devices['Desktop Safari'] } },
   ],
   webServer: {

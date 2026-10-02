@@ -93,8 +93,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps ${{ matrix.browser }}
-      # DIAGNÓSTICO TEMPORÁRIO (fase-3): roda firefox-forced e não para no 1º erro.
-      - run: npx playwright test --project=${{ matrix.browser }} ${{ matrix.browser == 'firefox' && '--project=firefox-forced' || '' }}
+      - run: npx playwright test --project=${{ matrix.browser }}
       - name: Upload evidence screenshots
         if: always()
         uses: actions/upload-artifact@v4
