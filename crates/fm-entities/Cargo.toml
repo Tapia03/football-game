@@ -12,8 +12,7 @@ fm-core.workspace = true
 workspace = true
 
 [dev-dependencies]
-# Test-only: provides the allocation-counting allocator (unsafe lives there).
-fm-render.workspace = true
+fm-test-utils = { workspace = true, features = ["alloc-counter"] }
 
 # criterion is native-only: it never builds for wasm32, where benches are not run.
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]

@@ -201,7 +201,7 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "fm-core",
- "fm-render",
+ "fm-test-utils",
 ]
 
 [[package]]
@@ -227,6 +227,10 @@ dependencies = [
  "wasm-bindgen",
  "web-sys",
 ]
+
+[[package]]
+name = "fm-test-utils"
+version = "0.1.0"
 
 [[package]]
 name = "fm-wasm"

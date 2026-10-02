@@ -1,9 +1,9 @@
 //! Acceptance criterion 17: `weekly_update` performs no heap allocation
-//! after bootstrap. The counting allocator lives in `fm-render::ffi` (the
-//! only place allowed to contain `unsafe`).
+//! after bootstrap. The counting allocator lives in `fm-test-utils`
+//! (feature `alloc-counter`), keeping `unsafe` out of this crate.
 
 use fm_entities::{generate_database, PlayerId};
-use fm_render::ffi::alloc_counter::{allocations, CountingAlloc};
+use fm_test_utils::alloc_counter::{allocations, CountingAlloc};
 
 #[global_allocator]
 static GLOBAL: CountingAlloc = CountingAlloc;

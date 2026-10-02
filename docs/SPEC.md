@@ -35,8 +35,9 @@ mesmo PR que o código, em commit anterior ao código.
 6. **Correção 1A** (tick lógico único + trajetórias analíticas + libm):
    arquitetura oficial.
 7. **Correção 1B** (RNG com `match_seed` e mistura assimétrica): ver 3.B.
-8. **Golden de screenshot:** um arquivo por navegador, em
-   `tests/golden/{chromium,firefox,webkit}/`.
+8. **Golden de screenshot:** a estrutura prevê um arquivo por navegador,
+   em `tests/golden/{chromium,firefox,webkit}/`. Para render, a comparação
+   de pixel é só no Chromium; ver Fase 6 `[ALTERADO v2.1]`.
 9. **FPS no CI** é só informativo. O gate de FPS é manual, em hardware local.
 10. **10.000 partidas Full vs Abstract** só no job noturno. Em cada push,
     roda uma amostra de 500.
@@ -46,11 +47,16 @@ mesmo PR que o código, em commit anterior ao código.
     `Renderer2D`. wgpu pode entrar depois como backend alternativo, em
     `fm-render/src/wgpu_backend.rs`, sem `unsafe` e sem reescrever a camada
     de render.
-13. **`unsafe` `[ALTERADO v2.1]`:**
-    - Todo FFI vive em `fm-render/src/ffi/`, com os submódulos `sab.rs`,
-      `glow_backend.rs`, `wasm_shims.rs` e `alloc_counter.rs`.
-    - `#[allow(unsafe_code)]` só aparece em `ffi/mod.rs`, valendo para ele
-      e os filhos.
+13. **`unsafe` `[ALTERADO v2.1]`:** só pode existir em dois lugares.
+    - **Produção:** `fm-render/src/ffi/`, com os submódulos `sab.rs`,
+      `glow_backend.rs` e `wasm_shims.rs`. `#[allow(unsafe_code)]` só em
+      `ffi/mod.rs`, valendo para ele e os filhos.
+    - **Teste (emenda v2.1):** o crate `fm-test-utils`, módulo
+      `alloc_counter`, atrás da feature `alloc-counter`. Esse crate é
+      sempre `dev-dependency`, nunca dependência normal.
+    - **Motivo da emenda:** o alocador contador do critério 17 exige
+      `unsafe impl GlobalAlloc`. Colocá-lo em `fm-render` obrigaria
+      `fm-entities` a depender do renderer, o que inverte a hierarquia.
     - Todos os outros crates usam `#![forbid(unsafe_code)]`.
     - O lint de workspace é `unsafe_code = "deny"`, o que cobre também
       testes e benches.
@@ -253,7 +259,6 @@ fm-render/
   src/ffi/glow_backend.rs  chamadas glow/WebGL2 (contexto, buffers, shaders)
   src/ffi/sab.rs        ring buffer em SharedArrayBuffer
   src/ffi/wasm_shims.rs cola JS que não sai segura via wasm-bindgen
-  src/ffi/alloc_counter.rs  alocador contador (critério 17, testes)
   src/wgpu_backend.rs   (futuro) WgpuRenderer, sem unsafe
 ```
 
@@ -336,7 +341,8 @@ football-game/
 │   ├── fm-economy/           (MarketValue, TransferAI)
 │   ├── fm-world/             (WorldSimulator, League, Fixture)
 │   ├── fm-persistence/       (serialização, versionamento)
-│   ├── fm-render/            (Renderer2D; ffi/ = único unsafe)
+│   ├── fm-render/            (Renderer2D; ffi/ = único unsafe de produção)
+│   ├── fm-test-utils/        (só dev-dependency; alloc-counter)
 │   └── fm-wasm/              (bindings wasm-bindgen)
 ├── frontend/
 │   ├── index.html
@@ -422,11 +428,22 @@ WASM.
   - shapes procedurais com instancing.
 - A interpolação `prev`/`curr` fica na camada segura.
 - Reavaliar o `wasm-opt` (tamanho do binário).
+- **Estratégia de golden `[ALTERADO v2.1]`:**
+  - Comparação de pixel **só no Chromium**: o SwiftShader do CI é
+    renderizador por software determinístico.
+  - **Firefox e WebKit** rodam os mesmos testes de render **sem comparação
+    de pixel**, só para garantir que não quebram. O WebKit do CI informa
+    "Apple GPU", mas é máscara de privacidade: no Linux é software, e não se
+    sabe se é estável entre runs. O Firefox depende de
+    `webgl.force-enabled` (ver 0.1).
+  - Isso substitui o item 8 da Seção 0 para screenshots de render.
+  - Investigar a estabilidade do WebKit é opcional e não bloqueia nada.
 - **Testes Playwright:**
-  - `match-render.spec.ts`: screenshot comparado com o golden por
-    navegador, com tolerância de 1%.
-  - Determinismo visual: 3 execuções com a mesma seed geram screenshots
-    idênticos.
+  - `match-render.spec.ts`: screenshot comparado com o golden do
+    Chromium, com tolerância de 1%. Nos outros navegadores, só checa que
+    não há erro de render.
+  - Determinismo visual (Chromium): 3 execuções com a mesma seed geram
+    screenshots idênticos.
   - Teste de contrato da `Renderer2D` com um backend de gravação (sem
     GPU): a mesma `DrawList` gera a mesma sequência de comandos.
   - FPS medido e informado (não é gate).
@@ -487,7 +504,8 @@ WASM.
 ## Rust
 - `clippy::all` + `clippy::pedantic` com `-D warnings`.
 - **`unsafe` `[ALTERADO v2.1]`:**
-  - só em `fm-render/src/ffi/` (ver 0.13);
+  - só em `fm-render/src/ffi/` (produção) e em
+    `fm-test-utils::alloc_counter` (testes); ver 0.13;
   - os demais crates usam `#![forbid(unsafe_code)]`;
   - todo bloco `unsafe` leva comentário `// SAFETY:`.
 - `snake_case` para funções e variáveis, `PascalCase` para tipos.
@@ -554,7 +572,8 @@ WASM.
 10. `test_cross_lod_consistency` idêntico entre Full, Reduced e Abstract.
 11. `test_determinism_across_runs` (tick 500).
 12. `test_libm_parity_in_engine`: nativo == WASM, bit a bit.
-13. Golden screenshots nos 3 navegadores.
+13. Golden screenshots: comparação de pixel no Chromium; Firefox e WebKit
+    sem erro de render.
 14. FPS: informativo no CI; gate manual ≥ 55 fps.
 15. `weekly_update` de 500k jogadores em < 150 ms.
 16. 20 clubes × 38 rodadas em < 10 s.
