@@ -502,7 +502,60 @@ WASM.
 - **Auditoria de assinaturas (critério 18):** um teste lê o fonte e
   garante que `choose_action` e `resolve` não recebem `dt` nem `LodLevel`.
 
-**Calibração base da Fase 4 (média de 60 partidas demo, `examples/match_stats`):**
+**Fase 5 (a) — `TickFrame` concluído:** a paridade bit a bit continua
+inalterada. O `tick_logic` em Abstract (partida inteira) caiu de 70 ms para
+52 ms no ambiente de desenvolvimento e mede **37,0 ms no runner do CI**
+(criterion; o gate de 50 ms passa com mediana de 37,05 ms). Está dentro do
+orçamento de 40 ms.
+
+**Fase 5 (b) — investigação dos ~876 desarmes `[ALTERADO v2.1]`:**
+
+*Definição exata no código (Fase 4):* uma "tentativa de desarme" é cada
+chamada de `ActionResolver::resolve_tackle` (contador `TeamState::tackles`).
+O `tick_logic` dispara essa chamada quando todas estas condições valem ao
+mesmo tempo:
+1. a bola tem portador (`BallState::Held`) há pelo menos 3 ticks;
+2. o time defensor está fora do intervalo `TEAM_TACKLE_GAP` (70 ticks,
+   cerca de 7 s, contados desde a última tentativa do time);
+3. existe um jogador de linha do time defensor a menos de `TACKLE_RANGE`
+   (1,8 m) do portador e fora da própria cooldown (25 ticks, ou 40 se foi
+   driblado).
+
+Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
+
+*Medição (20 partidas, `tick_logic` puro):*
+- a bola tem portador em 87% dos ticks;
+- em **97%** desses ticks há um defensor a **menos de 1 m** do portador;
+- são cerca de 875 tentativas e 16,6 faltas por partida, ou seja,
+  **1,9% de faltas por tentativa**.
+
+*Classificação: **problema de modelo**, não de constante.* São três causas:
+1. **Marcação sobre o portador.** O primeiro marcador recebe como alvo a
+   posição exata do portador e converge para distância zero. Dois corpos
+   no mesmo ponto, o tempo todo.
+2. **Sem decisão defensiva.** A frequência de tentativas é ditada só por
+   cooldowns (`TEAM_TACKLE_GAP`). Com o marcador colado, o número sai
+   aproximadamente de "tempo de posse ÷ intervalo", e não de jogo.
+3. **Compensação cruzada.** A probabilidade de falta foi calibrada para
+   baixo (cerca de 2% por tentativa) para compensar o excesso de
+   tentativas, enquanto no futebol real a fração de botes que viram falta
+   é muito maior. Ajustar só as constantes manteria as duas distorções se
+   cancelando.
+
+*Correção proposta (muda lógica, não só constantes; aguarda aprovação):*
+- **Marcação:** o marcador **contém** a 2–3 m do portador, do lado do gol,
+  em vez de colar nele.
+- **Decisão de bote:** o `DecisionSystem` passa a decidir entre dar o bote
+  e conter, de forma determinística e sem RNG, a partir de:
+  - ângulo e distância;
+  - se o portador acabou de dominar ou se está de costas;
+  - `tackling`, `decisions` e `aggression` do defensor;
+  - fase do jogo.
+- Remover `TEAM_TACKLE_GAP`, que esconde o modelo.
+- Recalibrar falta por bote contra metas reais, com as constantes já em
+  `TuningParams`.
+
+
 
 | Métrica por partida | Fase 4 | Real (aprox.) | Situação |
 |---|---|---|---|
