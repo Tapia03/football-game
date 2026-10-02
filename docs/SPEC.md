@@ -82,6 +82,14 @@ mesmo PR que o código, em commit anterior ao código.
       workers, com barra de progresso e estimativa. Em hardware fraco,
       degrada com elegância em vez de falhar.
     - Tick a 5 Hz está **rejeitado** (violaria 3.A).
+18. **A estimativa usa a mesma física da execução `[ALTERADO v2.1]`**
+    (invariante de design, 2026-10-02): toda estimativa da decisão (sucesso
+    de passe, disputa pela bola, drible, tabela, corrida com a bola) usa a
+    cinemática, a física da bola e as regras que o motor de fato executa.
+    Se um comportamento precisar de algo que a execução não tem (inércia,
+    reação, giro), isso entra **primeiro** na execução e só depois na
+    estimativa. Origem: o passe em profundidade com acerto de 0,3% e o
+    passe longo estimado como rasteiro (Fase 5, item 5).
 
 ## 0.1 — Desvios registrados `[ALTERADO v2.1]`
 
@@ -202,6 +210,10 @@ contraditório: o estado diverge. A solução:
 2. **Movimento e bola são analíticos (forma fechada):**
    - `PlayerKinematics`:
      `pos(t) = lerp(P0, T, clamp((t - t0) * S / dist(P0, T), 0, 1))`.
+     **`[ALTERADO v2.1]`** a partir da Fase 5 (c1), cada trajetória tem
+     até três fases, todas em forma fechada (ver Fase 5, "Física de
+     movimento"): reação, aceleração constante e cruzeiro (a fórmula
+     acima, a partir do fim da aceleração).
    - `BallKinematics`: projétil + Magnus + drag linear, em forma fechada.
    - `pos(t)` é função pura de `(id, t, último evento)`.
 3. **O LOD controla só a amostragem:**
@@ -990,6 +1002,8 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
     modelo precisar de inércia ou reação, elas entram primeiro na
     cinemática (mudança de modelo, decisão do usuário), depois na
     estimativa.
+  - **Status: item 5 PENDENTE** até a física nova entrar. Código
+    commitado desligado (`5ce4218`), reavaliado no passo 4 da nova ordem.
 - **Assimetria de posse — causa isolada (2026-10-02, 60 partidas cada):**
 
   | Experimento | Posse do mandante |
@@ -1014,6 +1028,55 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
   corredor (a defesa só contém o portador e cobre atrás dele), não há
   linha de impedimento ativa nem goleiro saindo do gol. Em (c2), toda
   métrica é comparada com o real; o passo anterior é linha de base móvel.
+- **Nova ordem de (c1) — Caminho A (aprovado 2026-10-02):**
+  1. reação e aceleração na movimentação (física nova);
+  2. defesa acompanha corredores + equilíbrio corrida × apoio (corrige a
+     assimetria de posse) + **goleiro saindo do gol**;
+  3. item 9: construção desde a defesa (passe para trás como opção que
+     preserva a posse);
+  4. refazer o item 5 em cima da física nova;
+  5. itens 6–8.
+  Em todos: comparar métricas com o **real**, nunca com o passo anterior.
+- **Física de movimento (passo 1) `[ALTERADO v2.1]`:**
+  - **Parâmetros no `TuningParams` (`KinematicsTuning`):** `max_accel`
+    (m/s²), `reaction_ms` (ms), `reaction_threshold` (m), `turn_rate`
+    (rad/s).
+  - **Trajetória em três fases, em forma fechada** (planejada a cada tick
+    em `move_players`):
+    1. **reação:** se o alvo mudou mais que `reaction_threshold` desde o
+       plano anterior, o jogador segue com a velocidade que tinha por
+       `reaction_ms` (uma reação em andamento não recomeça a cada tick);
+    2. **aceleração:** aceleração constante `max_accel` da velocidade
+       atual até a desejada (rumo ao alvo, na velocidade pedida);
+    3. **cruzeiro:** linha reta até o alvo na velocidade pedida, parando
+       nele (sem fase de frenagem nesta versão).
+  - **Giro:** a direção desejada só pode girar `turn_rate × Δt` a partir
+    da direção em que o jogador já se move (Δt = tempo desde o plano
+    anterior); parado (< 0,5 m/s), vira para qualquer lado.
+  - Ângulos via `fm_core::math` (libm). `pos_at` continua função pura de
+    `(trajetória, t)`: a paridade entre LODs se mantém.
+  - **Dois commits:** (1) estrutura com `max_accel = ∞`, `reaction_ms =
+    0`, `turn_rate = ∞` — as fases 1 e 2 têm duração zero e a fase 3 é a
+    fórmula antiga com as mesmas operações: **golden idêntico**; (2)
+    valores realistas: golden regenerado.
+  - **Medição do commit 1 (2026-10-02) — PARADO, não commitado:**
+    - Estrutura com física desligada (`Lead` opcional na `Trajectory`,
+      atalho decidido uma vez por tick): golden **idêntico**, testes ok,
+      mas **550,3M = +2,74% sobre o item 4** (+3,3% sobre o passo 1 do
+      item 5). Perfil: ~2,4M no teste da fase em `pos_at` (1,2 milhão de
+      chamadas por partida); o resto (~13M) difuso no corpo inlinado do
+      `tick_logic` (trajetória maior, inlining diferente). Duas versões
+      anteriores mediram +5,7% e +3,8%.
+    - **Protótipo do commit 2** (aceleração 4,5 m/s², reação 200 ms acima
+      de 2 m, giro 6 rad/s): **o jogo quebra** — 3 passes por partida,
+      bola parada 81–91% do tempo. Sem desaceleração, e com giro limitado,
+      o jogador não para sobre um ponto (passa ou orbita o alvo); quem bate
+      o reinício nunca chega a < 1 m da bola. Falta um quarto elemento:
+      **chegada** (frear até parar no alvo; girar parado).
+    - Código guardado fora da branch (stash + patch), aguardando decisão.
+  - **Goleiro saindo do gol: passo 2, não passo 1.** É comportamento
+    (decisão de sair e quando), não física: o goleiro usa a mesma
+    cinemática de todos.
 - **Observação do usuário na v0 (2026-10-02), medida (30 partidas, código
   do passo 1):** no mandante (4-4-2), os dois meias centrais (#7, #8) têm
   **72% das posses** do time; zagueiros e laterais, 0,1–0,9% cada. No
