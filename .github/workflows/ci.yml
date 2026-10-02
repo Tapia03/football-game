@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.0 # keep in sync with rust-toolchain.toml
         with:
           components: rustfmt, clippy
           targets: wasm32-unknown-unknown
@@ -32,12 +32,28 @@ jobs:
       - run: cargo clippy --workspace --all-targets --target wasm32-unknown-unknown -- -D warnings
       - run: cargo test --workspace
 
+  stable-canary:
+    name: stable-canary (latest stable, informative)
+    runs-on: ubuntu-latest
+    # Early warning for new lints/regressions in the next toolchain; never blocks.
+    continue-on-error: true
+    env:
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+
   bench:
     name: bench (perf gates + criterion)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.0 # keep in sync with rust-toolchain.toml
       - uses: Swatinem/rust-cache@v2
       # Hard gates (release timing tests, marked #[ignore] in debug runs).
       - run: cargo test --release --workspace -- --ignored --nocapture
@@ -57,7 +73,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.0 # keep in sync with rust-toolchain.toml
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
@@ -82,7 +98,7 @@ jobs:
         browser: [chromium, firefox, webkit]
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.0 # keep in sync with rust-toolchain.toml
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2

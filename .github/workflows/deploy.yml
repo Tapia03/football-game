@@ -40,7 +40,7 @@ jobs:
       - if: steps.secrets.outputs.ready == 'true'
         uses: actions/checkout@v4
       - if: steps.secrets.outputs.ready == 'true'
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.99.0 # keep in sync with rust-toolchain.toml
         with:
           targets: wasm32-unknown-unknown
       - if: steps.secrets.outputs.ready == 'true'

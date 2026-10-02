@@ -1,4 +1,6 @@
 [toolchain]
-channel = "stable"
+# Pinned: lints and codegen must be identical locally and in CI. A separate,
+# non-blocking CI job runs the latest stable for early warning.
+channel = "1.99.0"
 components = ["rustfmt", "clippy"]
 targets = ["wasm32-unknown-unknown"]

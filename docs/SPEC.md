@@ -67,6 +67,22 @@ mesmo PR que o código, em commit anterior ao código.
 15. **Teste falhou `[ALTERADO v2.1]`:** PARAR e trazer o log completo com
     hipóteses, não com uma correção tentativa.
 
+16. **Toolchain fixado `[ALTERADO v2.1]`:** `rust-toolchain.toml` e o CI
+    usam Rust 1.99.0 (rustfmt e clippy do mesmo toolchain). O job
+    `stable-canary` roda o stable mais recente só como aviso antecipado;
+    não bloqueia.
+17. **Orçamento de desempenho `[ALTERADO v2.1]`** (substitui o "< 30 ms"):
+    - `tick_logic` em Abstract (partida inteira): meta ≤ 40 ms no runner
+      do CI, medido por `criterion` no job `bench`. Um gate de teste em
+      release falha acima de 50 ms (25% de margem), para que toda regressão
+      apareça no PR que a introduz.
+    - Fase 12: 10 partidas em Abstract (uma rodada) em ≤ 400 ms, com
+      `hardwareConcurrency` workers no runner.
+    - O `WorldSimulator` usa `min(navigator.hardwareConcurrency, 10)`
+      workers, com barra de progresso e estimativa. Em hardware fraco,
+      degrada com elegância em vez de falhar.
+    - Tick a 5 Hz está **rejeitado** (violaria 3.A).
+
 ## 0.1 — Desvios registrados `[ALTERADO v2.1]`
 
 | Desvio | Motivo | Revisar em |
@@ -505,6 +521,28 @@ recalibrar contra a coluna "Real". As constantes estão em `AnchorTuning`,
 `decision.rs` e `resolver.rs`, cada uma com uma linha de racional.
 
 ## FASE 5 — Role Behaviors
+- **Ordem obrigatória `[ALTERADO v2.1]`:**
+  - (a) Refatorar para `TickFrame` e medir de novo.
+    **Gate:** se `tick_logic` passar de 40 ms, PARAR.
+  - (b) Investigar os ~876 desarmes como problema de modelo.
+  - (c) Calibrar chutes e passes em conjunto.
+  - (d) Restante: comportamentos por papel e `TuningParams`.
+- **`TickFrame` `[ALTERADO v2.1]`:** estrutura na pilha, montada uma vez
+  por tick lógico.
+  - **Conteúdo:**
+    - posições das 22 entidades no instante do tick (constantes durante o
+      tick, porque as trajetórias só são replanejadas no fim);
+    - âncoras de formação dos 22;
+    - fase de cada time;
+    - posse e bola parada, usadas pela `PhaseStateMachine`.
+  - **A bola não é cacheada:** o estado dela muda dentro do tick (recepção,
+    chute, desarme). `TickFrame::ball` deriva a posição do estado atual da
+    bola usando as posições cacheadas dos jogadores.
+  - **Regra:** `DecisionSystem`, `ActionResolver` e `PhaseStateMachine`
+    recebem `&TickFrame` e nunca chamam `pos_at` nem
+    `FormationAnchor::compute` diretamente.
+  - **Prova de equivalência:** o arquivo de referência de paridade não
+    muda.
 - State machines completas por posição e `DecisionSystem::choose_action`.
 - **Testes:**
   - Overlap Left: o lateral-esquerdo muda em ≤ 1 s.
@@ -673,7 +711,8 @@ recalibrar contra a coluna "Real". As constantes estão em `AnchorTuning`,
     sem erro de render.
 14. FPS: informativo no CI; gate manual ≥ 55 fps.
 15. `weekly_update` de 500k jogadores em < 150 ms.
-16. 20 clubes × 38 rodadas em < 10 s.
+16. 20 clubes × 38 rodadas em < 10 s, com `min(cores, 10)` workers; uma
+    rodada de 10 partidas em ≤ 400 ms no runner (ver Seção 0, item 17).
 17. Nenhuma alocação em `MatchEngine::tick_logic` nem em
     `PlayerDatabase::weekly_update` após o bootstrap (alocador contador).
 18. `DecisionSystem::choose_action` e `ActionResolver::resolve` sem `dt`
