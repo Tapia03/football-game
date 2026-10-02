@@ -16,6 +16,7 @@ pub mod parity;
 pub mod phase;
 pub mod resolver;
 pub mod role;
+pub mod runs;
 pub mod snapshot;
 pub mod state;
 pub mod tactics;

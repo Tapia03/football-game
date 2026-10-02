@@ -118,6 +118,9 @@ impl MatchEngine {
             yellow_cards: 0,
             sent_off: false,
             tackle_ready_tick: 0,
+            run_target: Vec2::ZERO,
+            run_until: 0,
+            run_ready_tick: 0,
             touch_ready_tick: 0,
         };
         let mut players = [placeholder; PLAYERS];
@@ -225,6 +228,7 @@ impl MatchEngine {
         s.phases = [home, away];
         frame.set_phases(s.phases);
         frame.compute_anchors(s);
+        crate::runs::plan_runs(s, &mut frame);
 
         let mut targets = [Vec2::ZERO; PLAYERS];
         let mut urgency = [0.6_f32; PLAYERS];
@@ -478,6 +482,13 @@ fn plan_shape(
         );
         targets[i] = target;
         urgency[i] = u;
+        // A live off-ball run overrides the shape (spec Fase 5 (c1), item 4).
+        if p.run_until > s.tick {
+            if let Some((run_target, run_urgency)) = crate::runs::active_run(s, frame, i) {
+                targets[i] = run_target;
+                urgency[i] = run_urgency;
+            }
+        }
     }
 }
 

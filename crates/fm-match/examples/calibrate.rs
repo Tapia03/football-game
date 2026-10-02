@@ -62,6 +62,8 @@ fn main() {
     // Possession: held ticks per side, possession spells, and xG per shot.
     let (mut held_home, mut held_all, mut spells) = (0u64, 0u64, 0u64);
     let (mut xg_sum, mut xg_shots) = (0.0f64, 0u64);
+    // Off-ball runs: started, ticks with a runner, runner-ticks past the line.
+    let (mut runs_started, mut run_ticks, mut runner_ticks, mut beyond) = (0u64, 0u64, 0u64, 0u64);
     let (mut rel_pass, mut rel_shot) = ([0u64; 6], [0u64; 6]);
     // How pass flights end: receiver, other teammate, opponent, out of play,
     // knocked loose (miscontrol / deflection).
@@ -161,6 +163,29 @@ fn main() {
                         last_side = Some(side);
                     }
                 }
+                let mut f = fm_match::TickFrame::capture(s);
+                f.observe_ball(s);
+                f.set_phases(s.phases);
+                f.compute_offside(s);
+                let mut any = false;
+                for (i, p) in s.players.iter().enumerate() {
+                    if p.run_until == s.tick + s.tuning.runs.run_ticks {
+                        runs_started += 1;
+                    }
+                    if fm_match::runs::active_run(s, &f, i).is_some() {
+                        any = true;
+                        runner_ticks += 1;
+                        if let Some(line) = f.offside_line(p.side) {
+                            let dir = s.attacking(p.side).direction();
+                            if (f.pos(i).x - line) * dir > 0.0 {
+                                beyond += 1;
+                            }
+                        }
+                    }
+                }
+                if any {
+                    run_ticks += 1;
+                }
                 prev_frame = fm_match::TickFrame::capture(s);
                 prev_held = matches!(s.ball, fm_match::state::BallState::Held { .. });
                 prev_ht = s.holder_ticks;
@@ -218,6 +243,12 @@ fn main() {
         100.0 * pass_end[4] as f64 / pe as f64
     );
     println!("  carrier decisions per match: {:.0}", decisions / n);
+    println!(
+        "  runs/match {:.0} | ticks with a runner {:.1}% | runner-ticks past the line {:.1}%",
+        runs_started as f64 / n,
+        100.0 * run_ticks as f64 / (54_000.0 * n),
+        100.0 * beyond as f64 / runner_ticks.max(1) as f64
+    );
     println!(
         "  possession home {:.1}% | spell {:.1} s held | xG/shot {:.3} | xG/match {:.2}",
         100.0 * held_home as f64 / held_all.max(1) as f64,

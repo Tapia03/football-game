@@ -881,6 +881,34 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
     qualquer direção. Não estimável antes de medir.
   - **Total estimado: +1,1% a +1,7%, no limite.** Se a medição passar de
     1,5%, PARAR e trazer o perfil.
+- **(c1) item 4 — estado `Run` (implementado) `[ALTERADO v2.1]`:**
+  - `runs.rs`: atacantes (`Striker`) e pontas (`Winger`) do time com a
+    posse, nas fases `InPossession`/`TransitionAttack`, com um companheiro
+    na bola. Nos ticks de cadência (a cada 3), quem está elegível (sem
+    corrida e fora do intervalo) e tem ≥ 4 m até a linha corre até 0,5 m
+    **aquém** da linha de impedimento, no vão lateral mais aberto (5
+    posições em ±8 m, defensores a até 10 m da linha). Dura 2,5 s;
+    intervalo `60 − 40 × off_the_ball` ticks. Sem RNG.
+  - A linha é calculada só nesses ticks e só se houver alguém elegível.
+  - A corrida vale enquanto a fase do time for de posse (inclusive com a
+    bola em voo, quando a posse fica "solta" mas a fase se mantém) e
+    sobrepõe a âncora no `plan_shape`. O portador e o receptor de passe
+    continuam sendo comandados por `on_ball`.
+  - **Custo medido: 535,6M, −0,85% sobre o item 3.** O custo direto
+    (linha + corridas) foi mais que compensado pelo efeito no jogo.
+  - **Jogo (180 partidas, contra o item 3):** gols 4,57 (antes 4,23, ~1,2
+    EP: ruído); passes 1.616 (+5%); acerto 85,7% (+2 pontos); posse
+    contínua 23,8 s. Corredor ativo em 62% dos ticks; **2.139 corridas por
+    partida** (real: dezenas; constante para (c2)). Corredor além da linha
+    em 3,4% dos ticks de corrida (o viés conhecido, sem apito).
+  - **Efeito grande:** a posse do mandante foi de 50,8% para **63,0%**. O
+    mandante da demo joga 4-4-2 (2 corredores); o visitante, 4-3-3 (3
+    corredores, com as duas pontas). Mais corredores = jogo mais direto
+    e menos posse. Plausível no futebol real, mas com intensidade a
+    revisar em (c2) junto com a frequência das corridas.
+  - Testes: corre até a linha e nunca além; mira o vão aberto; não corre
+    sem posse nem sem espaço; só atacantes e pontas.
+  - Golden de paridade regenerado (comportamento novo).
 - **Impedimento — só a linha, sem apito `[ALTERADO v2.1]`:**
   - a linha é dado do `TickFrame`: o penúltimo defensor (o goleiro conta),
     calculado uma vez por tick a partir das posições;

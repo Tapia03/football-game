@@ -16,7 +16,8 @@ de arquitetura e regras é o [`docs/SPEC.md`](SPEC.md); este arquivo só diz
   - (c1) item 2 (xT + moeda comum + cadência de decisão): feito, 540,5M.
   - (c1) item 3 (linha de impedimento): feito, 540,2M; calculada só nos
     ticks com corredor (desvio documentado no SPEC).
-  - Próximo: item 4 (estado `Run`).
+  - (c1) item 4 (estado `Run`): feito, 535,6M (−0,85%).
+  - Próximo: item 5 (passe em profundidade).
 - (d) Comportamentos por papel — não iniciado.
 
 ## PRs

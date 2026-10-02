@@ -311,6 +311,46 @@ impl Default for ValueTuning {
     }
 }
 
+/// Off-ball runs of strikers and wingers (spec Fase 5 (c1), item 4).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RunTuning {
+    /// Length of a run (ticks).
+    pub run_ticks: u32,
+    /// Pause before the next run: `base − skill · off_the_ball` (ticks).
+    pub cooldown_base: f32,
+    pub cooldown_skill: f32,
+    /// How far short of the offside line the runner aims (m).
+    pub onside_margin: f32,
+    /// Minimum room between runner and line to bother running (m).
+    pub min_room: f32,
+    /// Lateral search for the open lane: ± this much (m), 5 lanes.
+    pub lane_reach: f32,
+    /// Defenders within this depth of the line count for the lane (m).
+    pub line_depth: f32,
+    /// Lanes stay this far inside the touchlines (m).
+    pub touchline_margin: f32,
+    /// Fraction of top speed while running.
+    pub urgency: f32,
+}
+
+impl Default for RunTuning {
+    fn default() -> Self {
+        Self {
+            // A run in behind lasts ~2.5 s.
+            run_ticks: 25,
+            // Every ~6 s for a poor mover, every ~2 s for an elite one.
+            cooldown_base: 60.0,
+            cooldown_skill: 40.0,
+            onside_margin: 0.5,
+            min_room: 4.0,
+            lane_reach: 8.0,
+            line_depth: 10.0,
+            touchline_margin: 3.0,
+            urgency: 0.95,
+        }
+    }
+}
+
 /// All engine calibration. `Default` = each block's current calibration.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct TuningParams {
@@ -320,6 +360,7 @@ pub struct TuningParams {
     pub shot: ShotTuning,
     pub xg: XgTuning,
     pub value: ValueTuning,
+    pub runs: RunTuning,
     pub duel: DuelTuning,
     pub defending: DefendingTuning,
     pub discipline: DisciplineTuning,

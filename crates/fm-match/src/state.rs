@@ -36,6 +36,12 @@ pub struct MatchPlayer {
     pub tackle_ready_tick: u32,
     /// Tick before which the player cannot touch a loose ball (just kicked it).
     pub touch_ready_tick: u32,
+    /// Off-ball run (spec Fase 5 (c1), item 4): where to, and the tick it
+    /// ends (`run_until <= tick`: not running).
+    pub run_target: Vec2,
+    pub run_until: u32,
+    /// Tick before which the player will not start another run.
+    pub run_ready_tick: u32,
 }
 
 impl MatchPlayer {
