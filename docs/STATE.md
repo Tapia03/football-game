@@ -17,10 +17,10 @@ de arquitetura e regras é o [`docs/SPEC.md`](SPEC.md); este arquivo só diz
   - (c1) item 3 (linha de impedimento): feito, 540,2M; calculada só nos
     ticks com corredor (desvio documentado no SPEC).
   - (c1) item 4 (estado `Run`): feito, 535,6M (−0,85%).
-  - (c1) item 5 (passe em profundidade): implementado e **desligado**
-    (`through_balls`/`lofted_lane` = false). Pausado: 0,2 por partida
-    ligado como desenhado (+3,1%); 134 por partida com a correção do passe
-    pelo alto (+5,1%). Decisão pendente.
+  - (c1) item 5: passo 1 (`lofted_lane`) commitado, 532,6M. Passos 2+3
+    medidos e guardados (não commitados): sozinho o 2 estoura (+2,2% sobre
+    o item 4); 2+3 juntos = +1,22% e 13,3 passes em profundidade/partida.
+    Decisão pendente: commitar 2+3 juntos.
 - (d) Comportamentos por papel — não iniciado.
 
 ## PRs

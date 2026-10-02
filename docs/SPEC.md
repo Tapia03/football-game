@@ -965,6 +965,29 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
     (jogo mais direto), xG por partida 7,9 → 8,6. **Posse do mandante
     63% → 75%:** a assimetria 4-4-2 × 4-3-3 cresce de novo; para (c2)
     (separar formação de qualidade de elenco). Golden regenerado.
+  - **Passos 2 e 3 — medidos, não commitados (2026-10-02):**
+    - Passo 2 (disputa pela bola redesenhada: corredor embalado sem reação;
+      defensor de linha com reação + 0,5 s de giro se a bola vai às costas;
+      goleiro sem giro, com alcance das mãos; chegada de cada um contada a
+      partir da chegada da bola, rasteira por solução exata do rolamento,
+      alta pelo tempo de voo) **com `through_balls` ligado**: 36 passes em
+      profundidade por partida e **547,4M = +2,2% sobre o item 4** →
+      estoura o orçamento sozinho.
+    - Passos 2+3 (só corredores a ≤ 3 m do ponto legal): **542,1M =
+      +1,22% sobre o item 4** e **13,3 ± 0,6 passes em profundidade por
+      partida** (meta 5–15). O resto do jogo fica igual ao passo 1 (gols
+      5,16, acerto 78,3%): os passes em profundidade substituem outros
+      passes, não somam gols.
+    - Código guardado fora da branch (stash + patch na sessão), aguardando
+      decisão: commitar 2+3 juntos, ou outro caminho.
+- **Observação do usuário na v0 (2026-10-02), medida (30 partidas, código
+  do passo 1):** no mandante (4-4-2), os dois meias centrais (#7, #8) têm
+  **72% das posses** do time; zagueiros e laterais, 0,1–0,9% cada. No
+  visitante (4-3-3): meias 20–22%, atacantes e pontas 13–18%, defesa
+  0,5–1,4%. No real, zagueiros e laterais estão entre os que mais tocam.
+  Hipótese: a moeda comum quase nunca escolhe passe para trás (xT menor),
+  sem construção desde a defesa. Para (d) (comportamentos por papel) e
+  (c2).
 - **Impedimento — só a linha, sem apito `[ALTERADO v2.1]`:**
   - a linha é dado do `TickFrame`: o penúltimo defensor (o goleiro conta),
     calculado uma vez por tick a partir das posições;
