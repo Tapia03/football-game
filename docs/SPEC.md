@@ -796,6 +796,15 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
       1,5%); 3 = 540,5M; 4 = 512,9M, mas quantiza o momento do passe (a
       faixa de 1,5–2 s com a bola cai de 43% para 16% dos passes) e corta
       ~27% dos botes. Fixado em **3**.
+    - **Por que 3 e não 4 (comportamento, 180 partidas cada):** a erosão
+      do valor de segurar faz o passe vencer por volta de 1,5–2 s com a
+      bola. Com cadência 3, as avaliações caem nos ticks 16 e 19, dentro
+      da janela; com 4, em 17 e 21, e a de 21 já está fora. Medido: passes
+      soltos entre 1,5 e 2 s = 44% (sem cadência), 44% (3), **18% (4)**;
+      depois de 2 s = 30%, 29%, **56%**. Com 4 a posse contínua sobe 13%
+      sobre o jogo sem cadência (3: +6,5%) e os botes caem 21%. A
+      economia de 4 (−5% de instruções) viria de um artefato de
+      quantização, não de jogo.
     - **Jogo antes/depois da cadência 3** (180 partidas cada, média ± erro
       padrão sobre 6 blocos de 30):
 
@@ -820,6 +829,11 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
       experimental (reavaliar todo tick dentro do raio de chute) recuperou
       só ~0,2 gol (4,04 → 4,22 em 60 partidas), dentro do ruído. Não
       adotada.
+    - **Queda de gols com a cadência: efeito observado, causa não
+      confirmada, candidato para (c2).** −17% em 60 partidas, −8% em 180
+      (dentro do ruído). A hipótese da janela de chute continua possível
+      com outra variante (reavaliar **ao entrar** no raio de chute, não em
+      todo tick), ainda não testada.
     - A cadência é parte do tick lógico, igual em Full, Reduced e Abstract:
       a paridade entre LODs se mantém. Ela muda o comportamento, então o
       golden é **regenerado** (esperado em (c1)).
@@ -851,6 +865,22 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
     (−0,06%).
   - Testes: penúltimo defensor com goleiro na linha, goleiro adiantado
     virando a linha, expulso não conta, linha só para quem tem a posse.
+- **(c1) item 4 — estado `Run`: estimativa de custo antes do código.**
+  Orçamento: +1,5% sobre o item 3 (540,2M → ≤ 548,3M, ~8,1M instruções).
+  - **Dívida do item 3 (`compute_offside`):** medido +1,82% (~9,8M) se
+    calculado em todo tick com posse (~73% dos ticks). **Isso sozinho não
+    cabe.** Desenho para caber: os corredores escolhem o alvo da corrida
+    na mesma cadência do portador (a cada 3 ticks, todos no mesmo tick),
+    e a linha só é calculada nesses ticks, se houver atacante elegível.
+    Teto: 1/3 → **≤ +0,61%**; esperado ~+0,4%.
+  - **Lógica do `Run`:** seguir o alvo em todo tick (≤ 3 corredores, ~20
+    instruções cada) ≈ +0,4%; escolher o alvo nos ticks de cadência
+    (procura do vão entre defensores) ≈ +0,3–0,7%.
+  - **Efeito indireto:** corridas mudam o jogo (mais passes adiante, posse
+    diferente), o que muda o custo de `best_pass` e da interceptação em
+    qualquer direção. Não estimável antes de medir.
+  - **Total estimado: +1,1% a +1,7%, no limite.** Se a medição passar de
+    1,5%, PARAR e trazer o perfil.
 - **Impedimento — só a linha, sem apito `[ALTERADO v2.1]`:**
   - a linha é dado do `TickFrame`: o penúltimo defensor (o goleiro conta),
     calculado uma vez por tick a partir das posições;
