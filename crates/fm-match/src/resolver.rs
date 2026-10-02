@@ -55,6 +55,7 @@ impl ActionResolver {
                 {
                     let side = state.players[actor].side;
                     state.team_mut(side).through_passes += 1;
+                    state.through_kick_ms = Some(state.now_ms());
                 }
                 let arrive = state.tuning.pass.through_arrival_speed;
                 Self::resolve_pass_to(state, frame, actor, usize::from(to), target, arrive);
@@ -505,6 +506,10 @@ impl ActionResolver {
             if let FlightIntent::Pass { receiver } = intent {
                 if state.players[usize::from(receiver)].side == p.side {
                     state.team_mut(p.side).passes_completed += 1;
+                    #[cfg(feature = "diagnostics")]
+                    if state.through_kick_ms == Some(flight.kick_ms) {
+                        state.team_mut(p.side).through_completed += 1;
+                    }
                 }
             }
             state.ball = BallState::Held {

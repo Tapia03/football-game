@@ -266,6 +266,9 @@ pub struct ValueTuning {
     pub pass_intercept_max: f32,
     pub pass_speed: f32,
     pub react_s: f32,
+    /// Extra time an outfield defender needs to turn when the ball is
+    /// played behind them (through-ball race, s).
+    pub turn_s: f32,
     pub body_reach: f32,
     /// A lofted pass can only be cut within this distance of the kick, or
     /// of where it lands (m).
@@ -311,6 +314,7 @@ impl Default for ValueTuning {
             // reaches ~0.8 m.
             pass_speed: 14.0,
             react_s: 0.25,
+            turn_s: 0.5,
             body_reach: 0.8,
             lofted_takeoff: 2.0,
             lofted_landing: 5.0,

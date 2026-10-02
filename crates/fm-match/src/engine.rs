@@ -152,6 +152,8 @@ impl MatchEngine {
             decisions: 0,
             #[cfg(feature = "diagnostics")]
             through_passes: 0,
+            #[cfg(feature = "diagnostics")]
+            through_completed: 0,
         };
         let mut state = MatchState {
             match_seed: setup.match_seed,
@@ -174,6 +176,8 @@ impl MatchEngine {
             finished: false,
             tuning: setup.tuning,
             events: EventLog::new(),
+            #[cfg(feature = "diagnostics")]
+            through_kick_ms: None,
         };
         line_up_for_kickoff(&mut state, Side::Home);
         Self { state }

@@ -118,9 +118,12 @@ pub struct TeamState {
     /// diagnostics; not used by the engine).
     #[cfg(feature = "diagnostics")]
     pub decisions: u32,
-    /// Through balls played (diagnostics only).
+    /// Through balls played, and controlled by their receiver (diagnostics
+    /// only).
     #[cfg(feature = "diagnostics")]
     pub through_passes: u32,
+    #[cfg(feature = "diagnostics")]
+    pub through_completed: u32,
 }
 
 /// Everything `tick_logic` reads and writes.
@@ -143,6 +146,9 @@ pub struct MatchState {
     pub finished: bool,
     pub tuning: TuningParams,
     pub events: EventLog,
+    /// Kick time of the last through ball (diagnostics only).
+    #[cfg(feature = "diagnostics")]
+    pub through_kick_ms: Option<u32>,
 }
 
 impl MatchState {

@@ -47,19 +47,30 @@ fn pick(db: &PlayerDatabase, formation: Formation, used: &mut Vec<PlayerId>) -> 
 /// A 4-4-2 vs 4-3-3 match between two squads drawn from a generated pool.
 #[must_use]
 pub fn demo_match(seed: u64) -> (PlayerDatabase, MatchSetup) {
+    demo_match_with(seed, Formation::F442, Formation::F433)
+}
+
+/// Like [`demo_match`] with chosen formations; each squad is picked for its
+/// own formation (home first).
+#[must_use]
+pub fn demo_match_with(
+    seed: u64,
+    home_formation: Formation,
+    away_formation: Formation,
+) -> (PlayerDatabase, MatchSetup) {
     let db = generate_database(300, seed, 2026);
     let mut used = Vec::new();
-    let home = pick(&db, Formation::F442, &mut used);
-    let away = pick(&db, Formation::F433, &mut used);
+    let home = pick(&db, home_formation, &mut used);
+    let away = pick(&db, away_formation, &mut used);
     let setup = MatchSetup {
         match_seed: seed,
         home: TeamSheet {
-            formation: Formation::F442,
+            formation: home_formation,
             tactics: Tactics::default(),
             players: home,
         },
         away: TeamSheet {
-            formation: Formation::F433,
+            formation: away_formation,
             tactics: Tactics::default(),
             players: away,
         },

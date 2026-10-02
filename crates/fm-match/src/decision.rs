@@ -57,6 +57,21 @@ fn first_touch(r: &MatchPlayer) -> f32 {
         / 100.0
 }
 
+/// Seconds a pass of length `d` takes to reach its point, as the resolver
+/// plays it: lofted hang time beyond `lofted_dist`, otherwise a ground
+/// ball arriving at `through_arrival_speed` under rolling damping
+/// (`v = v0·e^(−k·t)`, `v0 = arrive + k·d`).
+fn ball_arrival_s(state: &MatchState, d: f32) -> f32 {
+    let k = &state.tuning.pass;
+    if d > k.lofted_dist {
+        k.lofted_base_s + d / k.lofted_per_m
+    } else {
+        let damping = crate::ball::ROLL_DAMPING;
+        let arrive = k.through_arrival_speed.max(0.1);
+        fm_core::math::ln((arrive + damping * d) / arrive) / damping
+    }
+}
+
 /// Chance a ball played from `from` to `target` survives every opponent of
 /// `side` along its lane (reach-in-time model, spec Fase 5 (c1) item 2).
 /// Passes longer than `lofted_dist` are played in the air (as the resolver
@@ -330,6 +345,10 @@ impl DecisionSystem {
             if i == me || r.side != p.side || !r.active() || r.run_until <= state.tick {
                 continue;
             }
+            // Only runs timed on the line: within 3 m of the onside point.
+            if (r.run_target.x - frame.pos(i).x) * dir > 3.0 {
+                continue;
+            }
             let target = Vec2::new(
                 (r.run_target.x + dir * state.tuning.pass.through_lead)
                     .clamp(1.0, pitch::LENGTH - 1.0),
@@ -343,17 +362,7 @@ impl DecisionSystem {
             if gain <= floor || gain <= best.0 {
                 continue;
             }
-            // Race: the runner against the quickest opponent (keeper too).
-            let t_runner = frame.pos(i).distance(target) / r.top_speed.max(0.1);
-            let t_opponent = state
-                .players
-                .iter()
-                .enumerate()
-                .filter(|(_, o)| o.side != p.side && o.active())
-                .map(|(j, o)| frame.pos(j).distance(target) / o.top_speed.max(0.1))
-                .fold(f32::MAX, f32::min)
-                + v.react_s;
-            let race = (0.5 + (t_opponent - t_runner) / v.race_scale_s).clamp(0.0, 1.0);
+            let race = Self::through_race(state, frame, me, i, target, d);
             let accuracy =
                 (1.0 - d * v.pass_error_per_m * (1.5 - passer_skill(p))).max(v.pass_accuracy_min);
             let control = (ct.base + ct.touch * first_touch(r) - v.through_control_penalty)
@@ -366,6 +375,52 @@ impl DecisionSystem {
             }
         }
         best
+    }
+
+    /// Chance the runner `to` gets to a through ball aimed at `target`
+    /// (distance `d` from the passer) before any opponent (spec Fase 5 (c1)
+    /// item 5, step 2). Everyone's arrival counts from no earlier than the
+    /// ball's: whoever is there first waits for it.
+    /// - Runner: already running at top speed (no reaction, no
+    ///   acceleration).
+    /// - Outfield opponent: reaction, plus a turn when the point is behind
+    ///   them (closer to their own goal line than they are).
+    /// - Keeper: reaction only (faces the play), hands reach `keeper_reach`.
+    fn through_race(
+        state: &MatchState,
+        frame: &TickFrame,
+        me: usize,
+        to: usize,
+        target: Vec2,
+        d: f32,
+    ) -> f32 {
+        let v = &state.tuning.value;
+        let side = state.players[me].side;
+        let t_ball = ball_arrival_s(state, d);
+        let runner = &state.players[to];
+        let t_runner = (frame.pos(to).distance(target) / runner.top_speed.max(0.1)).max(t_ball);
+        // The defending side's goal is the one `side` attacks.
+        let toward_own_goal = state.attacking(side).direction();
+        let keeper_reach = state.tuning.control.keeper_reach;
+        let t_opponent = state
+            .players
+            .iter()
+            .enumerate()
+            .filter(|(_, o)| o.side != side && o.active())
+            .map(|(j, o)| {
+                let pos = frame.pos(j);
+                let speed = o.top_speed.max(0.1);
+                let t = if o.role == Role::Goalkeeper {
+                    v.react_s + (pos.distance(target) - keeper_reach).max(0.0) / speed
+                } else {
+                    let behind = (target.x - pos.x) * toward_own_goal > 0.0;
+                    let turn = if behind { v.turn_s } else { 0.0 };
+                    v.react_s + turn + pos.distance(target) / speed
+                };
+                t.max(t_ball)
+            })
+            .fold(f32::MAX, f32::min);
+        (0.5 + (t_opponent - t_runner) / v.race_scale_s).clamp(0.0, 1.0)
     }
 
     /// Best pass target and its expected value: success × xT at the

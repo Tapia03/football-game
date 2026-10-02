@@ -965,21 +965,55 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
     (jogo mais direto), xG por partida 7,9 → 8,6. **Posse do mandante
     63% → 75%:** a assimetria 4-4-2 × 4-3-3 cresce de novo; para (c2)
     (separar formação de qualidade de elenco). Golden regenerado.
-  - **Passos 2 e 3 — medidos, não commitados (2026-10-02):**
-    - Passo 2 (disputa pela bola redesenhada: corredor embalado sem reação;
-      defensor de linha com reação + 0,5 s de giro se a bola vai às costas;
-      goleiro sem giro, com alcance das mãos; chegada de cada um contada a
-      partir da chegada da bola, rasteira por solução exata do rolamento,
-      alta pelo tempo de voo) **com `through_balls` ligado**: 36 passes em
-      profundidade por partida e **547,4M = +2,2% sobre o item 4** →
-      estoura o orçamento sozinho.
-    - Passos 2+3 (só corredores a ≤ 3 m do ponto legal): **542,1M =
-      +1,22% sobre o item 4** e **13,3 ± 0,6 passes em profundidade por
-      partida** (meta 5–15). O resto do jogo fica igual ao passo 1 (gols
-      5,16, acerto 78,3%): os passes em profundidade substituem outros
-      passes, não somam gols.
-    - Código guardado fora da branch (stash + patch na sessão), aguardando
-      decisão: commitar 2+3 juntos, ou outro caminho.
+  - **Passo 2 (reenquadrado): tempo de chegada + restrição a corredor em
+    posição legal — um passo só.** O "passo 2" original (só a disputa pela
+    bola, sem restringir quem pode receber) estava mal definido: 36 passes
+    em profundidade por partida não é meio caminho, é defeito. A mecânica
+    é uma só:
+    - **tempo de chegada:** bola (rasteira: solução exata do rolamento;
+      alta: tempo de voo), corredor embalado sem reação, defensor de linha
+      com reação + 0,5 s de giro se a bola vai às costas, goleiro sem giro
+      e com alcance das mãos; quem chega antes espera a bola;
+    - **só corredores a ≤ 3 m do ponto legal** podem receber.
+    - Medido ligado: 542,1M (+1,22% sobre o item 4) e **13,3 ± 0,6 passes
+      em profundidade por partida** (meta 5–15).
+  - **Item 5 NÃO fechado: acerto dos passes em profundidade ≈ 0,3%**
+    (outros passes: 79%), medido com contador exato (`diagnostics`). Quase
+    todos falham. Causa provável: a estimativa supõe inércia (corredor
+    embalado) e giro do defensor, mas a **cinemática do motor não tem
+    nenhum dos dois** (velocidade máxima instantânea, sem reação). É a
+    mesma classe de erro do passo 1: **a estimativa tem que usar a mesma
+    física da execução.** O código fica commitado com `through_balls =
+    false` (comportamento e golden do passo 1).
+  - **Regra derivada (vale para os itens seguintes):** toda estimativa da
+    decisão usa a cinemática e as regras que o motor de fato executa; se o
+    modelo precisar de inércia ou reação, elas entram primeiro na
+    cinemática (mudança de modelo, decisão do usuário), depois na
+    estimativa.
+- **Assimetria de posse — causa isolada (2026-10-02, 60 partidas cada):**
+
+  | Experimento | Posse do mandante |
+  |---|---|
+  | 4-4-2 (casa) × 4-3-3 | 73–74% |
+  | 4-3-3 (casa) × 4-4-2 | 26–28% (o 4-4-2 segue com ~73%) |
+  | 4-4-2 × 4-4-2 | 49–52% |
+  | 4-3-3 × 4-3-3 | 49–50% |
+  | 4-4-2 × 4-3-3 sem corridas e sem passe em profundidade | 50–53% |
+
+  Não é lado nem elenco: é a **formação somada às corridas**. O 4-3-3 tem 3
+  corredores (atacante + 2 pontas) que ficam correndo para a linha em ~62%
+  dos ticks; o portador fica sem apoio curto e os passes longos para quem
+  está na linha falham. O 4-4-2 corre só com 2 atacantes, e os meias de
+  lado ficam. **É estrutural** (frequência e equilíbrio corrida × apoio),
+  não calibração: vira item de (c1), ligado ao item 6 (apoio sem bola).
+- **Gols contra o real, não contra o passo anterior (regra para (c2)):**
+  real ~2,7. Item 4: 4,6; passo 1: 5,2; sem corridas: 3,6. Os gols
+  sobem porque cada passo de realismo acrescentou **ataque** (chute por
+  xG, corridas até a linha sem apito de impedimento, passe pelo alto por
+  cima da defesa) sem a contraparte **defensiva**: ninguém acompanha o
+  corredor (a defesa só contém o portador e cobre atrás dele), não há
+  linha de impedimento ativa nem goleiro saindo do gol. Em (c2), toda
+  métrica é comparada com o real; o passo anterior é linha de base móvel.
 - **Observação do usuário na v0 (2026-10-02), medida (30 partidas, código
   do passo 1):** no mandante (4-4-2), os dois meias centrais (#7, #8) têm
   **72% das posses** do time; zagueiros e laterais, 0,1–0,9% cada. No

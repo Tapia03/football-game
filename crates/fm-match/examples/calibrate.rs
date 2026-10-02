@@ -21,6 +21,8 @@ fn apply(t: &mut TuningParams, key: &str, v: f32) {
         "shoot_range" => t.decision.shoot_range = v,
         "block_radius" => t.xg.block_radius = v,
         "act_margin" => t.value.act_margin = v,
+        "through_balls" => t.value.through_balls = v > 0.5,
+        "run_ticks" => t.runs.run_ticks = u,
         "decision_cadence_ticks" => t.decision.decision_cadence_ticks = u,
         "pass_intercept_max" => t.value.pass_intercept_max = v,
         "hold_keep_pressed" => t.value.hold_keep_pressed = v,
@@ -60,6 +62,7 @@ fn main() {
     let mut dead = 0.0;
     let mut decisions = 0.0;
     let mut throughs = 0.0;
+    let (mut through_ok, mut passes_all, mut passes_ok_all) = (0.0, 0.0, 0.0);
     // Possession: held ticks per side, possession spells, and xG per shot.
     let (mut held_home, mut held_all, mut spells) = (0u64, 0u64, 0u64);
     let (mut xg_sum, mut xg_shots) = (0.0f64, 0u64);
@@ -75,7 +78,19 @@ fn main() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
     for seed in first..first + u64::from(n) {
-        let (db, mut setup) = demo_match(seed);
+        // FM_FORMATIONS=433,442 overrides the demo's 4-4-2 (home) vs 4-3-3.
+        let (db, mut setup) = match std::env::var("FM_FORMATIONS").ok().as_deref() {
+            Some(spec) => {
+                let f = |s: &str| match s {
+                    "442" => fm_match::Formation::F442,
+                    "433" => fm_match::Formation::F433,
+                    other => panic!("unknown formation {other}"),
+                };
+                let (h, a) = spec.split_once(',').expect("home,away");
+                fm_match::demo::demo_match_with(seed, f(h), f(a))
+            }
+            None => demo_match(seed),
+        };
         setup.tuning = tuning;
         let mut e = MatchEngine::new(&setup, &db);
         let mut dead_ticks = 0u32;
@@ -216,6 +231,9 @@ fn main() {
         tackles += f64::from(s.teams[0].tackles + s.teams[1].tackles);
         decisions += f64::from(s.teams[0].decisions + s.teams[1].decisions);
         throughs += f64::from(s.teams[0].through_passes + s.teams[1].through_passes);
+        through_ok += f64::from(s.teams[0].through_completed + s.teams[1].through_completed);
+        passes_all += f64::from(s.teams[0].passes + s.teams[1].passes);
+        passes_ok_all += f64::from(s.teams[0].passes_completed + s.teams[1].passes_completed);
     }
     let n = f64::from(n);
     println!(
@@ -248,6 +266,11 @@ fn main() {
         "  carrier decisions per match: {:.0} | through balls {:.1}",
         decisions / n,
         throughs / n
+    );
+    println!(
+        "  completion: through balls {:.1}% | other passes {:.1}%",
+        100.0 * through_ok / f64::max(throughs, 1.0),
+        100.0 * (passes_ok_all - through_ok) / f64::max(passes_all - throughs, 1.0)
     );
     println!(
         "  runs/match {:.0} | ticks with a runner {:.1}% | runner-ticks past the line {:.1}%",
