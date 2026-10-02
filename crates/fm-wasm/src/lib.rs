@@ -147,6 +147,9 @@ pub mod spike {
     }
 
     /// The whole frame as a triangle mesh for a `width_px` × `height_px` canvas.
+    ///
+    /// # Panics
+    /// Never: `Full` LOD always yields a snapshot and shirt numbers are 1..=11.
     #[must_use]
     pub fn scene_mesh(width_px: u32, height_px: u32) -> Mesh {
         let mut shapes = Vec::new();
