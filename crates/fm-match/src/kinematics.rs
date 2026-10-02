@@ -1,12 +1,21 @@
-//! Analytic player movement (spec 3.A.2): straight line at constant speed,
-//! evaluated in closed form. `pos_at` is a pure function of the trajectory
-//! and the query time, so sampling at 60 Hz, 10 Hz or never gives identical
-//! logical state.
+//! Analytic player movement (spec 3.A.2, Fase 5 "Física de movimento"):
+//! each planned move has up to three phases, all in closed form —
+//! reaction (keep the previous velocity), constant acceleration toward the
+//! wanted velocity, and a straight cruise to the target at constant speed.
+//! `pos_at` is a pure function of the trajectory and the query time, so
+//! sampling at 60 Hz, 10 Hz or never gives identical logical state.
+//!
+//! With `max_accel = ∞`, `reaction_ms = 0` and `turn_rate = ∞` the first two
+//! phases last zero and the cruise is exactly the original model.
 
 use fm_core::Vec2;
 
+use crate::tuning::KinematicsTuning;
+
 /// Below this distance a trajectory is "already there".
 const ARRIVED_EPS: f32 = 1e-4;
+/// Below this speed a player is standing and can face any way (m/s).
+const MOVING_SPEED: f32 = 0.5;
 
 /// Parameters of one planned movement. Match time is in integer
 /// milliseconds so trajectories never accumulate float error over 90 min.
@@ -17,6 +26,105 @@ pub struct Trajectory {
     /// Metres per second, > 0.
     pub speed: f32,
     pub t_start_ms: u32,
+}
+
+/// Movement physics of one planned move (spec Fase 5, "Física de
+/// movimento"), kept apart from [`Trajectory`] so that the instant model
+/// (no `Lead`) stays exactly the original code. Phases, from `t_start_ms`:
+/// keep `react_v` for `react_s`; accelerate at `accel` until `cruise_s`;
+/// cruise along the trajectory and brake at `brake` to stop on the target.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Lead {
+    pub origin: Vec2,
+    pub react_v: Vec2,
+    pub react_s: f32,
+    pub accel: Vec2,
+    pub cruise_s: f32,
+    /// Braking deceleration on arrival (m/s²).
+    pub brake: f32,
+}
+
+impl Lead {
+    /// Distance covered after `t` seconds of cruise over a leg of length
+    /// `len` at `v`, braking at `a` to stop at its end; and the speed then.
+    #[inline]
+    fn cruise(len: f32, v: f32, a: f32, t: f32) -> (f32, f32) {
+        // Brake harder when the leg is too short to brake at `a`.
+        let brake_len = v * v / (2.0 * a);
+        let (cruise_len, a) = if brake_len >= len {
+            (0.0, v * v / (2.0 * len))
+        } else {
+            (len - brake_len, a)
+        };
+        let t1 = cruise_len / v;
+        if t <= t1 {
+            return (v * t, v);
+        }
+        let tau = (t - t1).min(v / a);
+        (
+            cruise_len + v * tau - 0.5 * a * tau * tau,
+            (v - a * tau).max(0.0),
+        )
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn pos(&self, traj: &Trajectory, t_ms: u32) -> Vec2 {
+        #[allow(clippy::cast_precision_loss)] // < 2^24 ms
+        let e = t_ms.saturating_sub(traj.t_start_ms) as f32 / 1000.0;
+        if e < self.react_s {
+            return self.origin + self.react_v * e;
+        }
+        if e < self.cruise_s {
+            let t = e - self.react_s;
+            let accel_origin = self.origin + self.react_v * self.react_s;
+            return accel_origin + self.react_v * t + self.accel * (0.5 * t * t);
+        }
+        let len = traj.start.distance(traj.target);
+        if len < ARRIVED_EPS {
+            return traj.target;
+        }
+        let (s, _) = Self::cruise(len, traj.speed, self.brake, e - self.cruise_s);
+        traj.start + (traj.target - traj.start) * (s.min(len) / len)
+    }
+
+    #[must_use]
+    pub fn vel(&self, traj: &Trajectory, t_ms: u32) -> Vec2 {
+        #[allow(clippy::cast_precision_loss)] // < 2^24 ms
+        let e = t_ms.saturating_sub(traj.t_start_ms) as f32 / 1000.0;
+        if e < self.react_s {
+            return self.react_v;
+        }
+        if e < self.cruise_s {
+            return self.react_v + self.accel * (e - self.react_s);
+        }
+        let len = traj.start.distance(traj.target);
+        if len < ARRIVED_EPS {
+            return Vec2::ZERO;
+        }
+        let (_, v) = Self::cruise(len, traj.speed, self.brake, e - self.cruise_s);
+        (traj.target - traj.start) * (v / len)
+    }
+}
+
+/// Turn limit for one re-plan: cos and sin of the largest heading change.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TurnLimit {
+    pub cos: f32,
+    pub sin: f32,
+}
+
+impl TurnLimit {
+    /// Largest heading change for `turn_rate` (rad/s) over `dt_s`; `None`
+    /// when unlimited.
+    #[must_use]
+    pub fn new(turn_rate: f32, dt_s: f32) -> Option<Self> {
+        let max = turn_rate * dt_s;
+        (max.is_finite() && max < core::f32::consts::PI).then(|| Self {
+            cos: fm_core::math::cos(max),
+            sin: fm_core::math::sin(max),
+        })
+    }
 }
 
 pub struct PlayerKinematics;
@@ -53,7 +161,110 @@ impl PlayerKinematics {
         Self::plan_trajectory(Self::pos_at(current, t_ms), target, speed, t_ms)
     }
 
-    /// Position at `t_ms`. Times before the start clamp to the start.
+    /// True when the physics reduce to instant velocity changes (the
+    /// original model): no reaction, unlimited acceleration and turning.
+    #[inline]
+    #[must_use]
+    pub fn instant(k: &KinematicsTuning, turn: Option<TurnLimit>) -> bool {
+        k.max_accel.is_infinite() && k.reaction_ms == 0 && turn.is_none()
+    }
+
+    /// Re-plans a moving player (spec Fase 5, "Física de movimento"): from
+    /// `pos` toward `target` at `speed`, given its current move (`current`,
+    /// `lead`), with reaction, limited acceleration and turning, and braking
+    /// to stop on the target. `turn` is the per-re-plan heading limit.
+    #[must_use]
+    pub fn steer(
+        current: (&Trajectory, Option<&Lead>),
+        pos: Vec2,
+        target: Vec2,
+        speed: f32,
+        t_ms: u32,
+        k: &KinematicsTuning,
+        turn: Option<TurnLimit>,
+    ) -> (Trajectory, Lead) {
+        let (traj, lead) = current;
+        let v0 = lead.map_or_else(|| Self::vel_at(traj, t_ms), |l| l.vel(traj, t_ms));
+        let (target, speed) = if speed > 0.0 {
+            (target, speed)
+        } else {
+            (pos, 0.0)
+        };
+        let to = target - pos;
+        let dist = to.length();
+        let mut dir = if dist > ARRIVED_EPS {
+            to / dist
+        } else {
+            Vec2::ZERO
+        };
+        // Limited turning from the current heading; standing: any way.
+        let v0_len = v0.length();
+        if let Some(lim) = turn {
+            if v0_len > MOVING_SPEED && dist > ARRIVED_EPS {
+                let heading = v0 / v0_len;
+                if heading.dot(dir) < lim.cos {
+                    let left = heading.x * dir.y - heading.y * dir.x >= 0.0;
+                    let side = if left { lim.sin } else { -lim.sin };
+                    let normal = Vec2::new(-heading.y, heading.x);
+                    dir = heading * lim.cos + normal * side;
+                }
+            }
+        }
+        // Reaction: a new intent (target moved more than the threshold)
+        // keeps the old velocity for `reaction_ms`; one in progress goes on.
+        #[allow(clippy::cast_precision_loss)] // ms intervals ≪ 2^24
+        let elapsed_s = t_ms.saturating_sub(traj.t_start_ms) as f32 / 1000.0;
+        let current_react = lead.map_or(0.0, |l| l.react_s);
+        #[allow(clippy::cast_precision_loss)] // < 2^24
+        let react_s = if k.reaction_ms == 0 {
+            0.0
+        } else if current_react > elapsed_s {
+            current_react - elapsed_s
+        } else if traj.target.distance(target) > k.reaction_threshold {
+            k.reaction_ms as f32 / 1000.0
+        } else {
+            0.0
+        };
+        // Accelerate toward the wanted velocity (capped by what is left to
+        // run: no point sprinting past a target one stride away).
+        let accel_origin = pos + v0 * react_s;
+        let wanted = speed.min(fm_core::math::sqrt(2.0 * k.max_accel * dist));
+        let dv = dir * wanted - v0;
+        let dv_len = dv.length();
+        let (accel, accel_s) = if k.max_accel.is_finite() && dv_len > ARRIVED_EPS {
+            (dv * (k.max_accel / dv_len), dv_len / k.max_accel)
+        } else {
+            (Vec2::ZERO, 0.0)
+        };
+        let start = accel_origin + v0 * accel_s + accel * (0.5 * accel_s * accel_s);
+        // Cruise along the wanted direction up to the target's projection on
+        // it, braking to stop there; a stand request stops where it ends up.
+        let cruise = if wanted > MOVING_SPEED * 0.1 && dist > ARRIVED_EPS {
+            let along = (target - start).dot(dir).max(0.0);
+            Self::plan_trajectory(start, start + dir * along, wanted, t_ms)
+        } else {
+            Self::plan_trajectory(start, start, 0.0, t_ms)
+        };
+        (
+            cruise,
+            Lead {
+                origin: pos,
+                react_v: v0,
+                react_s,
+                accel,
+                cruise_s: react_s + accel_s,
+                brake: if k.max_accel.is_finite() {
+                    k.max_accel
+                } else {
+                    f32::MAX
+                },
+            },
+        )
+    }
+
+    /// Position at `t_ms` on an instant-model move. Times before the start
+    /// clamp to the start.
+    #[inline]
     #[must_use]
     pub fn pos_at(traj: &Trajectory, t_ms: u32) -> Vec2 {
         let dist = traj.start.distance(traj.target);
@@ -67,7 +278,20 @@ impl PlayerKinematics {
         traj.start.lerp(traj.target, frac)
     }
 
-    /// Match time at which the player reaches the target (rounded up to ms).
+    /// Velocity at `t_ms` on an instant-model move (zero once arrived).
+    #[must_use]
+    pub fn vel_at(traj: &Trajectory, t_ms: u32) -> Vec2 {
+        let dist = traj.start.distance(traj.target);
+        #[allow(clippy::cast_precision_loss)] // < 2^24 ms
+        let elapsed_s = t_ms.saturating_sub(traj.t_start_ms) as f32 / 1000.0;
+        if dist < ARRIVED_EPS || elapsed_s * traj.speed >= dist {
+            return Vec2::ZERO;
+        }
+        (traj.target - traj.start) * (traj.speed / dist)
+    }
+
+    /// Match time at which the player reaches the target (rounded up to ms),
+    /// instant model.
     #[must_use]
     pub fn arrival_ms(traj: &Trajectory) -> u32 {
         let dist = traj.start.distance(traj.target);

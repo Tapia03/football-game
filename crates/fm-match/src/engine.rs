@@ -9,7 +9,7 @@ use crate::anchor::FormationAnchor;
 use crate::decision::{Action, DecisionSystem};
 use crate::events::{EventKind, EventLog, MatchEvent, RestartKind};
 use crate::formation::{Formation, Role};
-use crate::kinematics::PlayerKinematics;
+use crate::kinematics::{PlayerKinematics, TurnLimit};
 use crate::phase::{Phase, PhaseStateMachine, Side, LOGICAL_DT_MS};
 use crate::resolver::ActionResolver;
 use crate::role::{RoleBehavior, RoleContext, RoleIntent};
@@ -114,6 +114,7 @@ impl MatchEngine {
             attrs: db.static_of(setup.home.players[0]).attributes,
             top_speed: 0.0,
             traj: PlayerKinematics::plan_trajectory(Vec2::ZERO, Vec2::ZERO, 0.0, 0),
+            lead: None,
             action_count: 0,
             yellow_cards: 0,
             sent_off: false,
@@ -309,6 +310,7 @@ fn line_up_for_kickoff(s: &mut MatchState, kicking: Side) {
             &s.tuning.anchor,
         );
         s.players[i].traj = PlayerKinematics::plan_trajectory(at, at, 1.0, now);
+        s.players[i].lead = None;
     }
     s.phase_sm = PhaseStateMachine::new(kicking);
     let frame = &TickFrame::capture(s);
@@ -688,20 +690,41 @@ fn move_players(
     urgency: &[f32; PLAYERS],
 ) {
     let now = s.now_ms();
+    let k = s.tuning.kinematics;
+    // Every player re-plans every tick: one turn limit for all.
+    #[allow(clippy::cast_precision_loss)] // 100
+    let turn = TurnLimit::new(k.turn_rate, LOGICAL_DT_MS as f32 / 1000.0);
+    let instant = PlayerKinematics::instant(&k, turn);
     for i in 0..PLAYERS {
         let p = &mut s.players[i];
         if p.sent_off {
             // Walks off: parked just outside the touchline.
             let at = Vec2::new(frame.pos(i).x.clamp(0.0, pitch::LENGTH), -3.0);
             p.traj = PlayerKinematics::plan_trajectory(at, at, 1.0, now);
+            p.lead = None;
             continue;
         }
         let target = targets[i].clamp(
             Vec2::new(-2.0, -2.0),
             Vec2::new(pitch::LENGTH + 2.0, pitch::WIDTH + 2.0),
         );
-        // Same as `replan`, starting from the cached position at `now`.
-        p.traj =
-            PlayerKinematics::plan_trajectory(frame.pos(i), target, p.top_speed * urgency[i], now);
+        // From the cached position at `now`, with the movement physics
+        // (instant velocity changes when the physics are off).
+        let speed = p.top_speed * urgency[i];
+        if instant {
+            p.traj = PlayerKinematics::plan_trajectory(frame.pos(i), target, speed, now);
+        } else {
+            let (traj, lead) = PlayerKinematics::steer(
+                (&p.traj, p.lead.as_ref()),
+                frame.pos(i),
+                target,
+                speed,
+                now,
+                &k,
+                turn,
+            );
+            p.traj = traj;
+            p.lead = Some(lead);
+        }
     }
 }

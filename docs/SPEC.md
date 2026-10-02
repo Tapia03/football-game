@@ -1074,6 +1074,34 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
       o reinício nunca chega a < 1 m da bola. Falta um quarto elemento:
       **chegada** (frear até parar no alvo; girar parado).
     - Código guardado fora da branch (stash + patch), aguardando decisão.
+  - **Contexto para (c2) e para futuras reescritas da cinemática: o motor
+    só funciona porque é arcade.** Até aqui todo jogador muda de velocidade
+    e de direção instantaneamente (sem inércia, reação, giro ou frenagem).
+    Partes inteiras do motor dependem disso sem dizer:
+    - reinícios exigem que o batedor chegue a < 1 m da bola: com inércia e
+      giro limitado ele passa do ponto ou orbita, e o reinício nunca sai;
+    - a disputa pela bola, a contenção e a cobertura supõem que o defensor
+      se reposiciona na hora;
+    - as estimativas da decisão (invariante 18) foram calibradas contra
+      essa execução instantânea.
+    Qualquer física realista expõe esses pontos de uma vez (medido: 3
+    passes por partida, 81–91% de bola parada). Toda mudança na
+    cinemática deve ser medida contra esse risco, não só contra custo.
+- **Commit 1 da física (estrutura desligada):** a `Trajectory` volta ao
+  formato original; a física (`Lead`: reação, aceleração, frenagem de
+  chegada) fica num campo à parte do jogador, `None` no modelo
+  instantâneo, e o caminho de posição sem `Lead` é o código antigo. Golden
+  **idêntico**; **537,6M = +0,39% sobre o item 4** (três tentativas
+  anteriores com a física dentro da trajetória: +5,7%, +3,8%, +2,74%).
+- **Orçamento pontual do passo de física (aprovado 2026-10-02):** até +5%
+  sobre o item 4, com a chegada (frenagem + giro parado) no mesmo commit
+  da física ligada; teto de 560M instruções (parar acima de 562M). Sem
+  commit de estrutura desligada acima de +1,5%. Valores iniciais
+  conservadores que rodem: `max_accel` 15 m/s², reação 80 ms, giro 15
+  rad/s; os realistas (4,5 / 200 / 6) ficam para quando o motor estiver
+  estável. Critério para ligar: em 180 partidas, bola parada < 40% e
+  passes > 500. **Depois do passo de física, a regra de +1,5% por item
+  volta.**
   - **Goleiro saindo do gol: passo 2, não passo 1.** É comportamento
     (decisão de sair e quando), não física: o goleiro usa a mesma
     cinemática de todos.

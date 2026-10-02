@@ -9,7 +9,7 @@ use crate::decision::Action;
 use crate::events::{EventLog, RestartKind};
 use crate::formation::{Formation, Role};
 use crate::frame::TeamFrame;
-use crate::kinematics::{PlayerKinematics, Trajectory};
+use crate::kinematics::{Lead, PlayerKinematics, Trajectory};
 use crate::phase::{Phase, PhaseStateMachine, Side};
 use crate::tactics::Tactics;
 use crate::tuning::TuningParams;
@@ -28,6 +28,8 @@ pub struct MatchPlayer {
     pub attrs: PlayerAttributes,
     pub top_speed: f32,
     pub traj: Trajectory,
+    /// Movement physics of the current move; `None`: instant model.
+    pub lead: Option<Lead>,
     /// Number of resolved actions so far: the RNG stream index (spec 3.B).
     pub action_count: u32,
     pub yellow_cards: u8,
@@ -48,7 +50,10 @@ impl MatchPlayer {
     #[inline]
     #[must_use]
     pub fn pos(&self, t_ms: u32) -> Vec2 {
-        PlayerKinematics::pos_at(&self.traj, t_ms)
+        match &self.lead {
+            None => PlayerKinematics::pos_at(&self.traj, t_ms),
+            Some(lead) => lead.pos(&self.traj, t_ms),
+        }
     }
 
     #[inline]

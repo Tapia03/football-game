@@ -338,6 +338,33 @@ impl Default for ValueTuning {
     }
 }
 
+/// Player movement physics (spec Fase 5, "Física de movimento").
+/// `max_accel = ∞`, `reaction_ms = 0`, `turn_rate = ∞` reproduce the
+/// original instant-velocity model exactly.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct KinematicsTuning {
+    /// Largest change of velocity per second (m/s²).
+    pub max_accel: f32,
+    /// Delay before reacting to a new intent (ms)…
+    pub reaction_ms: u32,
+    /// …when the target moves by more than this (m).
+    pub reaction_threshold: f32,
+    /// Largest heading change while moving (rad/s).
+    pub turn_rate: f32,
+}
+
+impl Default for KinematicsTuning {
+    fn default() -> Self {
+        // Commit 1 of the physics step: structure only, behaviour unchanged.
+        Self {
+            max_accel: f32::INFINITY,
+            reaction_ms: 0,
+            reaction_threshold: 2.0,
+            turn_rate: f32::INFINITY,
+        }
+    }
+}
+
 /// Off-ball runs of strikers and wingers (spec Fase 5 (c1), item 4).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RunTuning {
@@ -388,6 +415,7 @@ pub struct TuningParams {
     pub xg: XgTuning,
     pub value: ValueTuning,
     pub runs: RunTuning,
+    pub kinematics: KinematicsTuning,
     pub duel: DuelTuning,
     pub defending: DefendingTuning,
     pub discipline: DisciplineTuning,

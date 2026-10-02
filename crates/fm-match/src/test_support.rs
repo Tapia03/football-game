@@ -20,6 +20,7 @@ pub fn placed_state(placed: &[(usize, Vec2)], holder: usize) -> MatchState {
             .find(|(j, _)| *j == i)
             .map_or(parked, |(_, at)| *at);
         p.traj = PlayerKinematics::plan_trajectory(at, at, 0.0, now);
+        p.lead = None;
     }
     s.ball = BallState::Held {
         holder: u8::try_from(holder).expect("< 22"),
