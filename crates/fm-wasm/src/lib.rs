@@ -46,6 +46,71 @@ pub fn webgl2_smoke_expected() -> Vec<u8> {
     fm_render::ffi::glow_backend::SMOKE_EXPECTED_RGBA.to_vec()
 }
 
+pub mod view;
+
+/// A demo match playing in the browser (spec Fase 6 v0): advances the
+/// engine with wall-clock time × speed on the main thread and draws the
+/// interpolated frame (pitch, 22 players, ball) through glow/WebGL2.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub struct MatchView {
+    playback: view::Playback,
+    renderer: fm_render::ffi::glow_backend::GlowMeshRenderer,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+impl MatchView {
+    /// Demo match `seed` drawn on the canvas `canvas_id`.
+    ///
+    /// # Errors
+    /// When the canvas or WebGL2 is unavailable.
+    #[wasm_bindgen(constructor)]
+    pub fn new(canvas_id: &str, seed: u32) -> Result<MatchView, String> {
+        Ok(Self {
+            playback: view::Playback::new(u64::from(seed)),
+            renderer: fm_render::ffi::glow_backend::GlowMeshRenderer::new(canvas_id)?,
+        })
+    }
+
+    /// Advances match time by `match_ms` milliseconds.
+    pub fn advance(&mut self, match_ms: f64) {
+        self.playback.advance(match_ms);
+    }
+
+    /// Draws the current (interpolated) frame. Returns the vertex count.
+    ///
+    /// # Errors
+    /// When drawing fails.
+    pub fn render(&self) -> Result<u32, String> {
+        let (w, h) = self.renderer.size();
+        let mesh = view::frame_mesh(&self.playback.snapshot(), w, h);
+        self.renderer.draw(view::BACKGROUND, &mesh.verts)?;
+        u32::try_from(mesh.vertex_count()).map_err(|_| "mesh too large".into())
+    }
+
+    /// Match clock (ms since kick-off).
+    #[must_use]
+    pub fn clock_ms(&self) -> u32 {
+        self.playback.sample_ms()
+    }
+
+    #[must_use]
+    pub fn home_goals(&self) -> u8 {
+        self.playback.score()[0]
+    }
+
+    #[must_use]
+    pub fn away_goals(&self) -> u8 {
+        self.playback.score()[1]
+    }
+
+    #[must_use]
+    pub fn finished(&self) -> bool {
+        self.playback.finished()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

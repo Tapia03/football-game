@@ -9,6 +9,8 @@ publish.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+# Fase 6 v0: the match view runs the engine and builds the frame from its snapshots.
+fm-match.workspace = true
 fm-core.workspace = true
 wasm-bindgen.workspace = true
 fm-render.workspace = true
@@ -16,7 +18,6 @@ fm-render.workspace = true
 [dev-dependencies]
 wasm-bindgen-test.workspace = true
 fm-entities.workspace = true
-fm-match.workspace = true
 
 [lints]
 workspace = true
