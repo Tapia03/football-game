@@ -2,10 +2,11 @@
 //! worth "probability that this possession ends in a goal". Positions are
 //! valued with Expected Threat (xT); shots with their xG.
 //!
-//! The xT grid is Karun Singh's open 12×8 Expected Threat table (Premier
-//! League event data), used as fixed data. It is *not* derived from this
-//! engine — that would be circular — and may not transfer perfectly; it is
-//! revisited in (c2).
+//! The xT grid is Karun Singh's published 12×8 Expected Threat table
+//! ("Introducing Expected Threat (xT)", karun.in blog), copied as published
+//! — see SPEC Fase 5 (c1) "Tabela xT" for provenance and the coordinate
+//! conversion. It is *not* derived from this engine (that would be
+//! circular) and may not transfer perfectly; it is revisited in (c2).
 
 use fm_core::{pitch, GoalEnd, Vec2};
 

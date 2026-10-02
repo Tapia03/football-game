@@ -747,10 +747,9 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
     segurar = P(manter) × xT(depois) − P(perder) × xT do adversário onde a
     bola se perde. O portador age se a melhor opção supera segurar por
     `act_margin` (0,002).
-  - **xT** (`value.rs`): grade aberta 12×8 de Karun Singh (Premier League;
-    cópia usada: a republicada no repositório público de tutoriais de McKay
-    Johns, `xT_Grid.csv`, porque o site original é bloqueado pelo proxy do
-    ambiente), interpolação bilinear entre centros de células.
+  - **xT** (`value.rs`): grade 12×8 de Karun Singh, valores publicados
+    copiados sem recálculo (origem e conversão no item "Tabela xT" abaixo),
+    interpolação bilinear entre centros de células.
   - **Sucesso do passe (estimado, sem RNG):** sobrevivência a cada
     adversário × precisão (distância e habilidade) × domínio do receptor
     (mesma fórmula do item 1). Um adversário corta se o alcance dele quando
@@ -793,11 +792,35 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
     depois que ele escolheu o alvo), o motor não flagra. Isso infla gols em
     profundidade em relação ao real. **Não é bug a corrigir em (c2)**; a
     correção é a fase do apito.
-- **Tabela xT:** ponto de partida é a tabela pública de Karun Singh
-  (Expected Threat, 12×8 zonas, dados da Premier League), como dado fixo
-  no `TuningParams`. **Não é derivada do motor**, porque isso seria
-  circular. Pode não transferir perfeitamente para o nosso motor: em (c2)
-  é revisada contra o motor já estruturado.
+- **Tabela xT:** ponto de partida é a tabela pública de Karun Singh, como
+  dado fixo no `TuningParams`. **Não é derivada do motor**, porque isso
+  seria circular. Pode não transferir perfeitamente para o nosso motor: em
+  (c2) é revisada contra o motor já estruturado.
+  - **Origem:** Karun Singh, "Introducing Expected Threat (xT)", post de
+    blog (karun.in/blog/expected-threat.html), ~2018–2019. **Não é paper
+    revisado por pares.** Grade publicada em
+    `karun.in/blog/data/open_xt_12x8_v1.json`.
+  - **Não verificado neste ambiente** (o proxy bloqueia karun.in): o ano
+    exato e o conjunto de dados (liga e temporadas) que geraram a grade.
+    Uma versão anterior deste SPEC dizia "Premier League" sem verificação;
+    foi removido. Conferir em (c2).
+  - **Cópia usada:** `xT_Grid.csv` do repositório público de tutoriais de
+    McKay Johns (`mckayjohns/youtube-videos`, `data/xT_Grid.csv`), que
+    republica a grade de Karun Singh. Os 96 valores entram como estão, sem
+    recálculo. Sinais de que é a grade certa: simétrica na largura e com
+    0,2575 na célula central em frente ao gol. A conferência byte a byte
+    contra o JSON original fica pendente.
+  - **Conversão de coordenadas:** a grade divide o campo inteiro em 12
+    colunas iguais no comprimento e 8 linhas iguais na largura, em
+    coordenadas normalizadas. No nosso campo (105 × 68 m): coluna =
+    `x_ataque / 105 × 12`, linha = `y / 68 × 8`; `x_ataque = x` para quem
+    ataca a direita e `105 − x` para quem ataca a esquerda (coluna 0 = gol
+    próprio). Como a grade é simétrica na largura, a orientação de `y` não
+    importa.
+  - **Desvio do original:** Karun Singh usa o valor constante por célula. Nós
+    interpolamos bilinearmente entre os centros das células, para a decisão
+    não "pular" na fronteira de célula; no centro de cada célula o valor é
+    exatamente o publicado (testado).
 - **Ferramentas:** `examples/decision_stats.rs` (tempo com a bola,
   comprimento de passe, distância de chute, passes por posse) e
   `examples/calibrate.rs` (estatísticas com `chave=valor` sobrescrevendo o
