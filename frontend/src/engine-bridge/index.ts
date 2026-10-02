@@ -1,4 +1,5 @@
 import init, {
+  spike_render,
   hello,
   libm_golden_mismatches,
   webgl2_smoke,
@@ -46,4 +47,14 @@ export async function loadEngineInfo(): Promise<EngineInfo> {
     crossOriginIsolated: globalThis.crossOriginIsolated,
     webgl2: probeWebGl2(),
   };
+}
+
+/** SPIKE (branch `spike-render`): draws one static frame on `canvas`. Returns
+ * the number of vertices drawn, or throws with the browser's error. */
+export async function renderSpike(canvas: HTMLCanvasElement): Promise<number> {
+  await ensureInit();
+  const dpr = globalThis.devicePixelRatio || 1;
+  canvas.width = Math.round(canvas.clientWidth * dpr);
+  canvas.height = Math.round(canvas.clientHeight * dpr);
+  return spike_render(canvas.id, canvas.width, canvas.height);
 }

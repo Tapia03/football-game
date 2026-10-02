@@ -83,3 +83,87 @@ pub fn webgl2_smoke() -> Result<[u8; 4], String> {
     }
     Ok(px)
 }
+
+// ---------------------------------------------------------------------------
+// SPIKE (branch `spike-render`): draw one coloured triangle list on a canvas.
+
+const MESH_VS: &str = "#version 300 es
+layout(location = 0) in vec2 a_pos;
+layout(location = 1) in vec4 a_col;
+out vec4 v_col;
+void main() { v_col = a_col; gl_Position = vec4(a_pos, 0.0, 1.0); }";
+
+const MESH_FS: &str = "#version 300 es
+precision mediump float;
+in vec4 v_col;
+out vec4 color;
+void main() { color = v_col; }";
+
+/// Clears the canvas `canvas_id` to `clear` and draws `verts`
+/// (`[x, y, r, g, b, a]` per vertex, clip space) as triangles.
+///
+/// # Errors
+/// When the canvas or WebGL2 is unavailable, or the shader fails.
+pub fn draw_mesh(canvas_id: &str, clear: [f32; 4], verts: &[f32]) -> Result<(), String> {
+    let document = web_sys::window()
+        .and_then(|w| w.document())
+        .ok_or("no document")?;
+    let canvas: web_sys::HtmlCanvasElement = document
+        .get_element_by_id(canvas_id)
+        .ok_or("canvas not found")?
+        .dyn_into()
+        .map_err(|_| "element is not a canvas")?;
+    let ctx: web_sys::WebGl2RenderingContext = canvas
+        .get_context("webgl2")
+        .map_err(|e| format!("{e:?}"))?
+        .ok_or("WebGL2 unavailable")?
+        .dyn_into()
+        .map_err(|_| "context is not WebGL2")?;
+    let gl = glow::Context::from_webgl2_context(ctx);
+    let w = i32::try_from(canvas.width()).map_err(|_| "canvas too wide")?;
+    let h = i32::try_from(canvas.height()).map_err(|_| "canvas too tall")?;
+    let count = i32::try_from(verts.len() / 6).map_err(|_| "mesh too large")?;
+
+    // SAFETY: as in `webgl2_smoke`: every GL handle is created on this
+    // context and used only within this call. The byte view of `verts` is
+    // valid for its whole length (f32 has no padding, u8 has alignment 1).
+    unsafe {
+        let program = gl.create_program()?;
+        for (kind, src) in [
+            (glow::VERTEX_SHADER, MESH_VS),
+            (glow::FRAGMENT_SHADER, MESH_FS),
+        ] {
+            let shader = gl.create_shader(kind)?;
+            gl.shader_source(shader, src);
+            gl.compile_shader(shader);
+            if !gl.get_shader_compile_status(shader) {
+                return Err(gl.get_shader_info_log(shader));
+            }
+            gl.attach_shader(program, shader);
+        }
+        gl.link_program(program);
+        if !gl.get_program_link_status(program) {
+            return Err(gl.get_program_info_log(program));
+        }
+        let bytes =
+            core::slice::from_raw_parts(verts.as_ptr().cast::<u8>(), core::mem::size_of_val(verts));
+        let vao = gl.create_vertex_array()?;
+        gl.bind_vertex_array(Some(vao));
+        let vbo = gl.create_buffer()?;
+        gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
+        gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes, glow::STATIC_DRAW);
+        let stride = 6 * 4;
+        gl.enable_vertex_attrib_array(0);
+        gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, stride, 0);
+        gl.enable_vertex_attrib_array(1);
+        gl.vertex_attrib_pointer_f32(1, 4, glow::FLOAT, false, stride, 2 * 4);
+        gl.use_program(Some(program));
+        gl.viewport(0, 0, w, h);
+        gl.enable(glow::BLEND);
+        gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
+        gl.clear_color(clear[0], clear[1], clear[2], clear[3]);
+        gl.clear(glow::COLOR_BUFFER_BIT);
+        gl.draw_arrays(glow::TRIANGLES, 0, count);
+    }
+    Ok(())
+}
