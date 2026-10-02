@@ -2,46 +2,97 @@
 
 Resumo de uma tela que sobrevive a compactações de sessão. A fonte de verdade
 de arquitetura e regras é o [`docs/SPEC.md`](SPEC.md); este arquivo só diz
-*onde estamos*. Atualizado em **2026-10-02**.
+*onde estamos*. Atualizado em **2026-10-02** (pausa por orçamento).
 
-## Fase atual
-**Fase 5 — Role Behaviors**, branch `fase-5` (sem PR aberto ainda).
-- (a) `TickFrame` — feito. 37,0 ms no CI.
-- (b) Modelo de defesa — feito. 75 botes/partida, 19,4 faltas.
-- Otimização de performance (cache de voo + trajetória compartilhada) —
-  feito. **41,2 ms no CI** (meta 40, gate 50).
-- (c) Chutes + passes — dividido em **(c1)** (modelo de criação de
-  jogadas, escopo B) e **(c2)** (calibração).
-  - (c1) item 1 (xG, cobertura, domínio): feito, 566,6M instruções.
-  - (c1) item 2 (xT + moeda comum + cadência de decisão): feito, 540,5M.
-  - (c1) item 3 (linha de impedimento): feito, 540,2M; calculada só nos
-    ticks com corredor (desvio documentado no SPEC).
-  - (c1) item 4 (estado `Run`): feito, 535,6M (−0,85%).
-  - (c1) item 5: passo 1 (`lofted_lane`) ligado, 532,6M. Passo 2
-    (passe em profundidade) commitado **desligado** (acerto ≈ 0,3%: a
-    estimativa supunha inércia que a cinemática não tinha). Refazer em cima
-    da física nova (passo 4 do Caminho A).
-  - **Caminho A (aprovado), nesta ordem:**
-    1. física de movimento (reação / aceleração / giro / chegada);
-    2. defesa ajustada à física (engajamento; depois acompanhar corredores
-       e goleiro saindo do gol);
-    3. item 9: construção desde a defesa;
-    4. refazer o item 5 (profundidade) na física nova;
-    5. itens 6–8.
-  - **Física:** commit 1 (estrutura desligada, 537,6M) no ar (8e5e7e8).
-    Commit 2 = física só para quem está no lance (15 m/s² / 80 ms /
-    15 rad/s; resto arcade na cadência 3) **+ engajamento defensivo**, num
-    commit só: 596,3M (orçamento pontual até ~607M; acima do teto de (c)
-    em 3,3M — dívida explícita). Próximo item volta a +1,5%.
-  - **Achado — invariante 18 do lado defensivo:** o bote exigia ≤ 1,8 m,
-    mas a contenção fica a 1–4 m; no arcade a distância "acontecia", com
-    física não (ao alcance 29% → 9% dos ticks). Correção: o escolhido pela
-    nota parte para cima do portador (até 4,5 m) e o bote só sai quando
-    ele chega.
-  - Sinais para (c2)/passo 4 (não calibrar agora): posse do mandante 73%
-    → 56,9% → 42,5%; acerto de passe 56% (real 80%); botes/faltas 10 / 3,6
-    (real 70 / 22).
-- (d) Comportamentos por papel — não iniciado.
+## Fase atual — PAUSADA (orçamento)
+**Fase 5 — Role Behaviors**, branch `fase-5` (sem PR aberto). Ponto de
+retorno: tag `pre-pause-2026-10` (o commit deste STATE; o código é o de
+`5d34253`, com CI verde em todos os jobs, inclusive paridade WASM e bench).
+
+### Onde cada parte está
+- (a) `TickFrame` — feito. (b) Modelo de defesa — feito. Otimização (cache
+  de voo + trajetória compartilhada) — feita.
+- (c) dividido em (c1) modelo de criação de jogadas e (c2) calibração.
+  - (c1) item 1 (xG, cobertura, domínio): **pronto**.
+  - (c1) item 2 (xT + moeda comum + cadência 3): **pronto**.
+  - (c1) item 3 (linha de impedimento, calculada só nos ticks com
+    corredor): **pronto**.
+  - (c1) item 4 (estado `Run`): **pronto**.
+  - (c1) item 5: **parcial/pendente**. Passo 1 (`lofted_lane`) ligado;
+    passo 2 (passe em profundidade) commitado **desligado**
+    (`through_balls = false`, acerto ≈ 0,3%). Refazer na física nova.
+  - (c1) itens 6–8: **não iniciados**.
+  - (c1) item 9 (construção desde a defesa): **previsto** (Caminho A).
+- (c2) calibração e (d) comportamentos por papel — não iniciados.
+
+### Caminho A (ordem aprovada) e onde paramos
+1. Física de movimento — **feito** (commit 1 `8e5e7e8` + commit 2
+   `5d34253`): física (15 m/s² / 80 ms / 15 rad/s) só para quem está no
+   lance; o resto arcade na cadência 3.
+2. Defesa ajustada à física — **em andamento**. Feito: engajamento (o
+   escolhido pela nota do bote, a até 4,5 m, parte para cima; o bote sai a
+   1,8 m). **Paramos aqui.** Falta: acompanhar corredores e goleiro saindo
+   do gol. **Retomar por aqui, com a regra de +1,5% por item de volta.**
+3. Item 9: construção desde a defesa.
+4. Refazer o item 5 em cima da física nova.
+5. Itens 6–8.
+Depois: (c2), (d), PR `fase-5` → `main`.
+
+### Commits na `fase-5` (sobre `main`, mais recente primeiro)
+| Hash | Resumo |
+|---|---|
+| `5d34253` | Física no lance + engajamento defensivo (596,3M) |
+| `9953a2d` | SPEC: física só no lance; medição 588,9M; teste de faltas falhou |
+| `36a13b5` | SPEC: física completa custa +55% (+37% mantendo planos) |
+| `8e5e7e8` | Física commit 1: estrutura desligada (537,6M, golden idêntico) |
+| `cbee512` | SPEC: invariante 18, nova ordem de (c1), desenho da física |
+| `5ce4218` | Item 5 passo 2: chegada + corredor legal, DESLIGADO |
+| `3ef931c` | SPEC/STATE: item 5 passos 2–3 medidos; concentração nos meias |
+| `055bb01` | Item 5 passo 1: `lofted_lane` ligado |
+| `cec2090` | Item 4: teste de retorno à forma; cadência como comportamento |
+| `3c50c56` | Item 5: profundidade implementada e desligada |
+| `82dff91` | Item 4: estado `Run` |
+| `e89a672` | SPEC: justificativa da cadência 3, estimativa do item 4 |
+| `a020b6d` | Item 3: linha de impedimento |
+| `0cf5f21` | Item 2: cadência 3; contador só com `diagnostics` |
+| `5b362ed` | Item 2: cadência de decisão + checkpoint por instruções |
+| `0df6051` | SPEC: proveniência da tabela xT |
+| `f2dc274` | Item 2: tabela xT e moeda comum |
+| `057e7dc` | STATE: marco do pipeline WASM → WebGL2 → Pages |
+| `7a4a454` | Item 1: xG, cobertura do gol, domínio |
+| `38f1931` | SPEC/STATE: decisões de (c1) |
+| `48259d2` | (c): diagnóstico + ferramentas de calibração + STATE |
+| `416e2a5` | Cache de voo + trajetória compartilhada |
+| `fca68bb` | (b): modelo de defesa |
+| `edb821f` | SPEC: resultados do modelo de defesa |
+| `1b2defb` | `TuningParams` |
+| `2ef1bb1` | SPEC: modelo de defesa aprovado |
+| `260ed2e` | SPEC: (a) medido no CI, diagnóstico dos desarmes |
+| `03270f1` | (a): `TickFrame` |
+| `4e83ba1` | Toolchain 1.99.0 + stable-canary |
+| `1a931d3` | Exemplo `timing` |
+
+### Não commitado
+- Árvore de trabalho limpa; **nenhum stash**.
+- Patches de experimento só no scratchpad da sessão (efêmero, **some com
+  o container**): física completa rejeitada (+37%) e variantes do item 5.
+  Nada neles é necessário: o código aprovado está commitado e os números
+  dos experimentos estão no SPEC.
+
+### Dívidas
+- **Explícita (custo):** 596,3M instruções, **3,3M acima do teto de saída
+  de (c) (593M ≈ 45 ms)**. Precisa ser devolvido antes de fechar (c).
+- **Frágil (teste):** `match_statistics_are_plausible` exige ≥ 3 faltas
+  por partida. Nas 6 seeds do teste mede **6,0** (margem 3,0); na média de
+  180 partidas a taxa é **3,6** (margem 0,6). As 6 seeds estão acima da
+  média, e um item que baixe as faltas pode quebrar o teste sem aviso.
+
+### Sinais pendentes para (c2) (não calibrar antes)
+- **Posse do mandante não convergida:** 73% (arcade) → 56,9% (física) →
+  42,5% (física + engajamento). Troca de lado a cada mudança de movimento.
+- **Acerto de passe 56%** (real ~80%): invariante 18 do lado do passe →
+  passo 4 do Caminho A ou (c2).
+- **Botes/faltas 10 / 3,6** (real ~70 / 22).
 
 ## PRs
 | PR | Conteúdo | Estado |
