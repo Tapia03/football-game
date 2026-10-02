@@ -542,20 +542,56 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
    é muito maior. Ajustar só as constantes manteria as duas distorções se
    cancelando.
 
-*Correção proposta (muda lógica, não só constantes; aguarda aprovação):*
-- **Marcação:** o marcador **contém** a 2–3 m do portador, do lado do gol,
-  em vez de colar nele.
-- **Decisão de bote:** o `DecisionSystem` passa a decidir entre dar o bote
-  e conter, de forma determinística e sem RNG, a partir de:
-  - ângulo e distância;
-  - se o portador acabou de dominar ou se está de costas;
-  - `tackling`, `decisions` e `aggression` do defensor;
-  - fase do jogo.
-- Remover `TEAM_TACKLE_GAP`, que esconde o modelo.
-- Recalibrar falta por bote contra metas reais, com as constantes já em
-  `TuningParams`.
+*Correção aprovada (modelo de defesa do portador) `[ALTERADO v2.1]`:*
+1. **Contenção por faixa de perigo.** A distância que o marcador mantém
+   do portador depende de onde está a bola, medida pela distância ao gol
+   que o time defende. Cada faixa é uma constante separada em
+   `TuningParams`:
+   - meio-campo defensivo / longe do gol: 3–4 m;
+   - meio-campo ofensivo / entrada da área: 2–3 m;
+   - área / zona de finalização: 1–2 m.
 
+   O ponto de contenção fica do lado do gol (entre o portador e o gol
+   defendido), na distância da faixa.
+2. **Decisão de bote no `DecisionSystem`**, determinística e sem RNG:
+   - *Elegibilidade:* defensor de linha, recuperado (cooldown individual) e
+     ao alcance (`TACKLE_RANGE`).
+   - *Pontuação do bote:* soma
+     - **ângulo** do defensor em relação ao gol: estar goal-side (entre o
+       portador e o gol) pontua alto, perseguir por trás pontua baixo;
+     - **vulnerabilidade do portador:** acabou de dominar (poucos ticks com
+       a bola);
+     - **perfil do defensor:** `tackling` e `decisions` pesam a favor;
+       `aggression` antecipa o bote;
+     - **contexto:** pontua mais na transição defensiva e menos dentro da
+       própria área (risco de pênalti).
+   - *Regra:* dá o bote se a pontuação passar de um limiar
+     (`TuningParams`); senão, mantém a contenção.
+   - O ângulo também entra no `ActionResolver`: bote por trás tem mais
+     chance de falta e menos de ganhar a bola.
+3. **Remoção do `TEAM_TACKLE_GAP`.** Só restam as cooldowns individuais,
+   que modelam a recuperação física.
+4. **Falta por bote recalibrada** contra metas reais, depois do passo
+   anterior.
 
+**Restrição arquitetural `[ALTERADO v2.1]`:** nenhuma decisão do
+`DecisionSystem` (nem do `ActionResolver`) pode consultar estado de
+amostragem: interpolação do LOD Full, snapshots ou `sample()`. Só o estado
+do `tick_logic`, via `MatchState` e `TickFrame`. O teste de paridade
+detectaria uma violação, mas isso é regra de design, não um bug a ser pego
+por teste.
+
+**Orçamento:** a meta continua em 40 ms e o gate em 50 ms. Se a Fase 5
+estourar, o perfil aponta o custo e o assunto volta para decisão humana.
+A meta não é ajustada.
+
+**`TuningParams` `[ALTERADO v2.1]`:** todas as constantes de calibração do
+motor (âncoras, decisão, duelo, falta e cartões, chute, passe, domínio,
+contenção e reinícios) ficam num único struct, passado em `MatchSetup`.
+Primeiro a centralização é feita com os valores atuais e a referência de
+paridade **não pode mudar**; só depois o modelo de defesa é alterado.
+
+**Calibração base da Fase 4 (média de 60 partidas demo, `examples/match_stats`):**
 
 | Métrica por partida | Fase 4 | Real (aprox.) | Situação |
 |---|---|---|---|
