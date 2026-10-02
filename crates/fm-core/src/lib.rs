@@ -4,6 +4,8 @@
 //! (pure-Rust `libm`, no platform libm) so that native `cargo test` and the
 //! WASM build produce bit-identical results. `clippy.toml` enforces it.
 
+#![forbid(unsafe_code)]
+
 pub mod geometry;
 pub mod libm_golden;
 pub mod math;

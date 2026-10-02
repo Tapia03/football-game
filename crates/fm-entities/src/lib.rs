@@ -3,6 +3,8 @@
 //! `PlayerId(u32)` is the only key: no `Rc<Player>`/`Arc<Player>`. Cold data
 //! (`PlayerStatic`) and hot data (`PlayerDynamic`) live in parallel `Vec`s.
 
+#![forbid(unsafe_code)]
+
 pub mod attributes;
 pub mod database;
 pub mod generate;

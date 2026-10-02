@@ -11,6 +11,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 fm-core.workspace = true
 wasm-bindgen.workspace = true
+fm-render.workspace = true
 
 [dev-dependencies]
 wasm-bindgen-test.workspace = true
