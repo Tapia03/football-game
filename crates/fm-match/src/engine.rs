@@ -534,10 +534,11 @@ fn on_ball(
             // Each side sends the player who can reach the ball first, to
             // the point where they can meet it (not where it is now).
             let ball = frame.ball(s).xy();
+            let mut path = FlightPath::new(&flight, now);
             for side in [Side::Home, Side::Away] {
                 if let Some(c) = nearest_to(s, frame, side, ball) {
                     let p = &s.players[c];
-                    targets[c] = intercept_point(&flight, now, frame.pos(c), p.top_speed);
+                    targets[c] = intercept_point(&mut path, frame.pos(c), p.top_speed);
                     urgency[c] = 1.0;
                 }
             }
@@ -545,7 +546,7 @@ fn on_ball(
                 let r = receiver as usize;
                 if s.players[r].active() {
                     let p = &s.players[r];
-                    targets[r] = intercept_point(&flight, now, frame.pos(r), p.top_speed);
+                    targets[r] = intercept_point(&mut path, frame.pos(r), p.top_speed);
                     urgency[r] = 1.0;
                 }
             }
@@ -557,20 +558,52 @@ fn on_ball(
     }
 }
 
+/// Ball positions along a flight at `now + step * 100 ms` (step 1..=30),
+/// evaluated lazily and shared by every player chasing the same flight this
+/// tick. Values are identical to calling `pos_at` directly.
+struct FlightPath<'a> {
+    flight: &'a crate::ball::BallFlight,
+    now: u32,
+    pts: [Vec2; INTERCEPT_STEPS as usize],
+    filled: u32,
+}
+
+/// Look-ahead of `intercept_point`: 30 × 100 ms = 3 s.
+const INTERCEPT_STEPS: u32 = 30;
+
+impl<'a> FlightPath<'a> {
+    fn new(flight: &'a crate::ball::BallFlight, now: u32) -> Self {
+        Self {
+            flight,
+            now,
+            pts: [Vec2::ZERO; INTERCEPT_STEPS as usize],
+            filled: 0,
+        }
+    }
+
+    fn at(&mut self, step: u32) -> Vec2 {
+        while self.filled < step {
+            self.filled += 1;
+            let t = self.now + self.filled * LOGICAL_DT_MS;
+            self.pts[(self.filled - 1) as usize] = self.flight.pos_at(t).xy();
+        }
+        self.pts[(step - 1) as usize]
+    }
+}
+
 /// Earliest point on the ball's path a player at `from` running at `speed`
 /// can reach in time (sampled every 100 ms over 3 s; no allocation). Falls
-/// back to where the ball comes to rest / ends up.
-fn intercept_point(flight: &crate::ball::BallFlight, now: u32, from: Vec2, speed: f32) -> Vec2 {
-    for step in 1..=30_u32 {
-        let t = now + step * LOGICAL_DT_MS;
-        let b = flight.pos_at(t).xy();
+/// back to where the ball ends up after the look-ahead.
+fn intercept_point(path: &mut FlightPath<'_>, from: Vec2, speed: f32) -> Vec2 {
+    for step in 1..=INTERCEPT_STEPS {
+        let b = path.at(step);
         #[allow(clippy::cast_precision_loss)] // ≤ 3000
         let reach = speed * (step * LOGICAL_DT_MS) as f32 / 1000.0;
         if from.distance(b) <= reach {
             return b;
         }
     }
-    flight.pos_at(now + 30 * LOGICAL_DT_MS).xy()
+    path.at(INTERCEPT_STEPS)
 }
 
 /// The two outfield players of `side` nearest to `at` (index breaks ties).

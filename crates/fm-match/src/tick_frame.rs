@@ -2,11 +2,17 @@
 //! once and then only read (spec Fase 5, `TickFrame`).
 //!
 //! Player positions are constant within a tick — trajectories are only
-//! re-planned at its very end — so they are evaluated once here. The ball is
-//! *not* cached: its state changes inside the tick (receptions, kicks,
-//! tackles), so `ball()` derives its position from the current `BallState`
-//! using the cached player positions. Anchors and phases are filled in once
-//! the ball has been stepped, exactly where the engine used to compute them.
+//! re-planned at its very end — so they are evaluated once here. The ball's
+//! state changes inside the tick (receptions, kicks, tackles), so `ball()`
+//! derives its position from the current `BallState` using the cached player
+//! positions. The one exception is a flight already under way at capture:
+//! its position at `now_ms` is evaluated once and reused while the ball is
+//! still that flight. Every flight is launched at the current tick's time
+//! (`ActionResolver::kick` is the only constructor call), so a flight whose
+//! `kick_ms` differs from `now_ms` can only be the one captured; any pass,
+//! shot or rebound inside the tick has `kick_ms == now_ms` and bypasses the
+//! cache. Anchors and phases are filled in once the ball has been stepped,
+//! exactly where the engine used to compute them.
 
 use fm_core::{GoalEnd, Vec2, Vec3};
 
@@ -37,6 +43,8 @@ pub struct TickFrame {
     phases: [Phase; 2],
     possession: Possession,
     set_piece: bool,
+    /// `(kick_ms, position at now_ms)` of the flight in progress at capture.
+    flight_ball: Option<(u32, Vec3)>,
 }
 
 impl TickFrame {
@@ -58,6 +66,12 @@ impl TickFrame {
             phases: state.phases,
             possession: Possession::Loose,
             set_piece: false,
+            flight_ball: match state.ball {
+                BallState::Flight { flight, .. } if flight.kick_ms != now => {
+                    Some((flight.kick_ms, flight.pos_at(now)))
+                }
+                _ => None,
+            },
         }
     }
 
@@ -76,7 +90,13 @@ impl TickFrame {
                 let h = holder as usize;
                 carried_ball(self.positions[h], state.attacking(state.players[h].side))
             }
-            BallState::Flight { flight, .. } => flight.pos_at(self.now_ms),
+            BallState::Flight { flight, .. } => match self.flight_ball {
+                Some((kick_ms, at)) if kick_ms == flight.kick_ms && kick_ms != self.now_ms => {
+                    debug_assert_eq!(at, flight.pos_at(self.now_ms), "stale flight cache");
+                    at
+                }
+                _ => flight.pos_at(self.now_ms),
+            },
             BallState::Dead(r) => r.spot.extend(0.0),
         }
     }
@@ -134,5 +154,91 @@ impl TickFrame {
     #[must_use]
     pub fn anchor(&self, i: usize) -> Vec2 {
         self.anchors[i]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ball::BallFlight;
+    use crate::demo::demo_match;
+    use crate::engine::MatchEngine;
+    use crate::phase::LOGICAL_DT_MS;
+    use crate::state::FlightIntent;
+
+    fn state() -> MatchState {
+        let (db, setup) = demo_match(3);
+        MatchEngine::new(&setup, &db).state().clone()
+    }
+
+    fn fly(s: &mut MatchState, kick_ms: u32, from: Vec3, v: Vec3) -> BallFlight {
+        let flight = BallFlight::kick(kick_ms, from, v);
+        s.ball = BallState::Flight {
+            flight,
+            intent: FlightIntent::Loose,
+        };
+        flight
+    }
+
+    #[test]
+    fn flight_in_progress_is_cached_at_capture() {
+        let mut s = state();
+        s.tick = 40;
+        let old = fly(
+            &mut s,
+            39 * LOGICAL_DT_MS,
+            Vec3::new(10.0, 30.0, 0.0),
+            Vec3::new(12.0, 3.0, 4.0),
+        );
+        let frame = TickFrame::capture(&s);
+        assert_eq!(
+            frame.flight_ball,
+            Some((old.kick_ms, old.pos_at(frame.now_ms)))
+        );
+        assert_eq!(frame.ball(&s), old.pos_at(frame.now_ms));
+    }
+
+    #[test]
+    fn pass_in_tick_n_does_not_reuse_cache_from_tick_n_minus_1() {
+        let mut s = state();
+        s.tick = 40;
+        let now = s.now_ms();
+        // Flight kicked in tick N-1, still travelling when tick N is captured.
+        let old = fly(
+            &mut s,
+            now - LOGICAL_DT_MS,
+            Vec3::new(10.0, 30.0, 0.0),
+            Vec3::new(12.0, 3.0, 4.0),
+        );
+        let frame = TickFrame::capture(&s);
+        assert!(frame.flight_ball.is_some());
+        // A pass inside tick N replaces the ball state: it must be read fresh.
+        let new = fly(
+            &mut s,
+            now,
+            Vec3::new(50.0, 20.0, 0.0),
+            Vec3::new(-8.0, 6.0, 0.0),
+        );
+        assert_ne!(old.pos_at(now), new.pos_at(now));
+        assert_eq!(frame.ball(&s), new.pos_at(now));
+        // And tick N+1 caches the new flight, not the old one.
+        s.tick += 1;
+        let next = TickFrame::capture(&s);
+        assert_eq!(next.flight_ball, Some((now, new.pos_at(next.now_ms))));
+        assert_eq!(next.ball(&s), new.pos_at(next.now_ms));
+    }
+
+    #[test]
+    fn flight_kicked_this_tick_is_never_cached() {
+        let mut s = state();
+        s.tick = 40;
+        let now = s.now_ms();
+        fly(
+            &mut s,
+            now,
+            Vec3::new(10.0, 30.0, 0.0),
+            Vec3::new(12.0, 3.0, 4.0),
+        );
+        assert_eq!(TickFrame::capture(&s).flight_ball, None);
     }
 }
