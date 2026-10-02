@@ -44,9 +44,14 @@ Ver SPEC, Seção 0 e decisões das Fases 3–5. Os que mais pesam no dia a dia:
   moeda comum para logo depois da base comum (ver resposta na sessão).
 - **Critério de saída de (c):** ≤ 45 ms no CI (regra 46–50 ms). Hoje: 41,2 ms.
 
+## Marcos
+- **2026-10-02 — pipeline ponta a ponta confirmado:** WASM → WebGL2 (glow) →
+  Cloudflare Pages. O spike renderiza no navegador (campo, 22 jogadores,
+  bola, "OK (5754 vértices)").
+
 ## Previews
-- Spike de render: `https://spike-render.football-game.pages.dev` — vale
-  depois do deploy com o token corrigido.
+- Spike de render: https://spike-render.football-game-b5k.pages.dev (o sufixo
+  `-b5k` do subdomínio é do Cloudflare).
 
 ## Bugs conhecidos sem correção
 - **Kickoff sobreposto:** as âncoras de bola parada põem atacantes no campo
