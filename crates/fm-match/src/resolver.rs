@@ -270,11 +270,17 @@ impl ActionResolver {
         let t = &tackler.attrs;
         let c = &carrier.attrs;
         // Rationale: tackling vs dribbling decides most duels; base ~35-45%.
-        let p_win = (du.win_base
-            + du.win_tackler
-                * (0.6 * unit(t.technical.tackling)
-                    + 0.2 * unit(t.mental.anticipation)
-                    + 0.2 * unit(t.physical.strength))
+        // A keeper smothering at the carrier's feet uses one-on-ones/handling.
+        let tackler_skill = if tackler.role == Role::Goalkeeper {
+            0.6 * unit(t.goalkeeping.one_on_ones) + 0.4 * unit(t.goalkeeping.handling)
+        } else {
+            0.6 * unit(t.technical.tackling)
+                + 0.2 * unit(t.mental.anticipation)
+                + 0.2 * unit(t.physical.strength)
+        };
+        // Goal-side challenges win more and foul less than ones from behind.
+        let goal_side = crate::decision::DecisionSystem::goal_side_cos(state, frame, actor, on);
+        let p_win = (du.win_base + du.win_goal_side * goal_side + du.win_tackler * tackler_skill
             - du.win_carrier
                 * (0.6 * unit(c.technical.dribbling)
                     + 0.2 * unit(c.physical.agility)
@@ -283,7 +289,8 @@ impl ActionResolver {
         // Aggressive, clumsy tacklers foul more (~2-12% of challenges;
         // ~10-14 fouls per team per match overall).
         let p_foul = (di.foul_base + di.foul_aggression * unit(t.mental.aggression)
-            - di.foul_tackling * unit(t.technical.tackling))
+            - di.foul_tackling * unit(t.technical.tackling)
+            + di.foul_from_behind * (-goal_side).max(0.0))
         .clamp(di.foul_range.0, di.foul_range.1);
         // Defenders are far more careful inside their own box (penalty risk;
         // ~0.3 penalties per match in real football).
@@ -302,10 +309,7 @@ impl ActionResolver {
         };
         let roll = rng.next_f32();
         state.players[actor].tackle_ready_tick = state.tick + du.cooldown_ticks;
-        let tick = state.tick;
-        let team = state.team_mut(tackler.side);
-        team.tackles += 1;
-        team.next_tackle_tick = tick + du.team_gap_ticks;
+        state.team_mut(tackler.side).tackles += 1;
 
         if roll < p_foul {
             Self::foul(state, frame, actor, on, &mut rng);

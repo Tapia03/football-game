@@ -107,8 +107,6 @@ pub struct TeamState {
     pub passes: u16,
     pub passes_completed: u16,
     pub tackles: u16,
-    /// Tick before which no player of this team may challenge.
-    pub next_tackle_tick: u32,
 }
 
 /// Everything `tick_logic` reads and writes.

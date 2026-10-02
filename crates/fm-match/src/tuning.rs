@@ -115,22 +115,58 @@ pub struct ShotTuning {
 pub struct DuelTuning {
     /// Reach of a tackle (m).
     pub tackle_range: f32,
-    /// A fresh receiver gets this many ticks before being challenged.
-    pub settle_ticks: u32,
     /// Individual recovery after any challenge / after being beaten (ticks).
     pub cooldown_ticks: u32,
     pub beaten_cooldown_ticks: u32,
-    /// Team-wide gap between challenges (ticks). Phase 4 stop-gap.
-    pub team_gap_ticks: u32,
     pub win_base: f32,
     pub win_tackler: f32,
     pub win_carrier: f32,
     pub win_range: (f32, f32),
+    /// Change in win probability per unit of goal-side cos (front > behind).
+    pub win_goal_side: f32,
     /// Share of won tackles that come away clean (vs. ball knocked loose).
     pub clean_win: f32,
     /// Second defender covers this far goal-side of the carrier (m).
     pub cover_dist: f32,
     pub cover_urgency: f32,
+}
+
+/// Defending the carrier: containment by danger zone and the challenge
+/// decision (spec Fase 5, approved model).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DefendingTuning {
+    /// Carrier within this distance of the defended goal: finishing zone (m).
+    pub zone_box_dist: f32,
+    /// Within this distance (and outside the box zone): box-entry zone (m).
+    pub zone_mid_dist: f32,
+    /// Containment distance `(tightest, loosest)` per zone (m). Inside a
+    /// band, more aggressive defenders stand tighter.
+    pub contain_box: (f32, f32),
+    pub contain_mid: (f32, f32),
+    pub contain_far: (f32, f32),
+    pub contain_urgency: f32,
+    /// Commit to a challenge when the score exceeds this.
+    pub challenge_threshold: f32,
+    pub challenge_base: f32,
+    /// Weight of goal-side position: × cos(angle between defender and goal,
+    /// seen from the carrier); +1 squarely goal-side, −1 chasing from behind.
+    pub w_goal_side: f32,
+    /// Bonus while the carrier has had the ball fewer than `fresh_ticks`.
+    pub w_fresh: f32,
+    pub fresh_ticks: u32,
+    pub w_tackling: f32,
+    pub w_decisions: f32,
+    pub w_aggression: f32,
+    /// Bonus in `TransitionDefense` (win it back now).
+    pub transition_bonus: f32,
+    /// Penalty when the carrier is inside the defender's own box.
+    pub own_box_penalty: f32,
+    /// A carrier who lingers becomes a target: bonus grows to `w_linger`
+    /// over `linger_ticks` on the ball.
+    pub w_linger: f32,
+    pub linger_ticks: u32,
+    /// Keepers may come out to smother a carrier inside their own box.
+    pub keeper_smother: bool,
 }
 
 /// Fouls and cards.
@@ -140,6 +176,8 @@ pub struct DisciplineTuning {
     pub foul_aggression: f32,
     pub foul_tackling: f32,
     pub foul_range: (f32, f32),
+    /// Extra foul probability when challenging from behind (× −cos).
+    pub foul_from_behind: f32,
     /// Foul probability multiplier inside the defender's own box.
     pub own_box_factor: f32,
     /// Foul probability multiplier for an already-booked defender.
@@ -206,6 +244,7 @@ pub struct TuningParams {
     pub pass: PassTuning,
     pub shot: ShotTuning,
     pub duel: DuelTuning,
+    pub defending: DefendingTuning,
     pub discipline: DisciplineTuning,
     pub control: ControlTuning,
     pub restart: RestartTuning,
@@ -309,15 +348,15 @@ impl Default for DuelTuning {
     fn default() -> Self {
         Self {
             tackle_range: 1.8,
-            settle_ticks: 3,
             cooldown_ticks: 25,
             beaten_cooldown_ticks: 40,
-            team_gap_ticks: 70,
             // Tackling vs dribbling decides most duels; base ~35-45%.
             win_base: 0.35,
             win_tackler: 0.35,
             win_carrier: 0.3,
             win_range: (0.1, 0.75),
+            // Goal-side challenges win more often than ones from behind.
+            win_goal_side: 0.1,
             clean_win: 0.6,
             cover_dist: 4.0,
             cover_urgency: 0.9,
@@ -325,13 +364,41 @@ impl Default for DuelTuning {
     }
 }
 
+impl Default for DefendingTuning {
+    fn default() -> Self {
+        Self {
+            // Penalty-area depth ≈ 16.5 m; "box entry" ≈ up to 35 m out.
+            zone_box_dist: 18.0,
+            zone_mid_dist: 35.0,
+            contain_box: (1.0, 2.0),
+            contain_mid: (2.0, 3.0),
+            contain_far: (3.0, 4.0),
+            contain_urgency: 1.0,
+            challenge_threshold: 1.15,
+            challenge_base: 0.0,
+            w_goal_side: 0.4,
+            w_fresh: 0.25,
+            fresh_ticks: 6,
+            w_tackling: 0.3,
+            w_decisions: 0.15,
+            w_aggression: 0.25,
+            transition_bonus: 0.15,
+            own_box_penalty: 0.35,
+            w_linger: 0.0,
+            linger_ticks: 30,
+            keeper_smother: true,
+        }
+    }
+}
+
 impl Default for DisciplineTuning {
     fn default() -> Self {
         Self {
-            foul_base: 0.03,
-            foul_aggression: 0.08,
+            foul_base: 0.26,
+            foul_aggression: 0.24,
             foul_tackling: 0.03,
-            foul_range: (0.02, 0.15),
+            foul_range: (0.05, 0.45),
+            foul_from_behind: 0.2,
             own_box_factor: 0.05,
             booked_factor: 0.3,
             // ~1 card per 6-7 fouls; direct reds ~1 per 250 fouls.

@@ -29,6 +29,13 @@ pub enum Action {
 
 pub struct DecisionSystem;
 
+/// Whole ticks in the carry-decay span (it is configured as `f32`).
+fn carry_span_ticks(span: f32) -> u32 {
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // small, ≥ 0
+    let ticks = span.max(0.0).ceil() as u32;
+    ticks
+}
+
 /// Shortest distance from `p` to the segment `a`→`b`.
 fn dist_to_segment(p: Vec2, a: Vec2, b: Vec2) -> f32 {
     let ab = b - a;
@@ -77,6 +84,17 @@ impl DecisionSystem {
             && shoot_score >= dribble_score
         {
             return Action::Shoot;
+        }
+        // Forced release: once carrying has no value left, holding forever is
+        // not an option (it deadlocked the match) — shoot if in range,
+        // otherwise play the best available pass, whatever its score.
+        if state.holder_ticks >= t.carry_decay_start + carry_span_ticks(t.carry_decay_span) {
+            if shoot_score > 0.0 {
+                return Action::Shoot;
+            }
+            if let Some(to) = best_to {
+                return Action::Pass { to };
+            }
         }
         if let Some(to) = best_to {
             if best_pass >= dribble_score {
@@ -227,6 +245,146 @@ impl DecisionSystem {
         } else {
             t.dribble_cramped * carry_decay * near_goal
         }
+    }
+
+    /// cos of the angle at the carrier between the defender and the goal the
+    /// defender protects: +1 squarely goal-side, −1 chasing from behind,
+    /// 0 alongside. No trigonometry: normalised dot product.
+    #[must_use]
+    pub fn goal_side_cos(
+        state: &MatchState,
+        frame: &TickFrame,
+        defender: usize,
+        carrier: usize,
+    ) -> f32 {
+        let c = frame.pos(carrier);
+        let own_goal = state
+            .attacking(state.players[defender].side)
+            .opposite()
+            .goal_centre();
+        (frame.pos(defender) - c)
+            .normalize()
+            .dot((own_goal - c).normalize())
+    }
+
+    /// Where the first defender stands against the carrier: goal-side, at a
+    /// distance set by the danger zone of the carrier's position (spec Fase 5
+    /// containment bands). Inside a band, aggressive defenders stand tighter.
+    #[must_use]
+    pub fn containment_point(
+        state: &MatchState,
+        frame: &TickFrame,
+        defender: usize,
+        carrier: usize,
+    ) -> Vec2 {
+        let t = &state.tuning.defending;
+        let c = frame.pos(carrier);
+        let own_goal = state
+            .attacking(state.players[defender].side)
+            .opposite()
+            .goal_centre();
+        let to_goal = own_goal - c;
+        let danger = to_goal.length();
+        let band = if danger <= t.zone_box_dist {
+            t.contain_box
+        } else if danger <= t.zone_mid_dist {
+            t.contain_mid
+        } else {
+            t.contain_far
+        };
+        let aggression = f32::from(state.players[defender].attrs.mental.aggression) / 100.0;
+        let dist = band.1 - (band.1 - band.0) * aggression;
+        c + to_goal.normalize() * dist
+    }
+
+    /// Challenge decision for one eligible defender: deterministic score from
+    /// goal-side angle, carrier vulnerability, defender profile and context.
+    #[must_use]
+    pub fn challenge_score(
+        state: &MatchState,
+        frame: &TickFrame,
+        defender: usize,
+        carrier: usize,
+    ) -> f32 {
+        let t = &state.tuning.defending;
+        let d = &state.players[defender];
+        let unit = |v: u8| f32::from(v) / 100.0;
+        let fresh = if state.holder_ticks < t.fresh_ticks {
+            t.w_fresh
+        } else {
+            0.0
+        };
+        let transition = if frame.phase(d.side) == crate::phase::Phase::TransitionDefense {
+            t.transition_bonus
+        } else {
+            0.0
+        };
+        let own_box = state.attacking(d.side).opposite();
+        let in_own_box = pitch::in_penalty_area(frame.pos(carrier), own_box);
+        let is_keeper = d.role == Role::Goalkeeper;
+        // A keeper coming out in their own box is the box's normal defence.
+        let box_penalty = if in_own_box && !is_keeper {
+            t.own_box_penalty
+        } else {
+            0.0
+        };
+        // A carrier who lingers on the ball becomes a target.
+        #[allow(clippy::cast_precision_loss)] // ticks ≪ 2^23
+        let linger =
+            t.w_linger * (state.holder_ticks as f32 / t.linger_ticks.max(1) as f32).min(1.0);
+        // Keepers read the duel with one-on-ones instead of tackling.
+        let skill = if is_keeper {
+            unit(d.attrs.goalkeeping.one_on_ones)
+        } else {
+            unit(d.attrs.technical.tackling)
+        };
+        t.challenge_base
+            + t.w_goal_side * Self::goal_side_cos(state, frame, defender, carrier)
+            + fresh
+            + linger
+            + t.w_tackling * skill
+            + t.w_decisions * unit(d.attrs.mental.decisions)
+            + t.w_aggression * unit(d.attrs.mental.aggression)
+            + transition
+            - box_penalty
+    }
+
+    /// The defender of `side` who commits to a challenge on `carrier` this
+    /// tick, if any: among players in reach and recovered (keepers only in
+    /// their own box), the highest
+    /// challenge score above the threshold (lowest index on ties).
+    #[must_use]
+    pub fn choose_challenger(
+        state: &MatchState,
+        frame: &TickFrame,
+        side: crate::phase::Side,
+        carrier: usize,
+    ) -> Option<usize> {
+        let reach = state.tuning.duel.tackle_range;
+        let threshold = state.tuning.defending.challenge_threshold;
+        let c = frame.pos(carrier);
+        let own_box = state.attacking(side).opposite();
+        let keeper_may =
+            state.tuning.defending.keeper_smother && pitch::in_penalty_area(c, own_box);
+        let mut best = None;
+        let mut best_score = threshold;
+        for (i, p) in state.players.iter().enumerate() {
+            if p.side != side || !p.active() {
+                continue;
+            }
+            if p.role == Role::Goalkeeper && !keeper_may {
+                continue;
+            }
+            if state.tick < p.tackle_ready_tick || frame.pos(i).distance(c) >= reach {
+                continue;
+            }
+            let score = Self::challenge_score(state, frame, i, carrier);
+            if score > best_score {
+                best_score = score;
+                best = Some(i);
+            }
+        }
+        best
     }
 
     /// The defender of `side` closest to the ball, who presses it this tick.

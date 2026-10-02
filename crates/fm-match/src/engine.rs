@@ -145,7 +145,6 @@ impl MatchEngine {
             passes: 0,
             passes_completed: 0,
             tackles: 0,
-            next_tackle_tick: 0,
         };
         let mut state = MatchState {
             match_seed: setup.match_seed,
@@ -507,32 +506,27 @@ fn on_ball(
                 }
                 Action::Pass { .. } | Action::Shoot | Action::Tackle { .. } => {}
             }
-            // Defensive pressure on the carrier (if they still have it): the
-            // nearest defender presses and may challenge, the second covers
-            // goal-side.
+            // Defending the carrier (if they still have it): the nearest
+            // defender contains goal-side at the zone's distance, the second
+            // covers behind them, and whoever is in reach decides whether to
+            // commit to a challenge (spec Fase 5 defending model).
             if let BallState::Held { holder } = s.ball {
+                let carrier = holder as usize;
                 let defending = holder_side.other();
-                let hpos = frame.pos(holder as usize);
+                let hpos = frame.pos(carrier);
                 let own_goal = s.attacking(defending).opposite().goal_centre();
                 let (first, second) = two_nearest(s, frame, defending, hpos);
+                if let Some(d) = first {
+                    targets[d] = DecisionSystem::containment_point(s, frame, d, carrier);
+                    urgency[d] = s.tuning.defending.contain_urgency;
+                }
                 if let Some(d) = second {
-                    // Cover: goal-side of the carrier.
-                    targets[d] = hpos + (own_goal - hpos).normalize() * s.tuning.duel.cover_dist;
+                    let behind = s.tuning.defending.contain_far.1 + s.tuning.duel.cover_dist;
+                    targets[d] = hpos + (own_goal - hpos).normalize() * behind;
                     urgency[d] = s.tuning.duel.cover_urgency;
                 }
-                if let Some(d) = first {
-                    targets[d] = hpos;
-                    urgency[d] = 1.0;
-                }
-                // Any defender within reach and recovered may challenge; the
-                // closest goes first (index breaks ties). A fresh receiver
-                // gets a moment before the challenge.
-                if s.holder_ticks >= s.tuning.duel.settle_ticks
-                    && s.tick >= s.team(defending).next_tackle_tick
-                {
-                    if let Some(d) = challenger(s, frame, defending, hpos) {
-                        ActionResolver::resolve(s, frame, d, Action::Tackle { on: holder });
-                    }
+                if let Some(d) = DecisionSystem::choose_challenger(s, frame, defending, carrier) {
+                    ActionResolver::resolve(s, frame, d, Action::Tackle { on: holder });
                 }
             }
         }
@@ -577,26 +571,6 @@ fn intercept_point(flight: &crate::ball::BallFlight, now: u32, from: Vec2, speed
         }
     }
     flight.pos_at(now + 30 * LOGICAL_DT_MS).xy()
-}
-
-/// Closest outfield player of `side` within tackle range of `at` and ready.
-fn challenger(s: &MatchState, frame: &TickFrame, side: Side, at: Vec2) -> Option<usize> {
-    let mut best = None;
-    let mut best_d = s.tuning.duel.tackle_range;
-    for (i, p) in s.players.iter().enumerate() {
-        if p.side != side || !p.active() || p.role == Role::Goalkeeper {
-            continue;
-        }
-        if s.tick < p.tackle_ready_tick {
-            continue;
-        }
-        let d = frame.pos(i).distance(at);
-        if d < best_d {
-            best_d = d;
-            best = Some(i);
-        }
-    }
-    best
 }
 
 /// The two outfield players of `side` nearest to `at` (index breaks ties).
