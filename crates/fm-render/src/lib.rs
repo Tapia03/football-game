@@ -7,3 +7,5 @@
 //! only other `unsafe` is test-only, in `fm-test-utils` (spec §0.13).
 
 pub mod ffi;
+
+pub mod shapes;

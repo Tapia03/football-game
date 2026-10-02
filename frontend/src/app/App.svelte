@@ -1,50 +1,84 @@
 <script lang="ts">
-  import { loadEngineInfo, type EngineInfo } from '../engine-bridge';
+  import { loadEngineInfo, renderSpike, type EngineInfo } from '../engine-bridge';
 
   type State =
     | { readonly kind: 'loading' }
     | { readonly kind: 'ready'; readonly info: EngineInfo }
     | { readonly kind: 'error'; readonly message: string };
 
-  let state: State = $state({ kind: 'loading' });
+  let engine: State = $state({ kind: 'loading' });
+  let spike: string = $state('…');
+  let canvas: HTMLCanvasElement | undefined = $state();
+
+  $effect(() => {
+    if (canvas === undefined) return;
+    renderSpike(canvas).then(
+      (verts) => {
+        spike = `OK (${verts} vértices)`;
+      },
+      (err: unknown) => {
+        spike = `FALHOU: ${err instanceof Error ? err.message : String(err)}`;
+      },
+    );
+  });
 
   $effect(() => {
     loadEngineInfo().then(
       (info) => {
-        state = { kind: 'ready', info };
+        engine = { kind: 'ready', info };
       },
       (err: unknown) => {
-        state = { kind: 'error', message: err instanceof Error ? err.message : String(err) };
+        engine = { kind: 'error', message: err instanceof Error ? err.message : String(err) };
       },
     );
   });
 </script>
 
+<section class="spike">
+  <canvas id="spike-canvas" bind:this={canvas}></canvas>
+  <p data-testid="spike-status">Spike de render (glow/WebGL2): {spike}</p>
+</section>
+
 <main>
-  {#if state.kind === 'loading'}
+  {#if engine.kind === 'loading'}
     <p data-testid="status">Carregando engine…</p>
-  {:else if state.kind === 'error'}
-    <p data-testid="status" class="err">Falha ao carregar WASM: {state.message}</p>
+  {:else if engine.kind === 'error'}
+    <p data-testid="status" class="err">Falha ao carregar WASM: {engine.message}</p>
   {:else}
-    <h1 data-testid="hello">{state.info.greeting}</h1>
+    <h1 data-testid="hello">{engine.info.greeting}</h1>
     <dl>
       <dt>libm parity (golden nativo vs WASM)</dt>
-      <dd data-testid="libm-parity" class={state.info.libmMismatches === 0 ? 'ok' : 'err'}>
-        {state.info.libmMismatches === 0 ? 'OK' : `${state.info.libmMismatches} divergências`}
+      <dd data-testid="libm-parity" class={engine.info.libmMismatches === 0 ? 'ok' : 'err'}>
+        {engine.info.libmMismatches === 0 ? 'OK' : `${engine.info.libmMismatches} divergências`}
       </dd>
       <dt>crossOriginIsolated (SharedArrayBuffer)</dt>
-      <dd data-testid="coi" class={state.info.crossOriginIsolated ? 'ok' : 'err'}>
-        {state.info.crossOriginIsolated ? 'true' : 'false'}
+      <dd data-testid="coi" class={engine.info.crossOriginIsolated ? 'ok' : 'err'}>
+        {engine.info.crossOriginIsolated ? 'true' : 'false'}
       </dd>
       <dt>WebGL2 (glow, shader)</dt>
-      <dd data-testid="webgl2" class={state.info.webgl2.ok ? 'ok' : 'err'}>
-        {state.info.webgl2.ok ? 'OK' : `FALHOU: ${state.info.webgl2.detail}`}
+      <dd data-testid="webgl2" class={engine.info.webgl2.ok ? 'ok' : 'err'}>
+        {engine.info.webgl2.ok ? 'OK' : `FALHOU: ${engine.info.webgl2.detail}`}
       </dd>
     </dl>
   {/if}
 </main>
 
 <style>
+  .spike {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 1rem 1rem 0;
+  }
+  .spike canvas {
+    display: block;
+    width: 100%;
+    aspect-ratio: 113 / 76;
+    border-radius: 6px;
+  }
+  .spike p {
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
   main {
     max-width: 48rem;
     margin: 0 auto;
