@@ -1,7 +1,7 @@
 //! Player attributes: four POD blocks, every value on a 1..=100 scale.
 //!
-//! `u8` fields keep a full attribute set at 35 bytes, so 500k players fit in
-//! ~17 MB of cold data and copy without allocation.
+//! `u8` fields keep a full attribute set at 41 bytes, so 500k players fit in
+//! ~20 MB of cold data and copy without allocation.
 
 /// Lowest and highest legal attribute value.
 pub const ATTR_MIN: u8 = 1;
@@ -88,6 +88,16 @@ attr_block!(
     }
 );
 
+attr_block!(
+    /// Goalkeeping (6). Always present so `PlayerStatic` keeps a fixed size,
+    /// but only consulted when the player's role is goalkeeper.
+    GoalkeepingAttributes {
+        reflexes, handling, positioning_gk, aerial_reach, one_on_ones, distribution,
+    }
+);
+
+const _: () = assert!(core::mem::size_of::<GoalkeepingAttributes>() == 6);
+
 /// The full attribute set of a player.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct PlayerAttributes {
@@ -95,6 +105,7 @@ pub struct PlayerAttributes {
     pub mental: MentalAttributes,
     pub physical: PhysicalAttributes,
     pub hidden: HiddenAttributes,
+    pub goalkeeping: GoalkeepingAttributes,
 }
 
 impl PlayerAttributes {
@@ -104,14 +115,15 @@ impl PlayerAttributes {
             && self.mental.is_valid()
             && self.physical.is_valid()
             && self.hidden.is_valid()
+            && self.goalkeeping.is_valid()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        HiddenAttributes, MentalAttributes, PhysicalAttributes, PlayerAttributes,
-        TechnicalAttributes,
+        GoalkeepingAttributes, HiddenAttributes, MentalAttributes, PhysicalAttributes,
+        PlayerAttributes, TechnicalAttributes,
     };
     use core::mem::size_of;
 
@@ -125,7 +137,9 @@ mod tests {
         assert_eq!(size_of::<MentalAttributes>(), 9);
         assert_eq!(size_of::<PhysicalAttributes>(), 8);
         assert_eq!(size_of::<HiddenAttributes>(), 8);
-        assert_eq!(size_of::<PlayerAttributes>(), 35);
+        assert_eq!(GoalkeepingAttributes::FIELDS.len(), 6);
+        assert_eq!(size_of::<GoalkeepingAttributes>(), 6);
+        assert_eq!(size_of::<PlayerAttributes>(), 41);
     }
 
     #[test]

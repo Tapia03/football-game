@@ -3,7 +3,8 @@
 use fm_core::{rng_for_event, Rng};
 
 use crate::attributes::{
-    HiddenAttributes, MentalAttributes, PhysicalAttributes, PlayerAttributes, TechnicalAttributes,
+    GoalkeepingAttributes, HiddenAttributes, MentalAttributes, PhysicalAttributes,
+    PlayerAttributes, TechnicalAttributes,
 };
 use crate::database::PlayerDatabase;
 use crate::player::{Foot, PlayerBio, PlayerStatic, Position};
@@ -100,6 +101,7 @@ fn attr(rng: &mut Rng, base: i32, offset: i8) -> u8 {
 fn generate_player(rng: &mut Rng, season_year: u16) -> PlayerStatic {
     let position = pick_position(rng);
     let group = Group::of(position);
+    let group_is_keeper = matches!(group, Group::Keeper);
     // Triangular quality around 50 (20..=80): most players are average.
     let quality_u = 20 + rng.below(31) + rng.below(31);
     #[allow(clippy::cast_possible_wrap)] // <= 80
@@ -112,6 +114,9 @@ fn generate_player(rng: &mut Rng, season_year: u16) -> PlayerStatic {
         physical: PhysicalAttributes::from_fn(|i| attr(rng, quality, p[i])),
         // Hidden traits are independent of ability.
         hidden: HiddenAttributes::from_fn(|_| 10 + rng.below(81) as u8),
+        // Placeholder; drawn last (end of this fn) so adding the block did
+        // not shift the draws of any pre-existing field.
+        goalkeeping: GoalkeepingAttributes::uniform(1),
     };
 
     let age = 16 + rng.below(21) as u16; // 16..=36
@@ -132,7 +137,7 @@ fn generate_player(rng: &mut Rng, season_year: u16) -> PlayerStatic {
         _ => Foot::Both,
     };
 
-    PlayerStatic {
+    let mut player = PlayerStatic {
         attributes,
         bio: PlayerBio {
             first_name: rng.below(2_000) as u16,
@@ -147,7 +152,15 @@ fn generate_player(rng: &mut Rng, season_year: u16) -> PlayerStatic {
         position,
         potential,
         club: None,
-    }
+    };
+    // Keepers get their quality in the GK block; outfielders are poor
+    // emergency keepers (5..=30). Drawn after every other field.
+    player.attributes.goalkeeping = if group_is_keeper {
+        GoalkeepingAttributes::from_fn(|_| attr(rng, quality, 0))
+    } else {
+        GoalkeepingAttributes::from_fn(|_| 5 + rng.below(26) as u8)
+    };
+    player
 }
 
 /// Builds `count` players. Player `i` depends only on `(seed, i)`, so any
@@ -210,6 +223,8 @@ mod tests {
         let tackling = |s: &crate::PlayerStatic| s.attributes.technical.tackling;
         assert!(mean(Position::Striker, finishing) > mean(Position::CentreBack, finishing) + 20);
         assert!(mean(Position::CentreBack, tackling) > mean(Position::Striker, tackling) + 20);
+        let reflexes = |s: &crate::PlayerStatic| s.attributes.goalkeeping.reflexes;
+        assert!(mean(Position::Goalkeeper, reflexes) > mean(Position::Striker, reflexes) + 25);
         let _ = db.static_of(PlayerId(0));
     }
 }

@@ -2,7 +2,9 @@
 
 use fm_core::{rng_for_event, Rng};
 
-use crate::player::{InjuryKind, PlayerDynamic, PlayerId, PlayerStatic, BP_MAX, BP_NEUTRAL};
+use crate::player::{
+    InjuryKind, PlayerDynamic, PlayerId, PlayerStatic, Position, BP_MAX, BP_NEUTRAL,
+};
 
 /// Domain separator for weekly streams, so a world seed that equals a match
 /// seed never makes `weekly_update` reuse match draws.
@@ -155,10 +157,18 @@ pub fn update_player(s: &PlayerStatic, d: &mut PlayerDynamic, rng: &mut Rng) {
     let bp_max = i32::from(BP_MAX);
     let neutral = i32::from(BP_NEUTRAL);
 
+    // Keepers cover a fraction of an outfielder's distance (~5 km vs ~10-12
+    // km per match) and sprint rarely, so per-minute load and injury
+    // exposure are scaled down for them.
+    let is_keeper = s.position == Position::Goalkeeper;
+
     // Fatigue: load ∝ minutes, damped by stamina (90 min, stamina 50 → 1800 bp);
     // recovery grows with natural fitness (nf 50 → 2250 bp/week), so one match
-    // a week is sustainable and two are not.
-    let load = minutes * (130 - i32::from(phys.stamina)) / 4;
+    // a week is sustainable and two are not. Keepers carry 40% of that load.
+    let mut load = minutes * (130 - i32::from(phys.stamina)) / 4;
+    if is_keeper {
+        load = load * 2 / 5;
+    }
     let recovery = 1_500 + i32::from(phys.natural_fitness) * 15;
     let fatigue = i32::from(d.fatigue) + load - recovery;
     d.fatigue = clamp_bp(fatigue);
@@ -172,7 +182,9 @@ pub fn update_player(s: &PlayerStatic, d: &mut PlayerDynamic, rng: &mut Rng) {
             d.injury_kind = InjuryKind::None;
         }
     } else {
-        let base = 20 + minutes * i32::from(hidden.injury_proneness) / 30;
+        // Keepers: half the per-minute exposure (fewer sprints and duels).
+        let exposure = if is_keeper { 60 } else { 30 };
+        let base = 20 + minutes * i32::from(hidden.injury_proneness) / exposure;
         let p = base * (bp_max + i32::from(d.fatigue)) / bp_max;
         #[allow(clippy::cast_possible_wrap)] // < 10_000
         let roll = rng.below(10_000) as i32;
@@ -247,7 +259,7 @@ pub fn dynamics_digest(db: &PlayerDatabase) -> u64 {
 mod tests {
     use super::{rng_for_week, update_player, PlayerDatabase};
     use crate::generate::generate_database;
-    use crate::player::{InjuryKind, PlayerDynamic, PlayerId, PlayerStatic, BP_NEUTRAL};
+    use crate::player::{InjuryKind, PlayerDynamic, PlayerId, PlayerStatic, Position, BP_NEUTRAL};
 
     const SEED: u64 = 0xC0FF_EE00;
 
@@ -302,7 +314,49 @@ mod tests {
             }
             db.weekly_update(99, w);
         }
-        assert_eq!(super::dynamics_digest(&db), 0xC7C4_650E_0908_49A9);
+        assert_eq!(super::dynamics_digest(&db), 0x71E5_90E3_714D_2DD4);
+    }
+
+    #[test]
+    fn keepers_tire_less_and_get_hurt_less() {
+        let make = |pos: Position| {
+            let mut db = generate_database(3_000, 21, 2026);
+            let ids: Vec<PlayerId> = db.ids().collect();
+            for &id in &ids {
+                let s = db.static_mut(id);
+                s.position = pos;
+                s.attributes.physical.stamina = 50;
+                s.attributes.physical.natural_fitness = 30;
+                s.attributes.hidden.injury_proneness = 60;
+            }
+            let mut fatigue = 0_u64;
+            let mut injuries = 0_u32;
+            for w in 0..38 {
+                for &id in &ids {
+                    if !db.dynamic_of(id).is_injured() {
+                        db.record_minutes(id, 180);
+                    }
+                }
+                let before: Vec<bool> = ids
+                    .iter()
+                    .map(|&id| db.dynamic_of(id).is_injured())
+                    .collect();
+                db.weekly_update(SEED, w);
+                for (&id, was) in ids.iter().zip(before) {
+                    let d = db.dynamic_of(id);
+                    fatigue += u64::from(d.fatigue);
+                    injuries += u32::from(!was && d.is_injured());
+                }
+            }
+            (fatigue, injuries)
+        };
+        let (gk_fatigue, gk_inj) = make(Position::Goalkeeper);
+        let (cb_fatigue, cb_inj) = make(Position::CentreBack);
+        assert!(
+            gk_fatigue * 2 < cb_fatigue,
+            "gk {gk_fatigue} vs cb {cb_fatigue}"
+        );
+        assert!(gk_inj < cb_inj, "gk {gk_inj} vs cb {cb_inj}");
     }
 
     #[test]

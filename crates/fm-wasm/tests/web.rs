@@ -58,7 +58,7 @@ fn weekly_update_matches_native_digest() {
         }
         db.weekly_update(99, w);
     }
-    assert_eq!(fm_entities::dynamics_digest(&db), 0xC7C4_650E_0908_49A9);
+    assert_eq!(fm_entities::dynamics_digest(&db), 0x71E5_90E3_714D_2DD4);
 }
 
 #[wasm_bindgen_test]
