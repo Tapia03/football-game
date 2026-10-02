@@ -1110,6 +1110,35 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
     (93% de bola parada).
   - Conclusão: com replanejamento quase todo tick, a física completa não
     cabe em +5%. Decisão pendente com o usuário.
+- **Física só para quem está no lance (aprovado 2026-10-02):**
+  - **No lance (física em todo tick):** o portador; os defensores que o
+    `on_ball` comanda contra o portador (contenção, cobertura, quem dá o
+    bote); quem persegue uma bola em voo e o receptor de um passe; o
+    batedor de bola parada; os corredores com corrida ativa (e, quando o
+    passo 2 existir, quem acompanha um corredor).
+  - **Fora do lance (arcade):** o resto — quem só segue a âncora da
+    formação (defesa recuada, meias longe da bola, goleiro fora do lance).
+    Modelo instantâneo, replanejado na **cadência de 3 ticks**.
+  - **Regra de transição:** todo replanejamento parte da posição e da
+    velocidade atuais do plano em curso, qualquer que seja o modelo. Ao
+    entrar no lance, a física começa da velocidade que o jogador já tinha
+    (a do seu plano arcade); ao sair, o arcade parte da posição atual.
+    Posição sempre contínua; velocidade contínua na entrada no lance.
+    Teste: `test_player_entering_play_does_not_jump`.
+  - **Manter o plano** enquanto a intenção não muda (alvo a < 0,5 m, mesma
+    velocidade, e o plano termina no alvo).
+  - Faixas de custo: ≤ 562M aceito; 562–593M aceito como exceção pontual
+    se (c) fechar ≤ 593M; > 593M parar com o perfil.
+  - **Medido (2026-10-02), não commitado:** **588,9M = +9,96% sobre o
+    item 4** (faixa de exceção). Critério de funcionamento: bola parada
+    5–9%, 950 passes por partida. Contra o real (180 partidas): gols 4,86
+    (2,7), chutes 27,5 / 9,0 no alvo (25 / 9 ✓), passes 950 (~900 ✓),
+    **acerto 56% (~80% ✗)**, **botes 8,8 e faltas 3,3 (~70 / 22 ✗)**, posse
+    do mandante 56,9%, xG por chute 0,23 (~0,10). Corredores voltam à
+    forma em 1,1 s (mediana).
+  - **Teste da Fase 4 falha:** `match_statistics_are_plausible` exige ≥ 3
+    faltas por partida; mediu 2,83 (seeds 0–5). Parado pela regra "teste
+    falhou → log + hipóteses, sem correção tentativa".
 - **Orçamento pontual do passo de física (aprovado 2026-10-02):** até +5%
   sobre o item 4, com a chegada (frenagem + giro parado) no mesmo commit
   da física ligada; teto de 560M instruções (parar acima de 562M). Sem
