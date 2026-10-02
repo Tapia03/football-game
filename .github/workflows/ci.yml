@@ -93,13 +93,6 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps ${{ matrix.browser }}
-      # DIAGNÓSTICO TEMPORÁRIO (fase-3, experimento a): driver Mesa por software com EGL.
-      - name: Install Mesa software GL (firefox)
-        if: matrix.browser == 'firefox'
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq libegl-mesa0 libgl1-mesa-dri libegl1 mesa-utils
-          eglinfo -B 2>&1 | head -40 || true
       # DIAGNÓSTICO TEMPORÁRIO (fase-3): roda firefox-forced e não para no 1º erro.
       - run: npx playwright test --project=${{ matrix.browser }} ${{ matrix.browser == 'firefox' && '--project=firefox-forced' || '' }}
       - name: Upload evidence screenshots
