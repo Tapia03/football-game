@@ -69,8 +69,14 @@ impl PhaseStateMachine {
         }
     }
 
-    /// Advances one logical tick and returns `(home_phase, away_phase)`.
-    pub fn update(&mut self, possession: Possession, set_piece: bool) -> (Phase, Phase) {
+    /// Engine entry point: advances one logical tick from the frame's
+    /// possession / set-piece status; returns `(home_phase, away_phase)`.
+    pub fn update(&mut self, frame: &crate::tick_frame::TickFrame) -> (Phase, Phase) {
+        self.advance(frame.possession(), frame.set_piece())
+    }
+
+    /// The pure transition behind `update`.
+    pub fn advance(&mut self, possession: Possession, set_piece: bool) -> (Phase, Phase) {
         match possession {
             Possession::Team(side) if side != self.holder => {
                 self.holder = side;
@@ -115,7 +121,7 @@ mod tests {
     fn kick_off_is_settled_possession() {
         let mut m = PhaseStateMachine::new(Side::Home);
         assert_eq!(
-            m.update(HOME, false),
+            m.advance(HOME, false),
             (Phase::InPossession, Phase::OutOfPossession)
         );
     }
@@ -126,15 +132,15 @@ mod tests {
         let mut m = PhaseStateMachine::new(Side::Home);
         // Tick of the steal counts as tick 0 of the transition.
         assert_eq!(
-            m.update(AWAY, false),
+            m.advance(AWAY, false),
             (Phase::TransitionDefense, Phase::TransitionAttack)
         );
         for _ in 1..TRANSITION_TICKS {
-            assert_eq!(m.update(AWAY, false).1, Phase::TransitionAttack);
+            assert_eq!(m.advance(AWAY, false).1, Phase::TransitionAttack);
         }
         // Exactly 30 ticks (3.0 s) after the steal the transition is over.
         assert_eq!(
-            m.update(AWAY, false),
+            m.advance(AWAY, false),
             (Phase::OutOfPossession, Phase::InPossession)
         );
     }
@@ -142,38 +148,38 @@ mod tests {
     #[test]
     fn loose_ball_keeps_phase_and_clock() {
         let mut m = PhaseStateMachine::new(Side::Home);
-        m.update(AWAY, false);
+        m.advance(AWAY, false);
         for _ in 0..10 {
             assert_eq!(
-                m.update(Possession::Loose, false).1,
+                m.advance(Possession::Loose, false).1,
                 Phase::TransitionAttack
             );
         }
         for _ in 0..TRANSITION_TICKS {
-            m.update(Possession::Loose, false);
+            m.advance(Possession::Loose, false);
         }
-        assert_eq!(m.update(Possession::Loose, false).1, Phase::InPossession);
+        assert_eq!(m.advance(Possession::Loose, false).1, Phase::InPossession);
         assert_eq!(m.holder(), Side::Away);
     }
 
     #[test]
     fn regain_during_transition_restarts_clock() {
         let mut m = PhaseStateMachine::new(Side::Home);
-        m.update(AWAY, false);
+        m.advance(AWAY, false);
         for _ in 0..20 {
-            m.update(AWAY, false);
+            m.advance(AWAY, false);
         }
-        assert_eq!(m.update(HOME, false).0, Phase::TransitionAttack);
+        assert_eq!(m.advance(HOME, false).0, Phase::TransitionAttack);
         for _ in 1..TRANSITION_TICKS {
-            assert_eq!(m.update(HOME, false).0, Phase::TransitionAttack);
+            assert_eq!(m.advance(HOME, false).0, Phase::TransitionAttack);
         }
-        assert_eq!(m.update(HOME, false).0, Phase::InPossession);
+        assert_eq!(m.advance(HOME, false).0, Phase::InPossession);
     }
 
     #[test]
     fn set_piece_overrides_both_teams() {
         let mut m = PhaseStateMachine::new(Side::Home);
-        assert_eq!(m.update(AWAY, true), (Phase::SetPiece, Phase::SetPiece));
+        assert_eq!(m.advance(AWAY, true), (Phase::SetPiece, Phase::SetPiece));
         assert!(Phase::TransitionAttack.has_ball());
         assert!(!Phase::OutOfPossession.has_ball());
         assert_eq!(Side::Home.other(), Side::Away);

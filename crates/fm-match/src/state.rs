@@ -160,26 +160,14 @@ impl MatchState {
         &mut self.teams[side_index(side)]
     }
 
-    /// Ball position at the current tick.
-    #[must_use]
-    pub fn ball_pos(&self) -> Vec3 {
-        self.ball_pos_at(self.now_ms())
-    }
-
-    /// Ball position at `t_ms` (valid between this tick and the next).
+    /// Ball position at `t_ms` (valid between this tick and the next). Used
+    /// for sampling; inside the tick use `TickFrame::ball`.
     #[must_use]
     pub fn ball_pos_at(&self, t_ms: u32) -> Vec3 {
         match self.ball {
             BallState::Held { holder } => {
                 let p = &self.players[holder as usize];
-                // Ball sits half a metre ahead of the carrier, toward goal.
-                let ahead = self.attacking(p.side);
-                let dx = match ahead {
-                    GoalEnd::Right => 0.5,
-                    GoalEnd::Left => -0.5,
-                };
-                let pos = p.pos(t_ms);
-                Vec3::new(pos.x + dx, pos.y, 0.0)
+                crate::tick_frame::carried_ball(p.pos(t_ms), self.attacking(p.side))
             }
             BallState::Flight { flight, .. } => flight.pos_at(t_ms),
             BallState::Dead(r) => r.spot.extend(0.0),

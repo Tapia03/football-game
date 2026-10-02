@@ -63,6 +63,7 @@ jobs:
       - run: |
           set -o pipefail
           cargo bench -p fm-entities --bench weekly_update -- --quick 2>&1 | tee bench.txt
+          cargo bench -p fm-match --bench tick_logic 2>&1 | tee -a bench.txt
       - uses: actions/upload-artifact@v4
         with:
           name: bench

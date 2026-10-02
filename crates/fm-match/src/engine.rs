@@ -10,7 +10,7 @@ use crate::decision::{Action, DecisionSystem, TACKLE_RANGE};
 use crate::events::{EventKind, EventLog, MatchEvent, RestartKind};
 use crate::formation::{Formation, Role};
 use crate::kinematics::PlayerKinematics;
-use crate::phase::{Phase, PhaseStateMachine, Possession, Side, LOGICAL_DT_MS};
+use crate::phase::{Phase, PhaseStateMachine, Side, LOGICAL_DT_MS};
 use crate::resolver::ActionResolver;
 use crate::role::{RoleBehavior, RoleContext, RoleIntent};
 use crate::snapshot::{LodLevel, MatchSnapshot, PlayerSnapshot};
@@ -19,6 +19,7 @@ use crate::state::{
     PLAYERS,
 };
 use crate::tactics::Tactics;
+use crate::tick_frame::TickFrame;
 
 /// 45 minutes of logical ticks.
 pub const HALF_TICKS: u32 = 45 * 60 * 1_000 / LOGICAL_DT_MS;
@@ -60,8 +61,13 @@ fn restart_wait_ticks(kind: RestartKind) -> u32 {
 ///
 /// # Panics
 /// Never in practice: player indices are always `< 22`.
-pub fn set_restart(state: &mut MatchState, kind: RestartKind, side: Side, spot: Vec2) {
-    let now = state.now_ms();
+pub fn set_restart(
+    state: &mut MatchState,
+    frame: &TickFrame,
+    kind: RestartKind,
+    side: Side,
+    spot: Vec2,
+) {
     let want_keeper = kind == RestartKind::GoalKick;
     let mut taker = None;
     let mut best = f32::MAX;
@@ -73,7 +79,7 @@ pub fn set_restart(state: &mut MatchState, kind: RestartKind, side: Side, spot: 
         if want_keeper != is_keeper && !(want_keeper && state.keeper(side).is_none()) {
             continue;
         }
-        let d = p.pos(now).distance(spot);
+        let d = frame.pos(i).distance(spot);
         if d < best {
             best = d;
             taker = Some(i);
@@ -215,22 +221,23 @@ impl MatchEngine {
             return;
         }
 
-        step_ball(s);
+        // Stage 1: positions of the 22 at this tick (constant until
+        // `move_players` re-plans at the end).
+        let mut frame = TickFrame::capture(s);
+        step_ball(s, &frame);
 
-        let possession = match s.ball {
-            BallState::Held { holder } => Possession::Team(s.players[holder as usize].side),
-            BallState::Dead(r) => Possession::Team(r.side),
-            BallState::Flight { .. } => Possession::Loose,
-        };
-        let set_piece = matches!(s.ball, BallState::Dead(_));
-        let (home, away) = s.phase_sm.update(possession, set_piece);
+        // Stage 2: possession → phases → anchors, for the ball as stepped.
+        frame.observe_ball(s);
+        let (home, away) = s.phase_sm.update(&frame);
         s.phases = [home, away];
+        frame.set_phases(s.phases);
+        frame.compute_anchors(s);
 
         let mut targets = [Vec2::ZERO; PLAYERS];
         let mut urgency = [0.6_f32; PLAYERS];
-        plan_shape(s, &mut targets, &mut urgency);
-        on_ball(s, &mut targets, &mut urgency);
-        move_players(s, &targets, &urgency);
+        plan_shape(s, &frame, &mut targets, &mut urgency);
+        on_ball(s, &frame, &mut targets, &mut urgency);
+        move_players(s, &frame, &targets, &urgency);
     }
 
     /// Snapshot at `t_ms` (between this tick and the next). `None` in
@@ -301,7 +308,8 @@ fn line_up_for_kickoff(s: &mut MatchState, kicking: Side) {
         s.players[i].traj = PlayerKinematics::plan_trajectory(at, at, 1.0, now);
     }
     s.phase_sm = PhaseStateMachine::new(kicking);
-    set_restart(s, RestartKind::KickOff, kicking, pitch::CENTRE);
+    let frame = &TickFrame::capture(s);
+    set_restart(s, frame, RestartKind::KickOff, kicking, pitch::CENTRE);
     if let BallState::Dead(r) = &mut s.ball {
         r.ready_tick = s.tick;
     }
@@ -309,10 +317,10 @@ fn line_up_for_kickoff(s: &mut MatchState, kicking: Side) {
 
 /// Ball physics consequences: shots arriving, ball out of play, loose-ball
 /// control, restarts being taken.
-fn step_ball(s: &mut MatchState) {
+fn step_ball(s: &mut MatchState, frame: &TickFrame) {
     let now = s.now_ms();
     match s.ball {
-        BallState::Flight { flight, intent } => {
+        BallState::Flight { intent, .. } => {
             if let FlightIntent::Shot {
                 shooter,
                 outcome,
@@ -320,39 +328,39 @@ fn step_ball(s: &mut MatchState) {
             } = intent
             {
                 if now >= arrive_ms {
-                    apply_shot(s, shooter as usize, outcome);
+                    apply_shot(s, frame, shooter as usize, outcome);
                     return;
                 }
             }
-            let pos = flight.pos_at(now).xy();
+            let pos = frame.ball(s).xy();
             if !pitch::in_pitch(pos) {
-                out_of_play(s, pos);
+                out_of_play(s, frame, pos);
                 return;
             }
             let mut cands = [0_u8; PLAYERS];
-            let n = ActionResolver::receive_candidates(s, &mut cands);
+            let n = ActionResolver::receive_candidates(s, frame, &mut cands);
             if n > 0 {
                 // Only the nearest player gets a touch this tick; if they
                 // miscontrol, the ball has a new path and others try next tick.
-                ActionResolver::try_receive(s, cands[0] as usize);
+                ActionResolver::try_receive(s, frame, cands[0] as usize);
             }
         }
         BallState::Held { holder } => {
-            let pos = s.ball_pos().xy();
+            let pos = frame.ball(s).xy();
             if !pitch::in_pitch(pos) {
                 s.last_touch = s.players[holder as usize].side;
-                out_of_play(s, pos);
+                out_of_play(s, frame, pos);
             }
         }
         BallState::Dead(r) => {
             let mut taker = r.taker as usize;
             if !s.players[taker].active() {
                 // Taker sent off meanwhile: re-elect.
-                set_restart(s, r.kind, r.side, r.spot);
+                set_restart(s, frame, r.kind, r.side, r.spot);
                 let BallState::Dead(nr) = s.ball else { return };
                 taker = nr.taker as usize;
             }
-            let near = s.players[taker].pos(now).distance(r.spot) < 1.0;
+            let near = frame.pos(taker).distance(r.spot) < 1.0;
             if s.tick >= r.ready_tick && near {
                 s.ball = BallState::Held {
                     holder: u8::try_from(taker).expect("< 22"),
@@ -360,14 +368,14 @@ fn step_ball(s: &mut MatchState) {
                 s.holder_ticks = 0;
                 s.last_touch = r.side;
                 if r.kind == RestartKind::Penalty {
-                    ActionResolver::take_penalty(s, taker);
+                    ActionResolver::take_penalty(s, frame, taker);
                 }
             }
         }
     }
 }
 
-fn apply_shot(s: &mut MatchState, shooter: usize, outcome: ShotOutcome) {
+fn apply_shot(s: &mut MatchState, frame: &TickFrame, shooter: usize, outcome: ShotOutcome) {
     let side = s.players[shooter].side;
     let defending = side.other();
     match outcome {
@@ -380,7 +388,7 @@ fn apply_shot(s: &mut MatchState, shooter: usize, outcome: ShotOutcome) {
                     scorer: s.players[shooter].id,
                 },
             });
-            set_restart(s, RestartKind::KickOff, defending, pitch::CENTRE);
+            set_restart(s, frame, RestartKind::KickOff, defending, pitch::CENTRE);
         }
         ShotOutcome::Saved => {
             if let Some(k) = s.keeper(defending) {
@@ -396,18 +404,19 @@ fn apply_shot(s: &mut MatchState, shooter: usize, outcome: ShotOutcome) {
                 s.holder_ticks = 0;
                 s.last_touch = defending;
             } else {
-                goal_kick(s, defending);
+                goal_kick(s, frame, defending);
             }
         }
-        ShotOutcome::OffTarget => goal_kick(s, defending),
+        ShotOutcome::OffTarget => goal_kick(s, frame, defending),
     }
 }
 
-fn goal_kick(s: &mut MatchState, side: Side) {
+fn goal_kick(s: &mut MatchState, frame: &TickFrame, side: Side) {
     let own = s.attacking(side).opposite();
     let x = own.goal_line_x() - own.direction() * pitch::GOAL_AREA_DEPTH;
     set_restart(
         s,
+        frame,
         RestartKind::GoalKick,
         side,
         Vec2::new(x, pitch::HALF_WIDTH),
@@ -415,14 +424,14 @@ fn goal_kick(s: &mut MatchState, side: Side) {
 }
 
 /// The ball left the pitch at `pos`.
-fn out_of_play(s: &mut MatchState, pos: Vec2) {
+fn out_of_play(s: &mut MatchState, frame: &TickFrame, pos: Vec2) {
     let to = s.last_touch.other();
     if pos.y < 0.0 || pos.y > pitch::WIDTH {
         let spot = Vec2::new(
             pos.x.clamp(0.0, pitch::LENGTH),
             pos.y.clamp(0.0, pitch::WIDTH),
         );
-        set_restart(s, RestartKind::ThrowIn, to, spot);
+        set_restart(s, frame, RestartKind::ThrowIn, to, spot);
         return;
     }
     let end = if pos.x < 0.0 {
@@ -444,33 +453,34 @@ fn out_of_play(s: &mut MatchState, pos: Vec2) {
         };
         set_restart(
             s,
+            frame,
             RestartKind::Corner,
             defending.other(),
             Vec2::new(end.goal_line_x(), y),
         );
     } else {
-        goal_kick(s, defending);
+        goal_kick(s, frame, defending);
     }
 }
 
 /// Every player's shape target from anchors and role behaviour.
-fn plan_shape(s: &MatchState, targets: &mut [Vec2; PLAYERS], urgency: &mut [f32; PLAYERS]) {
-    let ball = s.ball_pos().xy();
+fn plan_shape(
+    s: &MatchState,
+    frame: &TickFrame,
+    targets: &mut [Vec2; PLAYERS],
+    urgency: &mut [f32; PLAYERS],
+) {
+    let ball = frame.ball(s).xy();
     for (i, p) in s.players.iter().enumerate() {
         if !p.active() {
             continue;
         }
-        let team = s.team(p.side);
-        let phase = s.phases[side_index(p.side)];
-        let slot = &team.formation.slots()[p.slot as usize];
-        let anchor =
-            FormationAnchor::compute(slot, ball, phase, team.tactics, s.frame(p.side), &s.tuning);
         let RoleIntent::MoveTo { target, urgency: u } = RoleBehavior::update(
             p.role,
             &RoleContext {
-                anchor,
+                anchor: frame.anchor(i),
                 ball,
-                phase,
+                phase: frame.phase(p.side),
             },
         );
         targets[i] = target;
@@ -480,16 +490,21 @@ fn plan_shape(s: &MatchState, targets: &mut [Vec2; PLAYERS], urgency: &mut [f32;
 
 /// Ball-related behaviour: the carrier decides, the nearest defender presses
 /// and tackles, chasers go for loose balls, takers walk to restarts.
-fn on_ball(s: &mut MatchState, targets: &mut [Vec2; PLAYERS], urgency: &mut [f32; PLAYERS]) {
+fn on_ball(
+    s: &mut MatchState,
+    frame: &TickFrame,
+    targets: &mut [Vec2; PLAYERS],
+    urgency: &mut [f32; PLAYERS],
+) {
     let now = s.now_ms();
     match s.ball {
         BallState::Held { holder } => {
             let h = holder as usize;
             s.holder_ticks += 1;
             let holder_side = s.players[h].side;
-            let action = DecisionSystem::choose_action(s, h);
-            ActionResolver::resolve(s, h, action);
-            let here = s.players[h].pos(now);
+            let action = DecisionSystem::choose_action(s, frame, h);
+            ActionResolver::resolve(s, frame, h, action);
+            let here = frame.pos(h);
             match action {
                 Action::Dribble { target } => {
                     targets[h] = target;
@@ -506,9 +521,9 @@ fn on_ball(s: &mut MatchState, targets: &mut [Vec2; PLAYERS], urgency: &mut [f32
             // goal-side.
             if let BallState::Held { holder } = s.ball {
                 let defending = holder_side.other();
-                let hpos = s.players[holder as usize].pos(now);
+                let hpos = frame.pos(holder as usize);
                 let own_goal = s.attacking(defending).opposite().goal_centre();
-                let (first, second) = two_nearest(s, defending, hpos);
+                let (first, second) = two_nearest(s, frame, defending, hpos);
                 if let Some(d) = second {
                     // Cover: 4 m goal-side of the carrier.
                     targets[d] = hpos + (own_goal - hpos).normalize() * 4.0;
@@ -522,8 +537,8 @@ fn on_ball(s: &mut MatchState, targets: &mut [Vec2; PLAYERS], urgency: &mut [f32
                 // closest goes first (index breaks ties). A fresh receiver
                 // gets a moment before the challenge.
                 if s.holder_ticks >= 3 && s.tick >= s.team(defending).next_tackle_tick {
-                    if let Some(d) = challenger(s, defending, hpos) {
-                        ActionResolver::resolve(s, d, Action::Tackle { on: holder });
+                    if let Some(d) = challenger(s, frame, defending, hpos) {
+                        ActionResolver::resolve(s, frame, d, Action::Tackle { on: holder });
                     }
                 }
             }
@@ -531,11 +546,11 @@ fn on_ball(s: &mut MatchState, targets: &mut [Vec2; PLAYERS], urgency: &mut [f32
         BallState::Flight { flight, intent } => {
             // Each side sends the player who can reach the ball first, to
             // the point where they can meet it (not where it is now).
-            let ball = flight.pos_at(now).xy();
+            let ball = frame.ball(s).xy();
             for side in [Side::Home, Side::Away] {
-                if let Some(c) = nearest_to(s, side, ball) {
+                if let Some(c) = nearest_to(s, frame, side, ball) {
                     let p = &s.players[c];
-                    targets[c] = intercept_point(&flight, now, p.pos(now), p.top_speed);
+                    targets[c] = intercept_point(&flight, now, frame.pos(c), p.top_speed);
                     urgency[c] = 1.0;
                 }
             }
@@ -543,7 +558,7 @@ fn on_ball(s: &mut MatchState, targets: &mut [Vec2; PLAYERS], urgency: &mut [f32
                 let r = receiver as usize;
                 if s.players[r].active() {
                     let p = &s.players[r];
-                    targets[r] = intercept_point(&flight, now, p.pos(now), p.top_speed);
+                    targets[r] = intercept_point(&flight, now, frame.pos(r), p.top_speed);
                     urgency[r] = 1.0;
                 }
             }
@@ -572,8 +587,7 @@ fn intercept_point(flight: &crate::ball::BallFlight, now: u32, from: Vec2, speed
 }
 
 /// Closest outfield player of `side` within tackle range of `at` and ready.
-fn challenger(s: &MatchState, side: Side, at: Vec2) -> Option<usize> {
-    let now = s.now_ms();
+fn challenger(s: &MatchState, frame: &TickFrame, side: Side, at: Vec2) -> Option<usize> {
     let mut best = None;
     let mut best_d = TACKLE_RANGE;
     for (i, p) in s.players.iter().enumerate() {
@@ -583,7 +597,7 @@ fn challenger(s: &MatchState, side: Side, at: Vec2) -> Option<usize> {
         if s.tick < p.tackle_ready_tick {
             continue;
         }
-        let d = p.pos(now).distance(at);
+        let d = frame.pos(i).distance(at);
         if d < best_d {
             best_d = d;
             best = Some(i);
@@ -593,15 +607,19 @@ fn challenger(s: &MatchState, side: Side, at: Vec2) -> Option<usize> {
 }
 
 /// The two outfield players of `side` nearest to `at` (index breaks ties).
-fn two_nearest(s: &MatchState, side: Side, at: Vec2) -> (Option<usize>, Option<usize>) {
-    let now = s.now_ms();
+fn two_nearest(
+    s: &MatchState,
+    frame: &TickFrame,
+    side: Side,
+    at: Vec2,
+) -> (Option<usize>, Option<usize>) {
     let (mut a, mut b) = (None, None);
     let (mut da, mut db) = (f32::MAX, f32::MAX);
     for (i, p) in s.players.iter().enumerate() {
         if p.side != side || !p.active() || p.role == Role::Goalkeeper {
             continue;
         }
-        let d = p.pos(now).distance(at);
+        let d = frame.pos(i).distance(at);
         if d < da {
             (b, db) = (a, da);
             (a, da) = (Some(i), d);
@@ -612,15 +630,14 @@ fn two_nearest(s: &MatchState, side: Side, at: Vec2) -> (Option<usize>, Option<u
     (a, b)
 }
 
-fn nearest_to(s: &MatchState, side: Side, at: Vec2) -> Option<usize> {
-    let now = s.now_ms();
+fn nearest_to(s: &MatchState, frame: &TickFrame, side: Side, at: Vec2) -> Option<usize> {
     let mut best = None;
     let mut best_d = f32::MAX;
     for (i, p) in s.players.iter().enumerate() {
         if p.side != side || !p.active() || s.tick < p.touch_ready_tick {
             continue;
         }
-        let d = p.pos(now).distance(at);
+        let d = frame.pos(i).distance(at);
         if d < best_d {
             best_d = d;
             best = Some(i);
@@ -629,13 +646,18 @@ fn nearest_to(s: &MatchState, side: Side, at: Vec2) -> Option<usize> {
     best
 }
 
-fn move_players(s: &mut MatchState, targets: &[Vec2; PLAYERS], urgency: &[f32; PLAYERS]) {
+fn move_players(
+    s: &mut MatchState,
+    frame: &TickFrame,
+    targets: &[Vec2; PLAYERS],
+    urgency: &[f32; PLAYERS],
+) {
     let now = s.now_ms();
     for i in 0..PLAYERS {
         let p = &mut s.players[i];
         if p.sent_off {
             // Walks off: parked just outside the touchline.
-            let at = Vec2::new(p.pos(now).x.clamp(0.0, pitch::LENGTH), -3.0);
+            let at = Vec2::new(frame.pos(i).x.clamp(0.0, pitch::LENGTH), -3.0);
             p.traj = PlayerKinematics::plan_trajectory(at, at, 1.0, now);
             continue;
         }
@@ -643,6 +665,8 @@ fn move_players(s: &mut MatchState, targets: &[Vec2; PLAYERS], urgency: &[f32; P
             Vec2::new(-2.0, -2.0),
             Vec2::new(pitch::LENGTH + 2.0, pitch::WIDTH + 2.0),
         );
-        p.traj = PlayerKinematics::replan(&p.traj, target, p.top_speed * urgency[i], now);
+        // Same as `replan`, starting from the cached position at `now`.
+        p.traj =
+            PlayerKinematics::plan_trajectory(frame.pos(i), target, p.top_speed * urgency[i], now);
     }
 }

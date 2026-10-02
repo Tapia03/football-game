@@ -12,5 +12,13 @@ fm-entities.workspace = true
 [dev-dependencies]
 fm-test-utils = { workspace = true, features = ["alloc-counter"] }
 
+# criterion is native-only: it never builds for wasm32, where benches are not run.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "tick_logic"
+harness = false
+
 [lints]
 workspace = true

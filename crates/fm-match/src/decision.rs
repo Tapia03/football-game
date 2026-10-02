@@ -8,6 +8,7 @@ use fm_core::{pitch, Vec2};
 
 use crate::formation::Role;
 use crate::state::{MatchState, PLAYERS};
+use crate::tick_frame::TickFrame;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Action {
@@ -57,18 +58,18 @@ fn dist_to_segment(p: Vec2, a: Vec2, b: Vec2) -> f32 {
 impl DecisionSystem {
     /// What the carrier `me` does this tick. Call only for the ball holder.
     #[must_use]
-    pub fn choose_action(state: &MatchState, me: usize) -> Action {
-        let now = state.now_ms();
+    pub fn choose_action(state: &MatchState, frame: &TickFrame, me: usize) -> Action {
         let p = &state.players[me];
-        let my_pos = p.pos(now);
+        let my_pos = frame.pos(me);
         let goal = state.attacking(p.side).goal_centre();
         let forward = state.attacking(p.side).direction();
 
         let nearest_opp = state
             .players
             .iter()
-            .filter(|o| o.side != p.side && o.active())
-            .map(|o| o.pos(now).distance(my_pos))
+            .enumerate()
+            .filter(|(_, o)| o.side != p.side && o.active())
+            .map(|(j, _)| frame.pos(j).distance(my_pos))
             .fold(f32::MAX, f32::min);
         let pressed = nearest_opp < PRESSURE_RADIUS;
         let min_hold = if p.role == Role::Goalkeeper {
@@ -81,9 +82,9 @@ impl DecisionSystem {
         }
 
         let dist_goal = my_pos.distance(goal);
-        let shoot_score = Self::shoot_score(state, me, my_pos, goal);
-        let (best_pass, best_to) = Self::best_pass(state, me, my_pos, forward);
-        let dribble_score = Self::dribble_score(state, me, my_pos, forward, dist_goal);
+        let shoot_score = Self::shoot_score(state, frame, me, my_pos, goal);
+        let (best_pass, best_to) = Self::best_pass(state, frame, me, my_pos, forward);
+        let dribble_score = Self::dribble_score(state, frame, me, my_pos, forward, dist_goal);
 
         if shoot_score > SHOOT_THRESHOLD && shoot_score >= best_pass && shoot_score >= dribble_score
         {
@@ -108,8 +109,13 @@ impl DecisionSystem {
     /// Shot value: worth more the closer and more central (rationale: xG
     /// falls steeply with distance and with angle off-centre; most shots come
     /// from inside ~18 m).
-    fn shoot_score(state: &MatchState, me: usize, my_pos: Vec2, goal: Vec2) -> f32 {
-        let now = state.now_ms();
+    fn shoot_score(
+        state: &MatchState,
+        frame: &TickFrame,
+        me: usize,
+        my_pos: Vec2,
+        goal: Vec2,
+    ) -> f32 {
         let p = &state.players[me];
         let dist_goal = my_pos.distance(goal);
         if dist_goal >= SHOOT_RANGE || p.role == Role::Goalkeeper {
@@ -125,8 +131,9 @@ impl DecisionSystem {
         let lane = state
             .players
             .iter()
-            .filter(|o| o.side != p.side && o.active() && o.role != Role::Goalkeeper)
-            .map(|o| dist_to_segment(o.pos(now), my_pos, goal))
+            .enumerate()
+            .filter(|(_, o)| o.side != p.side && o.active() && o.role != Role::Goalkeeper)
+            .map(|(j, _)| dist_to_segment(frame.pos(j), my_pos, goal))
             .fold(f32::MAX, f32::min);
         let blocked = if lane < 1.0 { 0.3 } else { 1.0 };
         (0.25 + 0.75 * skill) * (1.0 - dist_goal / SHOOT_RANGE) * central * blocked * 2.2
@@ -134,8 +141,13 @@ impl DecisionSystem {
 
     /// Best pass target and its score: progress toward goal, open lane, not
     /// too long.
-    fn best_pass(state: &MatchState, me: usize, my_pos: Vec2, forward: f32) -> (f32, Option<u8>) {
-        let now = state.now_ms();
+    fn best_pass(
+        state: &MatchState,
+        frame: &TickFrame,
+        me: usize,
+        my_pos: Vec2,
+        forward: f32,
+    ) -> (f32, Option<u8>) {
         let p = &state.players[me];
         let mut best_pass = f32::MIN;
         let mut best_to = None;
@@ -143,7 +155,7 @@ impl DecisionSystem {
             if i == me || t.side != p.side || !t.active() {
                 continue;
             }
-            let tp = t.pos(now);
+            let tp = frame.pos(i);
             let d = my_pos.distance(tp);
             if !(4.0..=45.0).contains(&d) {
                 continue;
@@ -152,8 +164,9 @@ impl DecisionSystem {
             let openness = state
                 .players
                 .iter()
-                .filter(|o| o.side != p.side && o.active())
-                .map(|o| dist_to_segment(o.pos(now), my_pos, tp))
+                .enumerate()
+                .filter(|(_, o)| o.side != p.side && o.active())
+                .map(|(j, _)| dist_to_segment(frame.pos(j), my_pos, tp))
                 .fold(6.0_f32, f32::min);
             let mut score = 0.4 + progress / 40.0 + openness / 10.0 - d / 80.0;
             // Lanes narrower than ~2.5 m tend to get cut out.
@@ -175,12 +188,12 @@ impl DecisionSystem {
     /// Dribble value: needs space in front; decays with time on the ball.
     fn dribble_score(
         state: &MatchState,
+        frame: &TickFrame,
         me: usize,
         my_pos: Vec2,
         forward: f32,
         dist_goal: f32,
     ) -> f32 {
-        let now = state.now_ms();
         let p = &state.players[me];
         if p.role == Role::Goalkeeper {
             return f32::MIN;
@@ -189,8 +202,9 @@ impl DecisionSystem {
         let space = state
             .players
             .iter()
-            .filter(|o| o.side != p.side && o.active())
-            .map(|o| o.pos(now).distance(ahead))
+            .enumerate()
+            .filter(|(_, o)| o.side != p.side && o.active())
+            .map(|(j, _)| frame.pos(j).distance(ahead))
             .fold(f32::MAX, f32::min);
         // Long carries are rare: the value of dribbling decays after ~2.5 s
         // on the ball, pushing the carrier to release it.
@@ -207,9 +221,12 @@ impl DecisionSystem {
 
     /// The defender of `side` closest to the ball, who presses it this tick.
     #[must_use]
-    pub fn presser(state: &MatchState, side: crate::phase::Side) -> Option<usize> {
-        let ball = state.ball_pos().xy();
-        let now = state.now_ms();
+    pub fn presser(
+        state: &MatchState,
+        frame: &TickFrame,
+        side: crate::phase::Side,
+    ) -> Option<usize> {
+        let ball = frame.ball(state).xy();
         let mut best = None;
         let mut best_d = f32::MAX;
         for i in 0..PLAYERS {
@@ -217,7 +234,7 @@ impl DecisionSystem {
             if p.side != side || !p.active() || p.role == Role::Goalkeeper {
                 continue;
             }
-            let d = p.pos(now).distance(ball);
+            let d = frame.pos(i).distance(ball);
             if d < best_d {
                 best_d = d;
                 best = Some(i);

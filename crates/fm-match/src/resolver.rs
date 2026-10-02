@@ -11,6 +11,7 @@ use crate::events::{CardKind, EventKind, MatchEvent, RestartKind};
 use crate::formation::Role;
 use crate::phase::Side;
 use crate::state::{BallState, FlightIntent, MatchState, ShotOutcome, PLAYERS};
+use crate::tick_frame::TickFrame;
 
 /// Radius within which a player can play a loose ball at foot height (m).
 pub const CONTROL_RADIUS: f32 = 1.2;
@@ -55,25 +56,23 @@ pub struct ActionResolver;
 
 impl ActionResolver {
     /// Applies `action` by player `actor` to the match state.
-    pub fn resolve(state: &mut MatchState, actor: usize, action: Action) {
+    pub fn resolve(state: &mut MatchState, frame: &TickFrame, actor: usize, action: Action) {
         match action {
-            Action::Pass { to } => Self::resolve_pass(state, actor, usize::from(to)),
-            Action::Shoot => Self::resolve_shot(state, actor, false),
-            Action::Tackle { on } => Self::resolve_tackle(state, actor, usize::from(on)),
+            Action::Pass { to } => Self::resolve_pass(state, frame, actor, usize::from(to)),
+            Action::Shoot => Self::resolve_shot(state, frame, actor, false),
+            Action::Tackle { on } => Self::resolve_tackle(state, frame, actor, usize::from(on)),
             // Movement-only actions: the carrier's trajectory is planned by
             // the engine; nothing random happens.
             Action::Dribble { .. } | Action::Hold => {}
         }
     }
 
-    fn pressure_on(state: &MatchState, actor: usize) -> f32 {
-        let now = state.now_ms();
+    fn pressure_on(state: &MatchState, frame: &TickFrame, actor: usize) -> f32 {
         let me = &state.players[actor];
-        let pos = me.pos(now);
-        let close = state
-            .players
-            .iter()
-            .any(|o| o.side != me.side && o.active() && o.pos(now).distance(pos) < PRESSURE_RADIUS);
+        let pos = frame.pos(actor);
+        let close = state.players.iter().enumerate().any(|(j, o)| {
+            o.side != me.side && o.active() && frame.pos(j).distance(pos) < PRESSURE_RADIUS
+        });
         if close {
             1.0
         } else {
@@ -81,9 +80,15 @@ impl ActionResolver {
         }
     }
 
-    fn kick(state: &mut MatchState, actor: usize, v: Vec3, intent: FlightIntent) {
+    fn kick(
+        state: &mut MatchState,
+        frame: &TickFrame,
+        actor: usize,
+        v: Vec3,
+        intent: FlightIntent,
+    ) {
         let now = state.now_ms();
-        let from = state.ball_pos();
+        let from = frame.ball(state);
         state.ball = BallState::Flight {
             flight: BallFlight::kick(now, from, v),
             intent,
@@ -95,12 +100,11 @@ impl ActionResolver {
 
     /// Pass to teammate `to`. Accuracy from passing/technique/vision (keepers:
     /// distribution); error grows with pressure and distance.
-    pub fn resolve_pass(state: &mut MatchState, actor: usize, to: usize) {
+    pub fn resolve_pass(state: &mut MatchState, frame: &TickFrame, actor: usize, to: usize) {
         let mut rng = state.next_rng(actor);
-        let now = state.now_ms();
         let p = state.players[actor];
-        let from = state.ball_pos().xy();
-        let target = state.players[to].pos(now);
+        let from = frame.ball(state).xy();
+        let target = frame.pos(to);
         let skill = if p.role == Role::Goalkeeper {
             unit(p.attrs.goalkeeping.distribution)
         } else {
@@ -108,7 +112,7 @@ impl ActionResolver {
                 + 0.25 * unit(p.attrs.technical.technique)
                 + 0.25 * unit(p.attrs.mental.vision)
         };
-        let pressure = Self::pressure_on(state, actor);
+        let pressure = Self::pressure_on(state, frame, actor);
         let d = from.distance(target);
         // Rationale: elite passers miss by ~2-3°, poor ones by ~12°, more
         // when pressed; length error up to ±15% for the worst.
@@ -129,6 +133,7 @@ impl ActionResolver {
         state.team_mut(p.side).passes += 1;
         Self::kick(
             state,
+            frame,
             actor,
             v,
             FlightIntent::Pass {
@@ -139,11 +144,11 @@ impl ActionResolver {
 
     /// Shot at goal (or penalty). The outcome is drawn now and applied when the
     /// ball reaches the goal line (spec Fase 4 decisions).
-    pub fn resolve_shot(state: &mut MatchState, actor: usize, penalty: bool) {
+    pub fn resolve_shot(state: &mut MatchState, frame: &TickFrame, actor: usize, penalty: bool) {
         let mut rng = state.next_rng(actor);
         let now = state.now_ms();
         let p = state.players[actor];
-        let from = state.ball_pos();
+        let from = frame.ball(state);
         let end = state.attacking(p.side);
         let goal = end.goal_centre();
         let dist = from.xy().distance(goal);
@@ -156,7 +161,7 @@ impl ActionResolver {
         let pressure = if penalty {
             0.0
         } else {
-            Self::pressure_on(state, actor)
+            Self::pressure_on(state, frame, actor)
         };
 
         // On target: better finishers and closer shots; pressure hurts.
@@ -230,6 +235,7 @@ impl ActionResolver {
         });
         Self::kick(
             state,
+            frame,
             actor,
             v,
             FlightIntent::Shot {
@@ -242,7 +248,7 @@ impl ActionResolver {
 
     /// Tackle on the carrier `on`: foul, clean win, ball knocked loose, or
     /// beaten.
-    pub fn resolve_tackle(state: &mut MatchState, actor: usize, on: usize) {
+    pub fn resolve_tackle(state: &mut MatchState, frame: &TickFrame, actor: usize, on: usize) {
         let mut rng = state.next_rng(actor);
         let tackler = state.players[actor];
         let carrier = state.players[on];
@@ -266,7 +272,7 @@ impl ActionResolver {
         // Defenders are far more careful inside their own box (penalty risk;
         // ~0.3 penalties per match in real football).
         let own_box = state.attacking(tackler.side).opposite();
-        let in_box = pitch::in_penalty_area(state.ball_pos().xy(), own_box);
+        let in_box = pitch::in_penalty_area(frame.ball(state).xy(), own_box);
         let p_foul = if in_box { p_foul * 0.05 } else { p_foul };
         // A booked player goes in much more carefully (avoids a second yellow).
         let p_foul = if tackler.yellow_cards > 0 {
@@ -282,7 +288,7 @@ impl ActionResolver {
         team.next_tackle_tick = tick + TEAM_TACKLE_GAP;
 
         if roll < p_foul {
-            Self::foul(state, actor, on, &mut rng);
+            Self::foul(state, frame, actor, on, &mut rng);
         } else if roll < p_foul + p_win {
             if rng.chance(0.6) {
                 // Clean: tackler comes away with it.
@@ -295,14 +301,14 @@ impl ActionResolver {
                 // Poked loose in a random direction.
                 let dir = Vec2::from_angle(rng.next_f32() * fm_core::math::TAU);
                 let v = (dir * (3.0 + 4.0 * rng.next_f32())).extend(0.0);
-                Self::kick(state, actor, v, FlightIntent::Loose);
+                Self::kick(state, frame, actor, v, FlightIntent::Loose);
             }
         } else {
             state.players[actor].tackle_ready_tick = state.tick + BEATEN_COOLDOWN;
         }
     }
 
-    fn foul(state: &mut MatchState, actor: usize, on: usize, rng: &mut Rng) {
+    fn foul(state: &mut MatchState, frame: &TickFrame, actor: usize, on: usize, rng: &mut Rng) {
         let tackler = state.players[actor];
         let fouled = state.players[on];
         state.events.push(MatchEvent {
@@ -345,7 +351,7 @@ impl ActionResolver {
                 state.players[actor].sent_off = true;
             }
         }
-        let spot = state.ball_pos().xy();
+        let spot = frame.ball(state).xy();
         let defending_goal = state.attacking(tackler.side).opposite();
         let kind = if pitch::in_penalty_area(spot, defending_goal) {
             RestartKind::Penalty
@@ -357,12 +363,12 @@ impl ActionResolver {
         } else {
             spot
         };
-        crate::engine::set_restart(state, kind, fouled.side, spot);
+        crate::engine::set_restart(state, frame, kind, fouled.side, spot);
     }
 
     /// A player within reach of a loose ball tries to bring it under control.
     /// Returns true if they now hold it.
-    pub fn try_receive(state: &mut MatchState, actor: usize) -> bool {
+    pub fn try_receive(state: &mut MatchState, frame: &TickFrame, actor: usize) -> bool {
         let mut rng = state.next_rng(actor);
         let now = state.now_ms();
         let p = state.players[actor];
@@ -371,7 +377,7 @@ impl ActionResolver {
         };
         let vel = flight.vel_at(now);
         let speed = vel.length();
-        let height = flight.pos_at(now).z;
+        let height = frame.ball(state).z;
         let is_keeper = p.role == Role::Goalkeeper;
         // Control odds: first touch & technique; fast or high balls are harder.
         let touch = if is_keeper {
@@ -405,19 +411,22 @@ impl ActionResolver {
             let angle = tri(&mut rng) * 1.2;
             let spill = rotate(vel.xy(), angle) * 0.4;
             let v = spill.extend((vel.z * -0.3).max(0.0));
-            Self::kick(state, actor, v, FlightIntent::Loose);
+            Self::kick(state, frame, actor, v, FlightIntent::Loose);
             false
         }
     }
 
     /// Players able to play the ball this tick, nearest first (index breaks
     /// ties), written into `out`; returns how many.
-    pub fn receive_candidates(state: &MatchState, out: &mut [u8; PLAYERS]) -> usize {
-        let BallState::Flight { flight, intent } = state.ball else {
+    pub fn receive_candidates(
+        state: &MatchState,
+        frame: &TickFrame,
+        out: &mut [u8; PLAYERS],
+    ) -> usize {
+        let BallState::Flight { intent, .. } = state.ball else {
             return 0;
         };
-        let now = state.now_ms();
-        let ball = flight.pos_at(now);
+        let ball = frame.ball(state);
         let shot_in_flight = matches!(intent, FlightIntent::Shot { .. });
         let pass = match intent {
             FlightIntent::Pass { receiver } => Some((
@@ -437,7 +446,7 @@ impl ActionResolver {
             if shot_in_flight && is_keeper {
                 continue;
             }
-            let own_box = pitch::in_penalty_area(p.pos(now), state.attacking(p.side).opposite());
+            let own_box = pitch::in_penalty_area(frame.pos(i), state.attacking(p.side).opposite());
             let (reach, max_h) = if is_keeper && own_box {
                 (KEEPER_REACH, 2.6)
             } else {
@@ -447,7 +456,7 @@ impl ActionResolver {
                     _ => (CONTROL_RADIUS, 1.8),
                 }
             };
-            let d = p.pos(now).distance(ball.xy());
+            let d = frame.pos(i).distance(ball.xy());
             if d < reach && ball.z < max_h {
                 out[n] = idx_u8(i);
                 dists[n] = d;
@@ -467,8 +476,8 @@ impl ActionResolver {
     }
 
     /// Resolves a penalty kick by the restart taker.
-    pub fn take_penalty(state: &mut MatchState, taker: usize) {
-        Self::resolve_shot(state, taker, true);
+    pub fn take_penalty(state: &mut MatchState, frame: &TickFrame, taker: usize) {
+        Self::resolve_shot(state, frame, taker, true);
     }
 
     /// Used by the engine for side bookkeeping.
