@@ -605,6 +605,85 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
   flui demais: 3.580 passes (real ~900) e 66 chutes (real ~25), com 3,5
   gols. A calibração conjunta de chutes e passes é o próximo item.
 
+**(c) Chutes e passes — como a decisão é feita `[ALTERADO v2.1]`:**
+- **Quem decide:** só o portador, a cada tick, em
+  `DecisionSystem::choose_action`, sem RNG. A execução (precisão, defesa
+  do goleiro, domínio) é do `ActionResolver`, com RNG.
+- **Ordem da decisão:**
+  1. Se `holder_ticks < min_hold_ticks` (4; goleiro 15) e ninguém está a
+     menos de `pressure_radius` (2,5 m) → segura (`Hold`). Se está
+     pressionado, essa espera é pulada.
+  2. Três notas, todas determinísticas:
+     - **chute** = (base + habilidade) × (1 − distância/25 m) ×
+       centralidade × bloqueio × ganho. O bloqueio vale 0,3 se qualquer
+       defensor de linha estiver a menos de 1 m da linha portador→gol;
+     - **passe** (o melhor dos companheiros a 4–45 m) = base + progresso
+       + linha livre − comprimento, com penalidade para linha estreita e
+       para passe ao goleiro;
+     - **condução** = (base + espaço 6 m à frente), ou 0,15 se apertado;
+       decai depois de 2,5 s com a bola e vale metade perto do gol.
+  3. Chuta se a nota do chute passa de 0,6 e é a maior das três.
+  4. **Saída forçada** (da correção de (b)): com 5,5 s com a bola, chuta
+     se estiver a menos de 25 m do gol, senão passa.
+  5. Senão, passa se o passe ≥ condução; senão, conduz.
+- **Penalizações duplas encontradas:** as três vêm do mesmo marcador de
+  contenção.
+  1. **Chute bloqueado pelo marcador de contenção.** O ponto de contenção
+     fica, por construção, *exatamente* na linha portador→gol. Todo
+     portador contido tem a nota de chute × 0,3 e, se chutar, a bola ainda
+     pode ser interceptada fisicamente em voo. Medido (60 partidas): **98%
+     dos chutes vinham da saída forçada**, não da decisão normal. Por isso
+     os chutes eram próximos (46% a menos de 11 m) e os gols altos (3,85).
+  2. **Contenção conta como pressão.** As faixas de contenção (área 1–2 m,
+     meio 2–3 m) ficam dentro de `pressure_radius` (2,5 m). O mesmo
+     defensor (i) pula o tempo mínimo com a bola, (ii) deixa a condução
+     "apertada" (0,15) e (iii) piora a precisão do passe no resolver.
+     Medido: **66% dos passes saíam com menos de 0,5 s de bola**.
+  3. **Distância** entra na nota de chute e na execução (no alvo − d/60,
+     defesa + d/80). Isso é antecipação legítima (a decisão estima o
+     resultado), não um bug, mas as duas curvas se somam e foram
+     calibradas juntas.
+- **Outros achados:**
+  - **tempo de bola parada irreal:** reinícios esperavam 1,5–4 s (real:
+    lateral ~9 s, tiro de meta ~16 s, falta ~20 s, escanteio ~25 s,
+    saída depois de gol ~45 s). Bola parada era 4% do jogo (real ~35%), o
+    que infla todas as contagens por partida em ~1,5×;
+  - **domínio ruim demais:** um receptor típico erra o primeiro toque em
+    15–20% das vezes (`control.base` 0,6); real ~3–5%. 26% dos passes
+    terminavam em bola solta por domínio errado.
+- **Calibração só com constantes — resultado:** busca por coordenadas
+  (30 partidas por ponto, sementes fixas) sobre 16 constantes de decisão,
+  chute, passe, domínio, reinício, bote e falta, contra as metas reais.
+
+  | Configuração | Gols | Chutes (alvo) | Passes (acerto) | Botes | Faltas | Bola parada |
+  |---|---|---|---|---|---|---|
+  | Atual | 3,6 | 63 (18) | 3.610 (63%) | 74 | 19 | 4% |
+  | Melhor ponto, domínio atual | 2,1 | 30 (10) | 1.303 (64%) | 68 | 25 | 39% |
+  | Melhor ponto + domínio real | 1,0 | 17 (6) | 1.560 (87%) | 32 | 12 | 20% |
+  | Real (aprox.) | 2,7 | 25 (9) | 900 (80%) | 70 | 22 | ~35% |
+
+  O melhor ponto encosta no limite do realista: o tempo mínimo com a bola
+  fica em 2,5 s e os reinícios ficam acima dos reais. Mesmo assim, os
+  passes ficam em 1.300.
+- **Conclusão — é problema de modelo:** os números "bons" do melhor ponto
+  vêm do mecanismo errado. Chances, botes, faltas e reinícios nascem da
+  bola solta por domínio ruim. Com domínio realista o jogo fica estéril:
+  o time circula a bola (87% de acerto) mas não cria. Faltam
+  comportamentos que geram chance:
+  - passe para o espaço (bola na frente do companheiro que corre), não só
+    no pé;
+  - corrida de ruptura sem bola;
+  - drible 1×1 contra o marcador de contenção (hoje a condução contra um
+    marcador é só "apertada", sem duelo).
+
+  Esses itens são do escopo de (d) (comportamentos por papel). Calibrar
+  (c) antes de (d) fixaria constantes que (d) vai invalidar. A decisão
+  sobre a ordem está pendente com o usuário.
+- **Ferramentas:** `examples/decision_stats.rs` (tempo com a bola,
+  comprimento de passe, distância de chute, passes por posse) e
+  `examples/calibrate.rs` (estatísticas com `chave=valor` sobrescrevendo o
+  `TuningParams`, mais como terminam os passes).
+
 **Restrição arquitetural `[ALTERADO v2.1]`:** nenhuma decisão do
 `DecisionSystem` (nem do `ActionResolver`) pode consultar estado de
 amostragem: interpolação do LOD Full, snapshots ou `sample()`. Só o estado
@@ -658,6 +737,20 @@ recalibrar contra a coluna "Real". As constantes estão em `AnchorTuning`,
   - **A bola não é cacheada:** o estado dela muda dentro do tick (recepção,
     chute, desarme). `TickFrame::ball` deriva a posição do estado atual da
     bola usando as posições cacheadas dos jogadores.
+  - **Exceção — voo em curso `[ALTERADO v2.1]`:** se, na captura, a bola
+    já está num voo lançado em tick anterior (`kick_ms != now_ms`), a
+    posição desse voo em `now_ms` é avaliada uma vez e reutilizada enquanto
+    a bola for esse mesmo voo. O único lugar que cria voo
+    (`ActionResolver::kick`) usa o instante do tick atual, então passe,
+    chute ou rebote dentro do tick tem `kick_ms == now_ms` e é sempre lido
+    de novo. Um `debug_assert` confere o valor em cada acesso. Não é
+    sampling: é cache de valor já calculado do tick lógico.
+  - **Amostragem compartilhada da trajetória:** os pontos de interceptação
+    dos perseguidores e do receptor usam a mesma amostragem da trajetória
+    (preguiçosa, até 30 × 100 ms), calculada uma vez por tick.
+  - **Resultado:** referência de paridade inalterada; `tick_logic` em
+    Abstract caiu de 57,9 ms para **41,2 ms no CI** depois do modelo de
+    defesa.
   - **Regra:** `DecisionSystem`, `ActionResolver` e `PhaseStateMachine`
     recebem `&TickFrame` e nunca chamam `pos_at` nem
     `FormationAnchor::compute` diretamente.
