@@ -45,6 +45,9 @@ pub struct TickFrame {
     set_piece: bool,
     /// `(kick_ms, position at now_ms)` of the flight in progress at capture.
     flight_ball: Option<(u32, Vec3)>,
+    /// Offside line faced by the side in possession: `(attacking side, x of
+    /// the defending team's second-last player, keeper included)`.
+    offside: Option<(Side, f32)>,
 }
 
 impl TickFrame {
@@ -61,6 +64,7 @@ impl TickFrame {
         Self {
             tick: state.tick,
             now_ms: now,
+            offside: None,
             positions,
             anchors: [Vec2::ZERO; PLAYERS],
             phases: state.phases,
@@ -111,6 +115,20 @@ impl TickFrame {
         self.set_piece = matches!(state.ball, BallState::Dead(_));
     }
 
+    /// Computes the offside line for the side in possession (the only one
+    /// with runners). Called at most once per tick, after `observe_ball`,
+    /// and only on ticks that use it (spec Fase 5 (c1), item 3: ~185
+    /// instructions per tick otherwise spent for nothing).
+    pub fn compute_offside(&mut self, state: &MatchState) {
+        self.offside = match self.possession {
+            Possession::Team(side) => Some((
+                side,
+                second_last_defender_x(state, &self.positions, side.other()),
+            )),
+            Possession::Loose => None,
+        };
+    }
+
     #[must_use]
     pub const fn possession(&self) -> Possession {
         self.possession
@@ -154,6 +172,54 @@ impl TickFrame {
     #[must_use]
     pub fn anchor(&self, i: usize) -> Vec2 {
         self.anchors[i]
+    }
+
+    /// Offside line for the side `attacking`: the `x` of the opponents'
+    /// second-last player, keeper included (spec Fase 5 (c1), item 3).
+    /// Available after `compute_offside`, for the side in possession only —
+    /// the only one with runners; `None` otherwise. Only the line: nothing
+    /// is whistled.
+    #[inline]
+    #[must_use]
+    pub fn offside_line(&self, attacking: Side) -> Option<f32> {
+        match self.offside {
+            Some((side, x)) if side == attacking => Some(x),
+            _ => None,
+        }
+    }
+}
+
+/// `x` of the second-last active player of `defending`, counted from its own
+/// goal line (the keeper counts). With fewer than two players left, the goal
+/// line itself. Players of a side are contiguous (`side_index · 11 + slot`).
+fn second_last_defender_x(state: &MatchState, positions: &[Vec2; PLAYERS], defending: Side) -> f32 {
+    let goal = state.attacking(defending).opposite();
+    let goal_x = goal.goal_line_x();
+    // Depth from the own goal line: `(x − goal_x) · −direction` (≥ 0);
+    // players sent off are infinitely deep, so they never count.
+    let away_from_goal = -goal.direction();
+    let start = side_index(defending) * 11;
+    let mut depth = [f32::INFINITY; 11];
+    for ((d, p), pos) in depth
+        .iter_mut()
+        .zip(&state.players[start..start + 11])
+        .zip(&positions[start..start + 11])
+    {
+        if !p.sent_off {
+            *d = (pos.x - goal_x) * away_from_goal;
+        }
+    }
+    // Deepest player, then the deepest of the others (first index on ties).
+    let deepest = (1..11).fold(0, |m, i| if depth[i] < depth[m] { i } else { m });
+    let second = (0..11)
+        .filter(|&i| i != deepest)
+        .fold(None, |m: Option<usize>, i| match m {
+            Some(j) if depth[j] <= depth[i] => Some(j),
+            _ => Some(i),
+        });
+    match second {
+        Some(i) if depth[i].is_finite() => positions[start + i].x,
+        _ => goal_x,
     }
 }
 
@@ -240,5 +306,89 @@ mod tests {
             Vec3::new(12.0, 3.0, 4.0),
         );
         assert_eq!(TickFrame::capture(&s).flight_ball, None);
+    }
+
+    #[test]
+    fn offside_line_is_the_second_last_defender_keeper_included() {
+        // Also covers sent-off players and the goal-line fallback below.
+        use crate::test_support::placed_state;
+        // Away (11..22) defends the right goal in the first half. Keeper (11)
+        // on his line, last outfielder (12) at x=90, the rest further up.
+        let mut placed: Vec<(usize, Vec2)> = (13..22)
+            .map(|i| {
+                (
+                    i,
+                    Vec2::new(60.0, 5.0 + 6.0 * f32::from(u8::try_from(i - 13).unwrap())),
+                )
+            })
+            .collect();
+        placed.push((11, Vec2::new(104.0, 34.0)));
+        placed.push((12, Vec2::new(90.0, 30.0)));
+        // Home (0..11): keeper at 1 m, one defender at 20 m, rest at 50 m.
+        placed.push((0, Vec2::new(1.0, 34.0)));
+        placed.push((1, Vec2::new(20.0, 34.0)));
+        placed.extend((2..11).map(|i| {
+            (
+                i,
+                Vec2::new(50.0, 4.0 + 6.0 * f32::from(u8::try_from(i).unwrap())),
+            )
+        }));
+        let line = |placed: &[(usize, Vec2)], holder: usize, attacking: Side| {
+            let s = placed_state(placed, holder);
+            let mut f = TickFrame::capture(&s);
+            f.observe_ball(&s);
+            f.compute_offside(&s);
+            f.offside_line(attacking)
+        };
+        assert_eq!(
+            line(&placed, 5, Side::Home),
+            Some(90.0),
+            "home attacks right"
+        );
+        assert_eq!(
+            line(&placed, 15, Side::Away),
+            Some(20.0),
+            "away attacks left"
+        );
+        // Only the side in possession gets a line.
+        assert_eq!(line(&placed, 5, Side::Away), None);
+
+        // The keeper counts like anyone else: the line is whoever is
+        // second-deepest. Defender 12 pushed up to 70 makes him the line…
+        let mut placed2 = placed.clone();
+        placed2.retain(|(i, _)| *i != 12);
+        placed2.push((12, Vec2::new(70.0, 30.0)));
+        assert_eq!(
+            line(&placed2, 5, Side::Home),
+            Some(70.0),
+            "keeper deepest, 12 second"
+        );
+        // …and a keeper caught upfield behind him becomes the line himself.
+        let mut placed3 = placed2.clone();
+        placed3.retain(|(i, _)| *i != 11);
+        placed3.push((11, Vec2::new(65.0, 34.0)));
+        assert_eq!(
+            line(&placed3, 5, Side::Home),
+            Some(65.0),
+            "keeper out: he is second-last"
+        );
+    }
+
+    #[test]
+    fn sent_off_defenders_do_not_hold_the_line() {
+        use crate::test_support::placed_state;
+        let mut placed: Vec<(usize, Vec2)> = (13..22).map(|i| (i, Vec2::new(60.0, 34.0))).collect();
+        placed.push((11, Vec2::new(104.0, 34.0)));
+        placed.push((12, Vec2::new(90.0, 30.0)));
+        let mut s = placed_state(&placed, 5);
+        s.players[12].sent_off = true;
+        let mut f = TickFrame::capture(&s);
+        f.observe_ball(&s);
+        f.compute_offside(&s);
+        assert_eq!(
+            f.offside_line(Side::Home),
+            Some(60.0),
+            "12 sent off: next deepest"
+        );
     }
 }

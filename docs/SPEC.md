@@ -834,6 +834,23 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
     sobre o item 1 (566,6M) e −0,5% sobre o estado anterior a (c1)
     (543,4M). O CI mediu o mesmo número que a máquina local (539.461.992
     no commit `5b362ed`): a contagem não depende do runner.
+- **(c1) item 3 — linha de impedimento como dado do tick `[ALTERADO v2.1]`:**
+  - `TickFrame::compute_offside` + `offside_line(lado_atacante)`: `x` do
+    penúltimo jogador ativo do time que defende, contado da própria linha
+    de fundo (goleiro conta; expulsos não; com menos de dois, a linha de
+    fundo). Só para o lado com a posse (o único com corredores); `None`
+    para o outro e com bola solta.
+  - **Desvio do "uma vez por tick":** passa a ser **no máximo uma vez por
+    tick, e só nos ticks que usam a linha** (o motor chama
+    `compute_offside` depois de `observe_ball` apenas quando há corredor
+    em `Run`, item 4). Motivo, medido: calcular em todo tick custava
+    +1,82% de instruções (~185 por tick) sem nenhum consumidor; a regra
+    de 1,5% estourava num item sem comportamento. O custo real passa a
+    aparecer no item 4, onde está o uso.
+  - Sem mudança de comportamento: golden inalterado; instruções 540,2M
+    (−0,06%).
+  - Testes: penúltimo defensor com goleiro na linha, goleiro adiantado
+    virando a linha, expulso não conta, linha só para quem tem a posse.
 - **Impedimento — só a linha, sem apito `[ALTERADO v2.1]`:**
   - a linha é dado do `TickFrame`: o penúltimo defensor (o goleiro conta),
     calculado uma vez por tick a partir das posições;

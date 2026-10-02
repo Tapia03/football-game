@@ -14,7 +14,9 @@ de arquitetura e regras é o [`docs/SPEC.md`](SPEC.md); este arquivo só diz
   jogadas, escopo B) e **(c2)** (calibração).
   - (c1) item 1 (xG, cobertura, domínio): feito, 566,6M instruções.
   - (c1) item 2 (xT + moeda comum + cadência de decisão): feito, 540,5M.
-  - Próximo: item 3 (linha de impedimento).
+  - (c1) item 3 (linha de impedimento): feito, 540,2M; calculada só nos
+    ticks com corredor (desvio documentado no SPEC).
+  - Próximo: item 4 (estado `Run`).
 - (d) Comportamentos por papel — não iniciado.
 
 ## PRs
