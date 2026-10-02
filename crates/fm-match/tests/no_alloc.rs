@@ -2,7 +2,7 @@
 //! allocation after construction (`MatchEngine::new` pre-allocates).
 
 use fm_match::demo::demo_match;
-use fm_match::MatchEngine;
+use fm_match::{EventKind, MatchEngine};
 use fm_test_utils::alloc_counter::{allocations, CountingAlloc};
 
 #[global_allocator]
@@ -23,5 +23,9 @@ fn tick_logic_does_not_allocate() {
         "tick_logic allocated {} times",
         after - before
     );
-    assert!(!engine.events().is_empty());
+    // The match really ran to the final whistle under the counting allocator.
+    assert_eq!(
+        engine.events().last().map(|e| e.kind),
+        Some(EventKind::FullTime)
+    );
 }
