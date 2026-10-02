@@ -32,6 +32,26 @@ jobs:
       - run: cargo clippy --workspace --all-targets --target wasm32-unknown-unknown -- -D warnings
       - run: cargo test --workspace
 
+  bench:
+    name: bench (perf gates + criterion)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Hard gates (release timing tests, marked #[ignore] in debug runs).
+      - run: cargo test --release --workspace -- --ignored --nocapture
+      # Informative numbers for the phase report; never fails the build on
+      # timing, but does fail if a bench does not build/run (pipefail).
+      # Only criterion targets: libtest harnesses reject criterion flags.
+      - run: |
+          set -o pipefail
+          cargo bench -p fm-entities --bench weekly_update -- --quick 2>&1 | tee bench.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench
+          path: bench.txt
+
   test-wasm:
     name: test-wasm (wasm-pack headless chrome)
     runs-on: ubuntu-latest

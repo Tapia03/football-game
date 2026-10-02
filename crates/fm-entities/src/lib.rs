@@ -1,16 +1,19 @@
-//! Player database (`SoA`), attributes and weekly updates. Implemented in Phase 2.
+//! Player database (`SoA`), attributes and the weekly update.
 //!
-//! Phase 0 only wires the crate into the workspace so the dependency graph
-//! and CI are in place before any logic lands.
+//! `PlayerId(u32)` is the only key: no `Rc<Player>`/`Arc<Player>`. Cold data
+//! (`PlayerStatic`) and hot data (`PlayerDynamic`) live in parallel `Vec`s.
 
-/// Crate name, used by the workspace smoke test to prove the crate links.
-pub const CRATE_NAME: &str = "fm-entities";
+pub mod attributes;
+pub mod database;
+pub mod generate;
+pub mod player;
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn crate_links_against_core() {
-        assert_eq!(super::CRATE_NAME, "fm-entities");
-        assert!(fm_core::pi_libm() > 3.0);
-    }
-}
+pub use attributes::{
+    HiddenAttributes, MentalAttributes, PhysicalAttributes, PlayerAttributes, TechnicalAttributes,
+};
+pub use database::{dynamics_digest, rng_for_week, update_player, PlayerDatabase};
+pub use generate::generate_database;
+pub use player::{
+    ClubId, Foot, InjuryKind, PlayerBio, PlayerDynamic, PlayerId, PlayerStatic, Position, BP_MAX,
+    BP_NEUTRAL,
+};

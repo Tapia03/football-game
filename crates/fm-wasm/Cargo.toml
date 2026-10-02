@@ -14,6 +14,7 @@ wasm-bindgen.workspace = true
 
 [dev-dependencies]
 wasm-bindgen-test.workspace = true
+fm-entities.workspace = true
 
 [lints]
 workspace = true
