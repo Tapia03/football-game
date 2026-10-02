@@ -47,3 +47,16 @@ fn geometry_bit_identical_to_native() {
 
 /// `Vec2::new(3, 4).angle_to(Vec2::from_angle(1.0))` computed natively.
 const ANGLE_BITS: u32 = 0x3D94_E640;
+
+#[wasm_bindgen_test]
+fn weekly_update_matches_native_digest() {
+    // Same scenario as the native digest test in fm-entities.
+    let mut db = fm_entities::generate_database(5_000, 12, 2026);
+    for w in 0..30 {
+        for i in (0..5_000).step_by(2) {
+            db.record_minutes(fm_entities::PlayerId(i), 90);
+        }
+        db.weekly_update(99, w);
+    }
+    assert_eq!(fm_entities::dynamics_digest(&db), 0xC7C4_650E_0908_49A9);
+}
