@@ -1,0 +1,41 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/fm-core",
+    "crates/fm-entities",
+    "crates/fm-match",
+    "crates/fm-economy",
+    "crates/fm-world",
+    "crates/fm-persistence",
+    "crates/fm-wasm",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+publish = false
+
+[workspace.dependencies]
+libm = "0.2"
+rand_xoshiro = { version = "0.8", default-features = false }
+wasm-bindgen = "0.2"
+wasm-bindgen-test = "0.3"
+fm-core = { path = "crates/fm-core" }
+fm-entities = { path = "crates/fm-entities" }
+fm-match = { path = "crates/fm-match" }
+fm-economy = { path = "crates/fm-economy" }
+fm-world = { path = "crates/fm-world" }
+fm-persistence = { path = "crates/fm-persistence" }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
