@@ -7,6 +7,8 @@ members = [
     "crates/fm-economy",
     "crates/fm-world",
     "crates/fm-persistence",
+    "crates/fm-render",
+    "crates/fm-test-utils",
     "crates/fm-wasm",
 ]
 
@@ -27,6 +29,8 @@ fm-match = { path = "crates/fm-match" }
 fm-economy = { path = "crates/fm-economy" }
 fm-world = { path = "crates/fm-world" }
 fm-persistence = { path = "crates/fm-persistence" }
+fm-render = { path = "crates/fm-render" }
+fm-test-utils = { path = "crates/fm-test-utils" }
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }

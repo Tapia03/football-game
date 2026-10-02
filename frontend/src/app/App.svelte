@@ -36,6 +36,10 @@
       <dd data-testid="coi" class={state.info.crossOriginIsolated ? 'ok' : 'err'}>
         {state.info.crossOriginIsolated ? 'true' : 'false'}
       </dd>
+      <dt>WebGL2 (glow, shader)</dt>
+      <dd data-testid="webgl2" class={state.info.webgl2.ok ? 'ok' : 'err'}>
+        {state.info.webgl2.ok ? 'OK' : `FALHOU: ${state.info.webgl2.detail}`}
+      </dd>
     </dl>
   {/if}
 </main>

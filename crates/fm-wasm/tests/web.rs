@@ -60,3 +60,9 @@ fn weekly_update_matches_native_digest() {
     }
     assert_eq!(fm_entities::dynamics_digest(&db), 0xC7C4_650E_0908_49A9);
 }
+
+#[wasm_bindgen_test]
+fn webgl2_smoke_draws_expected_pixel() {
+    let px = fm_wasm::webgl2_smoke().expect("WebGL2 smoke failed");
+    assert_eq!(px, fm_wasm::webgl2_smoke_expected());
+}

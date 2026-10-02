@@ -31,6 +31,24 @@ test.describe('Phase 0 bootstrap', () => {
     expect(hasSab).toBe(true);
   });
 
+  test('WebGL2 draws through glow (renderer smoke test)', async ({ page, browserName }) => {
+    // Known CI gap (docs/SPEC.md §0.1): headless Firefox on the GPU-less Linux
+    // runner cannot create any GL context, even with webgl.force-enabled and
+    // Mesa llvmpipe/EGL installed. Real Firefox with a GPU is unaffected.
+    test.skip(browserName === 'firefox', 'No WebGL in headless Firefox on CI (SPEC §0.1)');
+    await page.goto('/');
+    // On failure the cell shows the browser's error, so the CI log says why.
+    await expect(page.getByTestId('webgl2')).toHaveText('OK');
+    const renderer = await page.evaluate(() => {
+      const gl = document.createElement('canvas').getContext('webgl2');
+      if (gl === null) return 'none';
+      // Unmasked name shows whether CI runs on SwiftShader/llvmpipe (software).
+      const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+      return String(gl.getParameter(dbg === null ? gl.RENDERER : dbg.UNMASKED_RENDERER_WEBGL));
+    });
+    console.log(`WebGL2 renderer: ${renderer}`);
+  });
+
   test('serves COOP/COEP headers', async ({ request }) => {
     const res = await request.get('/');
     expect(res.headers()['cross-origin-opener-policy']).toBe('same-origin');
