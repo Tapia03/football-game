@@ -1,0 +1,29 @@
+[package]
+name = "fm-wasm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+fm-core.workspace = true
+wasm-bindgen.workspace = true
+
+[dev-dependencies]
+wasm-bindgen-test.workspace = true
+
+[lints]
+workspace = true
+
+# wasm-opt is disabled on purpose: (1) binaryen download is blocked in the
+# sandboxed dev environment, and (2) keeping the exact rustc output removes one
+# toolchain from the native-vs-WASM bit-parity argument. Revisit in Phase 6
+# when binary size starts to matter.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
+
+[package.metadata.wasm-pack.profile.dev]
+wasm-opt = false
