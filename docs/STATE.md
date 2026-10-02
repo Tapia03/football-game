@@ -54,6 +54,11 @@ Ver SPEC, Seção 0 e decisões das Fases 3–5. Os que mais pesam no dia a dia:
   (≤ ~593M). Hoje: 540,5M ≈ 41 ms.
 - **xT:** conferir a cópia contra `karun.in/blog/data/open_xt_12x8_v1.json`.
 
+## Fase 6 v0 (antecipação, branch `fase-6-v0`)
+- Partida inteira no navegador: glow/WebGL2, placar, cronômetro,
+  velocidade 1×–60×. Preview: https://fase-6-v0.football-game-b5k.pages.dev
+- Depois de ver, o usuário decide: voltar a (c1) ou seguir a Fase 6.
+
 ## Marcos
 - **2026-10-02 — pipeline ponta a ponta confirmado:** WASM → WebGL2 (glow) →
   Cloudflare Pages. O spike renderiza no navegador (campo, 22 jogadores,

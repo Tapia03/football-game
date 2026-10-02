@@ -5,8 +5,8 @@ name: Deploy (Cloudflare Pages)
 
 on:
   push:
-    # SPIKE: `spike-render` deploys as a Pages preview (never production).
-    branches: [main, spike-render]
+    # `spike-render` and `fase-6-v0` deploy as Pages previews (never production).
+    branches: [main, spike-render, fase-6-v0]
   pull_request:
   workflow_dispatch:
 

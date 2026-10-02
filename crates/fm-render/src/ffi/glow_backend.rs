@@ -85,85 +85,142 @@ pub fn webgl2_smoke() -> Result<[u8; 4], String> {
 }
 
 // ---------------------------------------------------------------------------
-// SPIKE (branch `spike-render`): draw one coloured triangle list on a canvas.
+// Triangle-list renderer (spec Fase 6 v0): one program, one VAO and one
+// vertex buffer created once per canvas; every frame uploads the mesh
+// (`[x, y, r, g, b, a]` per vertex, clip space) and draws it.
 
 const MESH_VS: &str = "#version 300 es
 layout(location = 0) in vec2 a_pos;
-layout(location = 1) in vec4 a_col;
-out vec4 v_col;
-void main() { v_col = a_col; gl_Position = vec4(a_pos, 0.0, 1.0); }";
+layout(location = 1) in vec4 a_color;
+out vec4 v_color;
+void main() { v_color = a_color; gl_Position = vec4(a_pos, 0.0, 1.0); }";
 
 const MESH_FS: &str = "#version 300 es
 precision mediump float;
-in vec4 v_col;
+in vec4 v_color;
 out vec4 color;
-void main() { color = v_col; }";
+void main() { color = v_color; }";
 
-/// Clears the canvas `canvas_id` to `clear` and draws `verts`
-/// (`[x, y, r, g, b, a]` per vertex, clip space) as triangles.
-///
-/// # Errors
-/// When the canvas or WebGL2 is unavailable, or the shader fails.
-pub fn draw_mesh(canvas_id: &str, clear: [f32; 4], verts: &[f32]) -> Result<(), String> {
-    let document = web_sys::window()
-        .and_then(|w| w.document())
-        .ok_or("no document")?;
-    let canvas: web_sys::HtmlCanvasElement = document
-        .get_element_by_id(canvas_id)
-        .ok_or("canvas not found")?
-        .dyn_into()
-        .map_err(|_| "element is not a canvas")?;
-    let ctx: web_sys::WebGl2RenderingContext = canvas
-        .get_context("webgl2")
-        .map_err(|e| format!("{e:?}"))?
-        .ok_or("WebGL2 unavailable")?
-        .dyn_into()
-        .map_err(|_| "context is not WebGL2")?;
-    let gl = glow::Context::from_webgl2_context(ctx);
-    let w = i32::try_from(canvas.width()).map_err(|_| "canvas too wide")?;
-    let h = i32::try_from(canvas.height()).map_err(|_| "canvas too tall")?;
-    let count = i32::try_from(verts.len() / 6).map_err(|_| "mesh too large")?;
+type Program = <glow::Context as HasContext>::Program;
+type VertexArray = <glow::Context as HasContext>::VertexArray;
+type Buffer = <glow::Context as HasContext>::Buffer;
 
-    // SAFETY: as in `webgl2_smoke`: every GL handle is created on this
-    // context and used only within this call. The byte view of `verts` is
-    // valid for its whole length (f32 has no padding, u8 has alignment 1).
-    unsafe {
-        let program = gl.create_program()?;
-        for (kind, src) in [
-            (glow::VERTEX_SHADER, MESH_VS),
-            (glow::FRAGMENT_SHADER, MESH_FS),
-        ] {
-            let shader = gl.create_shader(kind)?;
-            gl.shader_source(shader, src);
-            gl.compile_shader(shader);
-            if !gl.get_shader_compile_status(shader) {
-                return Err(gl.get_shader_info_log(shader));
+/// Draws triangle meshes on one canvas, frame after frame.
+pub struct GlowMeshRenderer {
+    gl: glow::Context,
+    canvas: web_sys::HtmlCanvasElement,
+    program: Program,
+    vao: VertexArray,
+    vbo: Buffer,
+}
+
+impl GlowMeshRenderer {
+    /// Binds to the canvas `canvas_id` and builds the GL objects.
+    ///
+    /// # Errors
+    /// When the canvas or WebGL2 is unavailable, or the shader fails.
+    pub fn new(canvas_id: &str) -> Result<Self, String> {
+        let document = web_sys::window()
+            .and_then(|w| w.document())
+            .ok_or("no document")?;
+        let canvas: web_sys::HtmlCanvasElement = document
+            .get_element_by_id(canvas_id)
+            .ok_or("canvas not found")?
+            .dyn_into()
+            .map_err(|_| "element is not a canvas")?;
+        let ctx: web_sys::WebGl2RenderingContext = canvas
+            .get_context("webgl2")
+            .map_err(|e| format!("{e:?}"))?
+            .ok_or("WebGL2 unavailable")?
+            .dyn_into()
+            .map_err(|_| "context is not WebGL2")?;
+        let gl = glow::Context::from_webgl2_context(ctx);
+        // SAFETY: every GL handle is created on this context, owned by the
+        // returned value and only used through it (deleted in `Drop`).
+        unsafe {
+            let program = gl.create_program()?;
+            for (kind, src) in [
+                (glow::VERTEX_SHADER, MESH_VS),
+                (glow::FRAGMENT_SHADER, MESH_FS),
+            ] {
+                let shader = gl.create_shader(kind)?;
+                gl.shader_source(shader, src);
+                gl.compile_shader(shader);
+                if !gl.get_shader_compile_status(shader) {
+                    return Err(gl.get_shader_info_log(shader));
+                }
+                gl.attach_shader(program, shader);
+                gl.delete_shader(shader);
             }
-            gl.attach_shader(program, shader);
+            gl.link_program(program);
+            if !gl.get_program_link_status(program) {
+                return Err(gl.get_program_info_log(program));
+            }
+            let vao = gl.create_vertex_array()?;
+            gl.bind_vertex_array(Some(vao));
+            let vbo = gl.create_buffer()?;
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
+            let stride = 6 * 4;
+            gl.enable_vertex_attrib_array(0);
+            gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, stride, 0);
+            gl.enable_vertex_attrib_array(1);
+            gl.vertex_attrib_pointer_f32(1, 4, glow::FLOAT, false, stride, 2 * 4);
+            gl.enable(glow::BLEND);
+            gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
+            Ok(Self {
+                gl,
+                canvas,
+                program,
+                vao,
+                vbo,
+            })
         }
-        gl.link_program(program);
-        if !gl.get_program_link_status(program) {
-            return Err(gl.get_program_info_log(program));
-        }
-        let bytes =
-            core::slice::from_raw_parts(verts.as_ptr().cast::<u8>(), core::mem::size_of_val(verts));
-        let vao = gl.create_vertex_array()?;
-        gl.bind_vertex_array(Some(vao));
-        let vbo = gl.create_buffer()?;
-        gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
-        gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes, glow::STATIC_DRAW);
-        let stride = 6 * 4;
-        gl.enable_vertex_attrib_array(0);
-        gl.vertex_attrib_pointer_f32(0, 2, glow::FLOAT, false, stride, 0);
-        gl.enable_vertex_attrib_array(1);
-        gl.vertex_attrib_pointer_f32(1, 4, glow::FLOAT, false, stride, 2 * 4);
-        gl.use_program(Some(program));
-        gl.viewport(0, 0, w, h);
-        gl.enable(glow::BLEND);
-        gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
-        gl.clear_color(clear[0], clear[1], clear[2], clear[3]);
-        gl.clear(glow::COLOR_BUFFER_BIT);
-        gl.draw_arrays(glow::TRIANGLES, 0, count);
     }
-    Ok(())
+
+    /// Canvas size in device pixels (what the mesh must be built for).
+    #[must_use]
+    pub fn size(&self) -> (u32, u32) {
+        (self.canvas.width(), self.canvas.height())
+    }
+
+    /// Clears to `clear` and draws `verts` as triangles.
+    ///
+    /// # Errors
+    /// When the canvas is too large or the mesh too big for GL sizes.
+    pub fn draw(&self, clear: [f32; 4], verts: &[f32]) -> Result<(), String> {
+        let w = i32::try_from(self.canvas.width()).map_err(|_| "canvas too wide")?;
+        let h = i32::try_from(self.canvas.height()).map_err(|_| "canvas too tall")?;
+        let count = i32::try_from(verts.len() / 6).map_err(|_| "mesh too large")?;
+        let gl = &self.gl;
+        // SAFETY: the handles belong to this context (see `new`). The byte
+        // view of `verts` is valid for its whole length (f32 has no padding,
+        // u8 has alignment 1) and only lives during the upload.
+        unsafe {
+            let bytes = core::slice::from_raw_parts(
+                verts.as_ptr().cast::<u8>(),
+                core::mem::size_of_val(verts),
+            );
+            gl.use_program(Some(self.program));
+            gl.bind_vertex_array(Some(self.vao));
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
+            gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes, glow::DYNAMIC_DRAW);
+            gl.viewport(0, 0, w, h);
+            gl.clear_color(clear[0], clear[1], clear[2], clear[3]);
+            gl.clear(glow::COLOR_BUFFER_BIT);
+            gl.draw_arrays(glow::TRIANGLES, 0, count);
+        }
+        Ok(())
+    }
+}
+
+impl Drop for GlowMeshRenderer {
+    fn drop(&mut self) {
+        // SAFETY: the handles were created on this context and are not used
+        // after this point.
+        unsafe {
+            self.gl.delete_buffer(self.vbo);
+            self.gl.delete_vertex_array(self.vao);
+            self.gl.delete_program(self.program);
+        }
+    }
 }

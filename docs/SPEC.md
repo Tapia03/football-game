@@ -1105,6 +1105,39 @@ recalibrar contra a coluna "Real". As constantes estão em `AnchorTuning`,
   - Counter Attack: o tempo até o chute cai depois de uma roubada.
   - Tight Marking: a distância média cai 2 m.
 
+## FASE 6 v0 — partida visível no navegador (antecipação) `[ALTERADO v2.1]`
+Pedido do usuário (2026-10-02) com (c1) pausado depois do item 4: ver uma
+partida do começo ao fim na URL de preview antes de investir nos itens
+5–8 e na Fase 6 completa. Branch `fase-6-v0`, a partir da `fase-5`; nunca
+mergeia direto, o que servir entra na Fase 6 de verdade.
+- **Render em glow/WebGL2, não wgpu:** o pedido falava em wgpu, mas a
+  decisão da Fase 3 (glow atrás de `Renderer2D`) continua valendo; usar
+  wgpu seria mudança de arquitetura.
+- **O que tem:** campo, 22 jogadores numerados (cor por time), bola
+  (cresce um pouco com a altura), placar e cronômetro no topo, seletor de
+  velocidade 1× / 10× / 30× / 60× (padrão 10× ≈ 9 min por partida),
+  `?seed=N` na URL.
+- **Como funciona:** `fm-wasm::view::Playback` avança o tempo de partida
+  (tempo real × velocidade, passo de quadro limitado a 250 ms) e roda
+  todos os ticks lógicos que esse tempo cobre; o quadro é o `sample` do
+  motor no instante exato, dentro do tick (as trajetórias são analíticas:
+  a interpolação a 60 fps sai sem estado extra). `frame_mesh` monta
+  formas → malha; `GlowMeshRenderer` (em `ffi/glow_backend.rs`, único
+  `unsafe`) cria programa, VAO e buffer uma vez e só reenvia vértices a
+  cada quadro.
+- **Desvios da Fase 6 completa (de propósito):** o motor roda na thread
+  principal (sem worker nem `SharedArrayBuffer`); sem o trait
+  `Renderer2D`/`DrawList`/`Camera`; sem overlays, HUD ou painel tático;
+  sem golden de pixel.
+- **Teste:** `tests/e2e/match-v0.spec.ts` — a partida roda, o
+  cronômetro avança, a velocidade muda o ritmo, o campo inteiro cabe na
+  janela sem rolar; evidência em `evidence/phase-6-v0/`. Pulado no Firefox
+  do CI (sem WebGL, §0.1).
+- **Preview:** `https://fase-6-v0.football-game-b5k.pages.dev`.
+- **O que se vê já é conhecido:** pontapé inicial com atacantes no campo
+  adversário (bug registrado), gols demais, corridas demais — tudo de (c1)
+  ou (c2), não do render.
+
 ## FASE 6 — Snapshot + Renderer2D (glow/WebGL2) + Canvas `[ALTERADO v2.1]`
 - `MatchSnapshot` POD em `SharedArrayBuffer`, com ring buffer duplo
   (`ffi/sab.rs`).

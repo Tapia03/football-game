@@ -1,5 +1,5 @@
 import init, {
-  spike_render,
+  MatchView,
   hello,
   libm_golden_mismatches,
   webgl2_smoke,
@@ -49,12 +49,18 @@ export async function loadEngineInfo(): Promise<EngineInfo> {
   };
 }
 
-/** SPIKE (branch `spike-render`): draws one static frame on `canvas`. Returns
- * the number of vertices drawn, or throws with the browser's error. */
-export async function renderSpike(canvas: HTMLCanvasElement): Promise<number> {
-  await ensureInit();
+/** Sizes `canvas` to its CSS box × devicePixelRatio (sharp on HiDPI). */
+export function fitCanvas(canvas: HTMLCanvasElement): void {
   const dpr = globalThis.devicePixelRatio || 1;
-  canvas.width = Math.round(canvas.clientWidth * dpr);
-  canvas.height = Math.round(canvas.clientHeight * dpr);
-  return spike_render(canvas.id, canvas.width, canvas.height);
+  canvas.width = Math.max(1, Math.round(canvas.clientWidth * dpr));
+  canvas.height = Math.max(1, Math.round(canvas.clientHeight * dpr));
 }
+
+/** Fase 6 v0: a demo match `seed` drawn on `canvas` (glow/WebGL2). */
+export async function openMatch(canvas: HTMLCanvasElement, seed: number): Promise<MatchView> {
+  await ensureInit();
+  fitCanvas(canvas);
+  return new MatchView(canvas.id, seed);
+}
+
+export type { MatchView };

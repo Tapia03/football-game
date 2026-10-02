@@ -9,7 +9,7 @@ publish.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-# SPIKE: the render spike builds its scene from a real engine snapshot.
+# Fase 6 v0: the match view runs the engine and builds the frame from its snapshots.
 fm-match.workspace = true
 fm-core.workspace = true
 wasm-bindgen.workspace = true
