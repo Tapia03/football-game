@@ -209,6 +209,8 @@ name = "fm-match"
 version = "0.1.0"
 dependencies = [
  "fm-core",
+ "fm-entities",
+ "fm-test-utils",
 ]
 
 [[package]]
@@ -238,6 +240,7 @@ version = "0.1.0"
 dependencies = [
  "fm-core",
  "fm-entities",
+ "fm-match",
  "fm-render",
  "wasm-bindgen",
  "wasm-bindgen-test",

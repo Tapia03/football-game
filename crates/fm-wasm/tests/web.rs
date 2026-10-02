@@ -58,11 +58,23 @@ fn weekly_update_matches_native_digest() {
         }
         db.weekly_update(99, w);
     }
-    assert_eq!(fm_entities::dynamics_digest(&db), 0xC7C4_650E_0908_49A9);
+    assert_eq!(fm_entities::dynamics_digest(&db), 0x71E5_90E3_714D_2DD4);
 }
 
 #[wasm_bindgen_test]
 fn webgl2_smoke_draws_expected_pixel() {
     let px = fm_wasm::webgl2_smoke().expect("WebGL2 smoke failed");
     assert_eq!(px, fm_wasm::webgl2_smoke_expected());
+}
+
+#[wasm_bindgen_test]
+fn test_libm_parity_in_engine_wasm() {
+    // Full 90-minute match in WASM, compared field by field (raw f32 bits)
+    // with the golden produced by native `cargo test`.
+    let actual = fm_match::parity::report();
+    if let Some((line, field, expected, got)) =
+        fm_match::parity::first_mismatch(fm_match::parity::GOLDEN, &actual)
+    {
+        panic!("WASM engine diverges from native at line {line}, field {field}: expected `{expected}`, got `{got}`");
+    }
 }

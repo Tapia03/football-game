@@ -11,7 +11,8 @@ pub mod generate;
 pub mod player;
 
 pub use attributes::{
-    HiddenAttributes, MentalAttributes, PhysicalAttributes, PlayerAttributes, TechnicalAttributes,
+    GoalkeepingAttributes, HiddenAttributes, MentalAttributes, PhysicalAttributes,
+    PlayerAttributes, TechnicalAttributes,
 };
 pub use database::{dynamics_digest, rng_for_week, update_player, PlayerDatabase};
 pub use generate::generate_database;

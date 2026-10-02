@@ -79,8 +79,10 @@ mesmo PR que o código, em commit anterior ao código.
 | Benches ficam por crate (`crates/*/benches/`) | Exigência do Cargo; `benches/` na raiz fica reservado | — |
 | Teste de fumaça WebGL2 **pulado no Firefox do CI** | Firefox headless no runner sem GPU não cria contexto GL nenhum (`tryNativeGL … FEATURE_FAILURE_WEBGL_EXHAUSTED_DRIVERS`), nem com `webgl.force-enabled=true` e Mesa llvmpipe/EGL instalado (o EGL surfaceless do Mesa funciona; o Firefox não o usa). Firefox real com GPU não é afetado; a lacuna é coberta só por validação manual | Se um runner com GPU ou um Firefox que use EGL surfaceless ficar disponível |
 
-**Pendência aberta:** os 4 blocos de atributos (10/9/8/8) não têm
-atributos de goleiro. Decidir antes da Fase 4.
+**Pendência resolvida (Fase 4):** atributos de goleiro viram um 5º bloco
+(ver 3.I). Atributos são estáticos: **não existe** sistema de evolução ou
+recuperação de atributos (treino, idade, retorno de lesão). Se for
+desejado, é uma fase própria.
 
 ---
 
@@ -242,11 +244,22 @@ O movimento é `PlayerKinematics::plan_trajectory`, resolvido na amostragem.
 - `TransitionDefense` (perdeu a bola nos últimos 3 s)
 - `SetPiece`
 
-## 3.G — Física da bola (analítica)
-- **Rolando:** atrito linear + damping angular, em forma fechada.
-- **No ar:** gravidade, drag linear e Magnus opcional, em forma fechada.
-- **Bounce:** `v_z' = -restitution * v_z`, e a solução fechada reinicia
-  a partir daí.
+## 3.G — Física da bola (analítica) `[ALTERADO v2.1]`
+- **Rolando:** desaceleração por damping linear (`v(t) = v0·e^(-μt)`),
+  em forma fechada.
+- **No ar:** drag linear só no plano horizontal; o eixo vertical é uma
+  parábola pura (gravidade sem drag).
+  - Motivo: com drag no eixo vertical, achar o instante do quique exige
+    raiz de equação transcendental. Com parábola pura, o quique sai de uma
+    equação de 2º grau, em forma fechada e sem iteração.
+  - O erro físico é pequeno nas distâncias de um campo.
+- **Magnus:** adiado para depois do MVP.
+- **Bounce:** `v_z' = -restitution · v_z`, mais atrito horizontal no
+  impacto. A solução reinicia a partir daí.
+- **Cadeia de segmentos:** no instante do chute, a trajetória inteira
+  (voo → quiques → rolagem → parada) é calculada uma vez e guardada num
+  array fixo de segmentos. `pos_at(t)` escolhe o segmento: é função pura do
+  chute e não aloca.
 - **Domínio:** se `dist(bola, pé) < raio_controle` no tick lógico, rola
   `first_touch`.
 
@@ -288,7 +301,15 @@ pub trait Renderer2D {
 - `PlayerDatabase` em SoA: `Vec<PlayerStatic>` (frio) +
   `Vec<PlayerDynamic>` (quente). `PlayerId(u32)` é a única chave; nunca
   `Rc`/`Arc<Player>`.
-- Atributos em 4 blocos POD (10/9/8/8 × `u8`, escala 1..=100).
+- Atributos em 5 blocos POD (10/9/8/8/6 × `u8`, escala 1..=100).
+  - O 5º bloco é `GoalkeepingAttributes`: `reflexes`, `handling`,
+    `positioning_gk`, `aerial_reach`, `one_on_ones`, `distribution`.
+    `size_of == 6`.
+  - O bloco está sempre presente (tamanho fixo), mas só é consultado
+    quando o papel é goleiro. `[ALTERADO v2.1]`
+- No `weekly_update`, o goleiro acumula 40% da fadiga de um jogador de
+  linha por minuto e tem metade do risco de lesão por minuto, porque
+  percorre muito menos distância. `[ALTERADO v2.1]`
 - `size_of::<PlayerDynamic>() <= 24`, garantido em tempo de compilação
   (atual: 14).
 
@@ -386,7 +407,7 @@ Atributos, `PlayerStatic`/`PlayerDynamic`/`PlayerBio`, `PlayerDatabase`
 SoA e `weekly_update` (500k em ~14 ms). Zero alocação. Digest nativo ==
 WASM.
 
-## FASE 3 — Espaço, Formação, Fases
+## FASE 3 — Espaço, Formação, Fases ✅
 - **Primeiro commit `[ALTERADO v2.1]`:** este `docs/SPEC.md` + teste de
   fumaça de WebGL2 (glow, shader GLSL ES 3.00, readback de pixel) nos 3
   navegadores.
@@ -413,6 +434,8 @@ WASM.
   nova decisão, então não há teletransporte.
 - **Velocidade máxima:** `top_speed(pace) = 5,5 + 0,035·pace` m/s (de
   5,5 a 9,0 m/s).
+- **Recalibração:** a partir da Fase 4, os valores das âncoras ficam em
+  `AnchorTuning` (ver Fase 4).
 - **Táticas da Fase 3:** `Mentality` (5 níveis, ±8,4 m no bloco),
   `Width` e `LineHeight` (±5 m na defesa, metade no meio-campo).
 - **Bola solta (`Possession::Loose`):** os times mantêm a fase e o
@@ -424,10 +447,62 @@ WASM.
 - `ActionResolver`: `resolve_pass`, `resolve_shot`, `resolve_tackle`,
   `try_receive`, todos via `rng_for_event`.
 - `MatchEngine::sample(lod, t)`.
-- **Testes:**
+- **Critérios de saída obrigatórios `[ALTERADO v2.1]`:**
   - `test_cross_lod_consistency` (BLOQUEANTE)
   - `test_determinism_across_runs`
   - `test_libm_parity_in_engine`
+
+**Decisões da Fase 4 `[ALTERADO v2.1]`:**
+- **`AnchorTuning`:** todas as constantes de `FormationAnchor` (forma por
+  fase, centro do bloco, largura, altura da linha, peso da linha,
+  mentalidade, goleiro, limites) ficam num único struct. `Default` usa os
+  valores calibrados na Fase 3, sem nenhuma mudança de valor. A Fase 5
+  ajusta por ali.
+- **Isolamento do motor:** `MatchEngine` copia, na criação, os atributos
+  dos 22 titulares (`MatchPlayer`). Durante a partida não toca no
+  `PlayerDatabase`. Assim o motor é autocontido e roda igual em nativo, em
+  WASM e em worker.
+- **`DecisionSystem::choose_action` mínimo:** a versão completa é da
+  Fase 5. Na Fase 4:
+  - o portador escolhe entre chutar, passar, conduzir e segurar, por
+    pontuação determinística;
+  - o defensor mais próximo pressiona e tenta o desarme.
+  
+  A escolha não consome RNG. Só o `ActionResolver` consome.
+- **Desfecho do chute decidido no chute:** gol, defesa ou fora é sorteado
+  em `resolve_shot`, usando os atributos de goleiro. O evento só é aplicado
+  no tick em que a bola chega à linha.
+- **Eventos:** gol, chute, defesa, falta, cartão (amarelo e vermelho; o 2º
+  amarelo vira vermelho) e saída de bola. Ficam num log com capacidade
+  pré-alocada, e `tick_logic` não aloca (critério 17).
+- **Paridade nativo × WASM:**
+  - arquivo de referência gerado no nativo com 180 snapshots completos (1
+    a cada 300 ticks) da partida inteira, comparados campo a campo, bit a
+    bit;
+  - mais o placar e a lista de eventos;
+  - mais um digest de todos os 54.000 ticks.
+  
+  Gerar todos os snapshots completos daria vários MB no repositório.
+- **Auditoria de assinaturas (critério 18):** um teste lê o fonte e
+  garante que `choose_action` e `resolve` não recebem `dt` nem `LodLevel`.
+
+**Calibração base da Fase 4 (média de 60 partidas demo, `examples/match_stats`):**
+
+| Métrica por partida | Fase 4 | Real (aprox.) | Situação |
+|---|---|---|---|
+| Gols | 2,4 | 2,7 | ok |
+| Chutes (no alvo) | 11,5 (5,4) | 25 (9) | baixo |
+| Faltas | 17 | 22 | ok |
+| Amarelos / vermelhos | 2,2 / 0,32 | 4 / 0,15 | amarelo baixo, vermelho alto |
+| Pênaltis | 1,1 | 0,3 | alto |
+| Passes (acerto) | 358 (57%) | 900 (80%) | baixo |
+| Tentativas de desarme | 876 | ~70 | muito alto (só 2% viram falta) |
+| Custo nativo, release | 72 ms | — | Fase 12: 380 partidas → ~27 s em 1 thread |
+
+Causa comum: ainda não há organização defensiva (marcação, pressão
+coordenada) nem circulação de bola. Isso é exatamente a Fase 5, que deve
+recalibrar contra a coluna "Real". As constantes estão em `AnchorTuning`,
+`decision.rs` e `resolver.rs`, cada uma com uma linha de racional.
 
 ## FASE 5 — Role Behaviors
 - State machines completas por posição e `DecisionSystem::choose_action`.

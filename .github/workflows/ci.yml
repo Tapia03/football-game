@@ -70,6 +70,8 @@ jobs:
         run: |
           export PATH="$CHROMEWEBDRIVER:$PATH"
           wasm-pack test --headless --chrome crates/fm-wasm
+          # The game ships the optimised build: prove parity there too.
+          wasm-pack test --release --headless --chrome crates/fm-wasm
 
   test-e2e:
     name: test-e2e (${{ matrix.browser }})
