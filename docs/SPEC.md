@@ -805,6 +805,12 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
       sobre o jogo sem cadência (3: +6,5%) e os botes caem 21%. A
       economia de 4 (−5% de instruções) viria de um artefato de
       quantização, não de jogo.
+    - **A cadência é parâmetro de comportamento, não só de performance.**
+      Ela interage com a erosão do valor de segurar (quando o passe vence)
+      e com qualquer opção nova da moeda comum. Em (c2), com o passe em
+      profundidade em pé, a equação muda e a cadência pode precisar ser
+      reajustada; o critério é o comportamento (distribuição do momento do
+      passe), não só o custo.
     - **Jogo antes/depois da cadência 3** (180 partidas cada, média ± erro
       padrão sobre 6 blocos de 30):
 
@@ -908,6 +914,14 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
     revisar em (c2) junto com a frequência das corridas.
   - Testes: corre até a linha e nunca além; mira o vão aberto; não corre
     sem posse nem sem espaço; só atacantes e pontas.
+  - **Retorno à forma:** quando a corrida acaba, o `plan_shape` volta a
+    mandar o jogador para a âncora (a corrida só sobrepõe a âncora enquanto
+    `run_until > tick`). Medido numa partida completa (teste
+    `runners_return_to_shape_after_a_run`): 2.154 corridas terminadas; de
+    volta a menos de 5 m da âncora em **1,7 s na mediana e 2,7 s no p90**;
+    distância média dos corredores à âncora por janela de 15 min = 8,3 /
+    7,7 / 7,7 / 8,0 / 7,9 / 8,1 m, sem deriva. O teste exige mediana ≤ 3 s,
+    p90 ≤ 6 s e a última janela ≤ 1,5 × a primeira + 2 m.
   - Golden de paridade regenerado (comportamento novo).
 - **(c1) item 5 — passe em profundidade: implementado, DESLIGADO, item
   pausado (2026-10-02).**

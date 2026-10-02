@@ -143,3 +143,74 @@ fn match_statistics_are_plausible() {
     assert!((3.0..=60.0).contains(&fouls), "fouls/match {fouls}");
     assert!(reds <= 2.0, "reds/match {reds}");
 }
+
+/// Spec Fase 5 (c1) item 4: after a run ends the striker/winger goes back to
+/// its formation anchor (the shape does not collapse over the match).
+/// Measured on one full match: time from the end of a run until the runner
+/// is back within 5 m of its anchor, and the runners' mean distance to
+/// their anchors per 15-minute window.
+#[test]
+fn runners_return_to_shape_after_a_run() {
+    use fm_match::runs::is_runner;
+    use fm_match::TickFrame;
+
+    let (db, setup) = demo_match(3);
+    let mut e = MatchEngine::new(&setup, &db);
+    // Per player: tick its last run ended, if it has not returned yet.
+    let mut ended: [Option<u32>; 22] = [None; 22];
+    let mut returns: Vec<u32> = Vec::new();
+    let mut unreturned = 0_u32;
+    let mut window = [(0.0_f64, 0_u32); 6];
+    while !e.is_finished() {
+        e.tick_logic();
+        let s = e.state();
+        let mut f = TickFrame::capture(s);
+        f.observe_ball(s);
+        f.set_phases(s.phases);
+        f.compute_anchors(s);
+        for (i, p) in s.players.iter().enumerate() {
+            if !is_runner(p.role) || !p.active() {
+                continue;
+            }
+            let dist = f.pos(i).distance(f.anchor(i));
+            let w = ((s.tick / 9_000) as usize).min(5);
+            window[w].0 += f64::from(dist);
+            window[w].1 += 1;
+            if p.run_until == s.tick {
+                ended[i] = Some(s.tick);
+            } else if p.run_until > s.tick {
+                // A new run started before it got back: not a return.
+                if ended[i].take().is_some() {
+                    unreturned += 1;
+                }
+            } else if let Some(t) = ended[i] {
+                if dist < 5.0 {
+                    returns.push(s.tick - t);
+                    ended[i] = None;
+                }
+            }
+        }
+    }
+    returns.sort_unstable();
+    // Percentile in percent (integer index arithmetic, no float casts).
+    let pct = |q: usize| returns[(returns.len() - 1) * q / 100];
+    let means: Vec<f64> = window
+        .iter()
+        .map(|(sum, n)| sum / f64::from((*n).max(1)))
+        .collect();
+    println!(
+        "runs ended {} (+{unreturned} rerun before returning); back within 5 m after p50 {} / p90 {} / max {} ticks; mean distance to anchor per 15 min: {means:.1?}",
+        returns.len(),
+        pct(50),
+        pct(90),
+        returns.last().copied().unwrap_or(0)
+    );
+    assert!(returns.len() > 100, "runs happen and end");
+    assert!(pct(50) <= 30, "median return ≤ 3 s");
+    assert!(pct(90) <= 60, "90% back within 6 s");
+    // No drift: the last 15 minutes are not looser than the first.
+    assert!(
+        means[5] <= means[0] * 1.5 + 2.0,
+        "shape collapses: {means:?}"
+    );
+}
