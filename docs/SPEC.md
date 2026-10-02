@@ -1139,6 +1139,39 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
   - **Teste da Fase 4 falha:** `match_statistics_are_plausible` exige ≥ 3
     faltas por partida; mediu 2,83 (seeds 0–5). Parado pela regra "teste
     falhou → log + hipóteses, sem correção tentativa".
+- **Invariante 18 do lado defensivo (achado 2026-10-02):** o bote exigia
+  um defensor já a ≤ 1,8 m (`tackle_range`), mas a contenção o posiciona a
+  1–4 m do portador. No arcade a distância "acontecia" (29% dos ticks com
+  bola dominada havia alguém ao alcance); com física, o defensor para no
+  ponto de contenção e fica fora (9%). A decisão supunha uma movimentação
+  que a execução não tem — o mesmo erro do passe em profundidade, agora
+  na defesa.
+- **Commit 2 da física = física no lance + passo 2 (defesa ajustada),
+  num commit só (decisão do usuário, opção (a)):**
+  - **Engajamento:** dentre os defensores recuperados a até
+    `engage_range` (4,5 m) do portador, o de maior nota de bote acima do
+    limiar parte para cima dele a toda velocidade (alvo = portador, no
+    lance). O bote se resolve só quando ele de fato chega a
+    `tackle_range`. A física decide quando o bote acontece.
+  - Meta: passar `match_statistics_are_plausible` (≥ 3 faltas). Não se
+    persegue o real; os números saem do mecanismo.
+  - **Custo: 596,3M = +10,91% sobre o commit 1 (537,6M).** Orçamento
+    pontual deste commit: até ~607M. **Dívida explícita:** passa do teto
+    de saída de (c) (593M ≈ 45 ms) em 3,3M; precisa ser devolvido antes de
+    fechar (c). O próximo item volta à regra de +1,5%.
+  - Medido (180 partidas, 4-3-3 e 4-4-2): gols 5,30, chutes 25,8 / 8,4 no
+    alvo, passes 929 (acerto 56%), botes 10, faltas 3,6, bola parada 7%,
+    xG por chute 0,23.
+- **Sinais registrados (não calibrar agora):**
+  - **Posse do mandante:** 73% (arcade) → 56,9% (física no lance) →
+    42,5% (física + engajamento). A assimetria mudou com a física, não com
+    a tática; mas ela também troca de lado com o mecanismo de defesa, o
+    que indica que ainda não é um equilíbrio — é sensível a cada mudança
+    de movimento. Não investigar agora (decisão anterior).
+  - **Acerto de passe 56% (real ~80%):** invariante 18 do lado do passe
+    (a estimativa de linha supõe a cinemática antiga). Vai para o passo 4
+    (refazer o item 5) ou (c2).
+  - **Botes/faltas 10 / 3,6 (real ~70 / 22):** calibração para (c2).
 - **Orçamento pontual do passo de física (aprovado 2026-10-02):** até +5%
   sobre o item 4, com a chegada (frenagem + giro parado) no mesmo commit
   da física ligada; teto de 560M instruções (parar acima de 562M). Sem

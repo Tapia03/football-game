@@ -148,6 +148,12 @@ pub struct DefendingTuning {
     pub linger_ticks: u32,
     /// Keepers may come out to smother a carrier inside their own box.
     pub keeper_smother: bool,
+    /// A defender who decides to challenge from within this distance (m)
+    /// closes on the carrier at full speed; the tackle resolves once in
+    /// `DuelTuning::tackle_range`. With physics, containment holds 1–4 m
+    /// off the carrier, so the challenge is a decision to close, not a
+    /// coincidence of distance (spec Fase 5, invariant 18 on defence).
+    pub engage_range: f32,
 }
 
 /// Fouls and cards.
@@ -355,12 +361,14 @@ pub struct KinematicsTuning {
 
 impl Default for KinematicsTuning {
     fn default() -> Self {
-        // Commit 1 of the physics step: structure only, behaviour unchanged.
+        // Conservative values that keep the engine running (spec Fase 5,
+        // "Orçamento pontual"); realistic ones (4.5 m/s², 200 ms, 6 rad/s)
+        // once the engine is stable.
         Self {
-            max_accel: f32::INFINITY,
-            reaction_ms: 0,
+            max_accel: 15.0,
+            reaction_ms: 80,
             reaction_threshold: 2.0,
-            turn_rate: f32::INFINITY,
+            turn_rate: 15.0,
         }
     }
 }
@@ -544,6 +552,7 @@ impl Default for DefendingTuning {
             w_linger: 0.0,
             linger_ticks: 30,
             keeper_smother: true,
+            engage_range: 4.5,
         }
     }
 }

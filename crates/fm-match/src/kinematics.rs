@@ -14,6 +14,9 @@ use crate::tuning::KinematicsTuning;
 
 /// Below this distance a trajectory is "already there".
 const ARRIVED_EPS: f32 = 1e-4;
+/// A new target closer than this (squared, m²) to the planned one does not
+/// trigger a re-plan.
+const REPLAN_EPS2: f32 = 0.25;
 /// Below this speed a player is standing and can face any way (m/s).
 const MOVING_SPEED: f32 = 0.5;
 
@@ -40,31 +43,40 @@ pub struct Lead {
     pub react_s: f32,
     pub accel: Vec2,
     pub cruise_s: f32,
-    /// Braking deceleration on arrival (m/s²).
+    /// Braking on arrival, precomputed at planning: the cruise runs at
+    /// full speed for `cruise_full_s`, then decelerates at `brake` (m/s²)
+    /// to stop on the target.
     pub brake: f32,
+    pub cruise_full_s: f32,
+    /// The intent this move was planned for: re-planning is skipped while
+    /// it does not change (spec Fase 5, "Física de movimento").
+    pub intent: Vec2,
+    pub intent_speed: f32,
 }
 
 impl Lead {
-    /// Distance covered after `t` seconds of cruise over a leg of length
-    /// `len` at `v`, braking at `a` to stop at its end; and the speed then.
+    /// Distance covered and speed after `t` seconds of cruise at `v`.
     #[inline]
-    fn cruise(len: f32, v: f32, a: f32, t: f32) -> (f32, f32) {
-        // Brake harder when the leg is too short to brake at `a`.
-        let brake_len = v * v / (2.0 * a);
-        let (cruise_len, a) = if brake_len >= len {
-            (0.0, v * v / (2.0 * len))
-        } else {
-            (len - brake_len, a)
-        };
-        let t1 = cruise_len / v;
-        if t <= t1 {
+    fn cruise(&self, v: f32, t: f32) -> (f32, f32) {
+        if t <= self.cruise_full_s {
             return (v * t, v);
         }
-        let tau = (t - t1).min(v / a);
+        let tau = (t - self.cruise_full_s).min(v / self.brake);
         (
-            cruise_len + v * tau - 0.5 * a * tau * tau,
-            (v - a * tau).max(0.0),
+            v * self.cruise_full_s + v * tau - 0.5 * self.brake * tau * tau,
+            (v - self.brake * tau).max(0.0),
         )
+    }
+
+    /// Braking plan for a cruise leg of length `len` at `v`, braking at
+    /// `a` (harder when the leg is too short): `(brake, full-speed time)`.
+    fn braking(len: f32, v: f32, a: f32) -> (f32, f32) {
+        let brake_len = v * v / (2.0 * a);
+        if brake_len >= len {
+            (v * v / (2.0 * len.max(1e-4)), 0.0)
+        } else {
+            (a, (len - brake_len) / v)
+        }
     }
 
     #[inline]
@@ -84,7 +96,7 @@ impl Lead {
         if len < ARRIVED_EPS {
             return traj.target;
         }
-        let (s, _) = Self::cruise(len, traj.speed, self.brake, e - self.cruise_s);
+        let (s, _) = self.cruise(traj.speed, e - self.cruise_s);
         traj.start + (traj.target - traj.start) * (s.min(len) / len)
     }
 
@@ -102,7 +114,7 @@ impl Lead {
         if len < ARRIVED_EPS {
             return Vec2::ZERO;
         }
-        let (_, v) = Self::cruise(len, traj.speed, self.brake, e - self.cruise_s);
+        let (_, v) = self.cruise(traj.speed, e - self.cruise_s);
         (traj.target - traj.start) * (v / len)
     }
 }
@@ -184,6 +196,16 @@ impl PlayerKinematics {
         turn: Option<TurnLimit>,
     ) -> (Trajectory, Lead) {
         let (traj, lead) = current;
+        // Same intent as the move under way: keep it (it already brakes onto
+        // that target).
+        if let Some(l) = lead {
+            if (l.intent_speed - speed).abs() < 1e-3
+                && (l.intent - target).length_squared() < REPLAN_EPS2
+                && (traj.target - l.intent).length_squared() < REPLAN_EPS2
+            {
+                return (*traj, *l);
+            }
+        }
         let v0 = lead.map_or_else(|| Self::vel_at(traj, t_ms), |l| l.vel(traj, t_ms));
         let (target, speed) = if speed > 0.0 {
             (target, speed)
@@ -245,6 +267,12 @@ impl PlayerKinematics {
         } else {
             Self::plan_trajectory(start, start, 0.0, t_ms)
         };
+        let len = cruise.start.distance(cruise.target);
+        let (brake, cruise_full_s) = if k.max_accel.is_finite() {
+            Lead::braking(len, cruise.speed, k.max_accel)
+        } else {
+            (f32::MAX, len / cruise.speed)
+        };
         (
             cruise,
             Lead {
@@ -253,11 +281,10 @@ impl PlayerKinematics {
                 react_s,
                 accel,
                 cruise_s: react_s + accel_s,
-                brake: if k.max_accel.is_finite() {
-                    k.max_accel
-                } else {
-                    f32::MAX
-                },
+                brake,
+                cruise_full_s,
+                intent: target,
+                intent_speed: speed,
             },
         )
     }
@@ -385,5 +412,102 @@ mod tests {
         assert!((K::top_speed(1) - 5.535).abs() < 1e-4);
         assert!((K::top_speed(100) - 9.0).abs() < 1e-4);
         assert!(K::top_speed(80) > K::top_speed(40));
+    }
+
+    fn physics() -> crate::tuning::KinematicsTuning {
+        crate::tuning::KinematicsTuning {
+            max_accel: 15.0,
+            reaction_ms: 80,
+            reaction_threshold: 2.0,
+            turn_rate: 15.0,
+        }
+    }
+
+    fn turn() -> Option<super::TurnLimit> {
+        super::TurnLimit::new(physics().turn_rate, 0.1)
+    }
+
+    #[test]
+    fn test_player_entering_play_does_not_jump() {
+        // An off-the-play (arcade) player running east at 6 m/s enters the
+        // play with a new target to the north: position and velocity carry
+        // over exactly, and speed then changes at most max_accel per second.
+        let arcade = K::plan_trajectory(Vec2::new(10.0, 30.0), Vec2::new(60.0, 30.0), 6.0, 0);
+        let t = 2_000;
+        let pos = K::pos_at(&arcade, t);
+        let vel = K::vel_at(&arcade, t);
+        let (traj, lead) = K::steer(
+            (&arcade, None),
+            pos,
+            Vec2::new(pos.x, 60.0),
+            8.0,
+            t,
+            &physics(),
+            turn(),
+        );
+        assert_eq!(lead.pos(&traj, t), pos, "no position jump");
+        assert_eq!(lead.vel(&traj, t), vel, "no velocity jump");
+        let mut prev = lead.vel(&traj, t);
+        for ms in (t + 10..t + 1_000).step_by(10) {
+            let v = lead.vel(&traj, ms);
+            assert!(
+                (v - prev).length() <= 15.0 * 0.010 + 1e-3,
+                "acceleration bounded at {ms} ms"
+            );
+            prev = v;
+        }
+    }
+
+    #[test]
+    fn brakes_to_stop_on_the_target() {
+        let start = Vec2::new(0.0, 0.0);
+        let target = Vec2::new(20.0, 0.0);
+        let (traj, lead) = K::steer(
+            (&K::plan_trajectory(start, start, 0.0, 0), None),
+            start,
+            target,
+            8.0,
+            0,
+            &physics(),
+            turn(),
+        );
+        let end = lead.pos(&traj, 10_000);
+        assert!(end.distance(target) < 1e-3, "stops on the target: {end:?}");
+        assert_eq!(lead.vel(&traj, 10_000), Vec2::ZERO);
+    }
+
+    #[test]
+    fn turning_is_limited_while_moving_free_when_standing() {
+        let k = physics();
+        // Running east at full speed, asked to go west: it cannot turn on
+        // the spot — it brakes, still moving east a moment later.
+        let east = K::plan_trajectory(Vec2::new(50.0, 30.0), Vec2::new(90.0, 30.0), 8.0, 0);
+        let pos = K::pos_at(&east, 1_000);
+        let (traj, lead) = K::steer(
+            (&east, None),
+            pos,
+            Vec2::new(10.0, 30.0),
+            8.0,
+            1_000,
+            &k,
+            turn(),
+        );
+        let v = lead.vel(&traj, 1_100);
+        assert!(
+            v.x > 0.0 && v.length() < 8.0,
+            "braking, not reversed: {v:?}"
+        );
+        // Standing still, it can face the target at once.
+        let stand = K::plan_trajectory(pos, pos, 0.0, 0);
+        let (traj, _) = K::steer(
+            (&stand, None),
+            pos,
+            Vec2::new(10.0, 30.0),
+            8.0,
+            1_000,
+            &k,
+            turn(),
+        );
+        assert!((traj.target - traj.start).normalize().x < -0.99);
     }
 }

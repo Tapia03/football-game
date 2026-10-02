@@ -610,9 +610,10 @@ impl DecisionSystem {
     }
 
     /// The defender of `side` who commits to a challenge on `carrier` this
-    /// tick, if any: among players in reach and recovered (keepers only in
-    /// their own box), the highest
-    /// challenge score above the threshold (lowest index on ties).
+    /// tick, if any: among players within `engage_range` and recovered
+    /// (keepers only in their own box), the highest challenge score above
+    /// the threshold (lowest index on ties). The caller closes them in and
+    /// resolves the tackle once they are in `tackle_range`.
     #[must_use]
     pub fn choose_challenger(
         state: &MatchState,
@@ -620,7 +621,7 @@ impl DecisionSystem {
         side: crate::phase::Side,
         carrier: usize,
     ) -> Option<usize> {
-        let reach = state.tuning.duel.tackle_range;
+        let reach = state.tuning.defending.engage_range;
         let threshold = state.tuning.defending.challenge_threshold;
         let c = frame.pos(carrier);
         let own_box = state.attacking(side).opposite();

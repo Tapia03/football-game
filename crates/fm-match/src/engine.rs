@@ -239,9 +239,12 @@ impl MatchEngine {
 
         let mut targets = [Vec2::ZERO; PLAYERS];
         let mut urgency = [0.6_f32; PLAYERS];
-        plan_shape(s, &frame, &mut targets, &mut urgency);
-        on_ball(s, &frame, &mut targets, &mut urgency);
-        move_players(s, &frame, &targets, &urgency);
+        // Who is in the play this tick (spec Fase 5, "Física só para quem
+        // está no lance"): marked where a play-specific target is given.
+        let mut in_play = [false; PLAYERS];
+        plan_shape(s, &frame, &mut targets, &mut urgency, &mut in_play);
+        on_ball(s, &frame, &mut targets, &mut urgency, &mut in_play);
+        move_players(s, &frame, &targets, &urgency, &in_play);
     }
 
     /// Snapshot at `t_ms` (between this tick and the next). `None` in
@@ -474,6 +477,7 @@ fn plan_shape(
     frame: &TickFrame,
     targets: &mut [Vec2; PLAYERS],
     urgency: &mut [f32; PLAYERS],
+    in_play: &mut [bool; PLAYERS],
 ) {
     let ball = frame.ball(s).xy();
     for (i, p) in s.players.iter().enumerate() {
@@ -494,6 +498,7 @@ fn plan_shape(
         if p.run_until > s.tick {
             if let Some((run_target, run_urgency)) = crate::runs::active_run(s, frame, i) {
                 targets[i] = run_target;
+                in_play[i] = true;
                 urgency[i] = run_urgency;
             }
         }
@@ -507,6 +512,7 @@ fn on_ball(
     frame: &TickFrame,
     targets: &mut [Vec2; PLAYERS],
     urgency: &mut [f32; PLAYERS],
+    in_play: &mut [bool; PLAYERS],
 ) {
     let now = s.now_ms();
     match s.ball {
@@ -531,10 +537,12 @@ fn on_ball(
             match action {
                 Action::Dribble { target } => {
                     targets[h] = target;
+                    in_play[h] = true;
                     urgency[h] = s.tuning.decision.carry_urgency;
                 }
                 Action::Hold => {
                     targets[h] = here;
+                    in_play[h] = true;
                     urgency[h] = s.tuning.decision.hold_urgency;
                 }
                 Action::Pass { .. }
@@ -545,8 +553,8 @@ fn on_ball(
             }
             // Defending the carrier (if they still have it): the nearest
             // defender contains goal-side at the zone's distance, the second
-            // covers behind them, and whoever is in reach decides whether to
-            // commit to a challenge (spec Fase 5 defending model).
+            // covers behind them, and whoever is within engage range decides
+            // whether to commit to a challenge (spec Fase 5 defending model).
             if let BallState::Held { holder } = s.ball {
                 let carrier = holder as usize;
                 let defending = holder_side.other();
@@ -555,15 +563,25 @@ fn on_ball(
                 let (first, second) = two_nearest(s, frame, defending, hpos);
                 if let Some(d) = first {
                     targets[d] = DecisionSystem::containment_point(s, frame, d, carrier);
+                    in_play[d] = true;
                     urgency[d] = s.tuning.defending.contain_urgency;
                 }
                 if let Some(d) = second {
                     let behind = s.tuning.defending.contain_far.1 + s.tuning.duel.cover_dist;
                     targets[d] = hpos + (own_goal - hpos).normalize() * behind;
+                    in_play[d] = true;
                     urgency[d] = s.tuning.duel.cover_urgency;
                 }
+                // The challenger closes on the carrier; the tackle happens
+                // only once they actually arrive (physics decides when).
                 if let Some(d) = DecisionSystem::choose_challenger(s, frame, defending, carrier) {
-                    ActionResolver::resolve(s, frame, d, Action::Tackle { on: holder });
+                    if frame.pos(d).distance(hpos) < s.tuning.duel.tackle_range {
+                        ActionResolver::resolve(s, frame, d, Action::Tackle { on: holder });
+                    } else {
+                        targets[d] = hpos;
+                        in_play[d] = true;
+                        urgency[d] = 1.0;
+                    }
                 }
             }
         }
@@ -576,6 +594,7 @@ fn on_ball(
                 if let Some(c) = nearest_to(s, frame, side, ball) {
                     let p = &s.players[c];
                     targets[c] = intercept_point(&mut path, frame.pos(c), p.top_speed);
+                    in_play[c] = true;
                     urgency[c] = 1.0;
                 }
             }
@@ -584,12 +603,14 @@ fn on_ball(
                 if s.players[r].active() {
                     let p = &s.players[r];
                     targets[r] = intercept_point(&mut path, frame.pos(r), p.top_speed);
+                    in_play[r] = true;
                     urgency[r] = 1.0;
                 }
             }
         }
         BallState::Dead(r) => {
             targets[r.taker as usize] = r.spot;
+            in_play[r.taker as usize] = true;
             urgency[r.taker as usize] = s.tuning.restart.taker_urgency;
         }
     }
@@ -683,11 +704,15 @@ fn nearest_to(s: &MatchState, frame: &TickFrame, side: Side, at: Vec2) -> Option
     best
 }
 
+/// Off-the-play players re-plan every this many ticks (spec Fase 5).
+const ARCADE_CADENCE: usize = 3;
+
 fn move_players(
     s: &mut MatchState,
     frame: &TickFrame,
     targets: &[Vec2; PLAYERS],
     urgency: &[f32; PLAYERS],
+    in_play: &[bool; PLAYERS],
 ) {
     let now = s.now_ms();
     let k = s.tuning.kinematics;
@@ -713,6 +738,14 @@ fn move_players(
         let speed = p.top_speed * urgency[i];
         if instant {
             p.traj = PlayerKinematics::plan_trajectory(frame.pos(i), target, speed, now);
+        } else if !in_play[i] {
+            // Off the play: arcade model on a 3-tick cadence (staggered by
+            // player), or at once when just leaving the play.
+            let due = (s.tick as usize + i) % ARCADE_CADENCE == 0;
+            if due || p.lead.is_some() {
+                p.traj = PlayerKinematics::plan_trajectory(frame.pos(i), target, speed, now);
+                p.lead = None;
+            }
         } else {
             let (traj, lead) = PlayerKinematics::steer(
                 (&p.traj, p.lead.as_ref()),
