@@ -1,10 +1,18 @@
-//! Core primitives shared by every crate: math (libm), geometry and RNG.
+//! Core primitives shared by every crate: math (libm), geometry, pitch and RNG.
 //!
-//! Phase 0 ships only the libm golden-vector machinery. Every transcendental
-//! function in the engine must go through `libm` (pure Rust, no platform libm)
-//! so that native `cargo test` and the WASM build produce bit-identical results.
+//! Every transcendental function in the engine must go through [`math`]
+//! (pure-Rust `libm`, no platform libm) so that native `cargo test` and the
+//! WASM build produce bit-identical results. `clippy.toml` enforces it.
 
+pub mod geometry;
 pub mod libm_golden;
+pub mod math;
+pub mod pitch;
+pub mod rng;
+
+pub use geometry::{Vec2, Vec3};
+pub use pitch::GoalEnd;
+pub use rng::{rng_for_event, splitmix64, Rng};
 
 /// Pi computed at runtime through `libm::atan`, not the `std` constant.
 ///

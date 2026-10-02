@@ -18,6 +18,7 @@ publish = false
 
 [workspace.dependencies]
 libm = "0.2"
+rand_xoshiro = { version = "0.8", default-features = false }
 wasm-bindgen = "0.2"
 wasm-bindgen-test = "0.3"
 fm-core = { path = "crates/fm-core" }

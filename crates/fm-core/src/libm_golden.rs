@@ -5,9 +5,14 @@
 //! committed in `golden/libm_f32.txt`; native tests and `wasm-bindgen-test`
 //! both compare against that file, so any drift between targets fails CI.
 //!
+//! Values are produced through `crate::math`, so this also pins the wrapper
+//! (the file is unchanged since Phase 0: the wrapper is a pure delegation).
+//!
 //! Regenerate with `UPDATE_GOLDEN=1 cargo test -p fm-core libm_golden`.
 
 use core::fmt::Write as _;
+
+use crate::math;
 
 /// Committed golden file, embedded so the WASM test needs no filesystem.
 pub const GOLDEN: &str = include_str!("../golden/libm_f32.txt");
@@ -33,15 +38,15 @@ fn line(out: &mut String, name: &str, args: &[f32], result: f32) {
 pub fn generate() -> String {
     let mut out = String::new();
     for x in inputs() {
-        line(&mut out, "sinf", &[x], libm::sinf(x));
-        line(&mut out, "cosf", &[x], libm::cosf(x));
-        line(&mut out, "expf", &[x * 0.25], libm::expf(x * 0.25));
+        line(&mut out, "sinf", &[x], math::sin(x));
+        line(&mut out, "cosf", &[x], math::cos(x));
+        line(&mut out, "expf", &[x * 0.25], math::exp(x * 0.25));
         let pos = x.abs() + 0.125;
-        line(&mut out, "sqrtf", &[pos], libm::sqrtf(pos));
-        line(&mut out, "logf", &[pos], libm::logf(pos));
+        line(&mut out, "sqrtf", &[pos], math::sqrt(pos));
+        line(&mut out, "logf", &[pos], math::ln(pos));
         // Exponent range kept small so results stay finite and informative.
         let e = x * 0.1;
-        line(&mut out, "powf", &[pos, e], libm::powf(pos, e));
+        line(&mut out, "powf", &[pos, e], math::powf(pos, e));
     }
     out
 }
@@ -72,7 +77,7 @@ mod tests {
     use super::{first_mismatch, generate};
 
     #[test]
-    fn libm_golden_matches_native() {
+    fn test_libm_parity() {
         if std::env::var_os("UPDATE_GOLDEN").is_some() {
             let path = concat!(env!("CARGO_MANIFEST_DIR"), "/golden/libm_f32.txt");
             std::fs::write(path, generate()).expect("write golden");
