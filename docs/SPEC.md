@@ -574,6 +574,37 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
 4. **Falta por bote recalibrada** contra metas reais, depois do passo
    anterior.
 
+*Achados na implementação (adições ao modelo aprovado):*
+- **Impasse.** Sem botes contínuos, um portador encurralado na linha de
+  fundo ficava com a bola pelo resto da partida:
+  - o chute estava bloqueado e abaixo do limiar;
+  - a condução mirava o limite do campo;
+  - "segurar" virava a escolha permanente;
+  - o goleiro não podia disputar a bola.
+
+  O primeiro teste do modelo novo mostrou 77 botes por partida, mas era
+  **artefato do impasse**: as partidas travavam cedo. Correções:
+  - **saída forçada:** quando a condução perde todo o valor
+    (`carry_decay_start + carry_decay_span` ticks), o portador chuta se
+    estiver no raio de chute; senão, passa para a melhor opção, mesmo com
+    nota baixa;
+  - **goleiro sai no pé** dentro da própria área (`keeper_smother`), com
+    `one_on_ones`/`handling` e sem a penalidade de área;
+  - `w_linger` (bônus por portador parado) fica no `TuningParams`, mas com
+    valor **0**: medido, não mudou o resultado.
+- **Calibração do modelo (60 partidas):**
+  - marcador mais próximo do portador: <1 m 9%, 1–2 m 26%, 2–3 m 24%,
+    3–4 m 18%, 4–6 m 12%, >6 m 11%. Antes, 97% ficava abaixo de 1 m;
+  - alguém ao alcance de bote em 29% dos ticks de posse (antes, 97%);
+  - limiar de bote 1,15 (a mediana das notas ao alcance é 0,53): **75
+    botes por partida** (real ~70; antes 876);
+  - falta por bote: base 0,26 + 0,24 × agressividade, mais o termo "por
+    trás": **19,4 faltas** (real ~22) e 2,15 amarelos;
+  - vermelhos (0,53) e pênaltis (0,02) ficam para a Fase 6.
+- **Efeito colateral para o item (c):** sem o marcador colado, a posse
+  flui demais: 3.580 passes (real ~900) e 66 chutes (real ~25), com 3,5
+  gols. A calibração conjunta de chutes e passes é o próximo item.
+
 **Restrição arquitetural `[ALTERADO v2.1]`:** nenhuma decisão do
 `DecisionSystem` (nem do `ActionResolver`) pode consultar estado de
 amostragem: interpolação do LOD Full, snapshots ou `sample()`. Só o estado
