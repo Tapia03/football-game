@@ -31,7 +31,11 @@ test.describe('Phase 0 bootstrap', () => {
     expect(hasSab).toBe(true);
   });
 
-  test('WebGL2 draws through glow (renderer smoke test)', async ({ page }) => {
+  test('WebGL2 draws through glow (renderer smoke test)', async ({ page, browserName }) => {
+    // Known CI gap (docs/SPEC.md §0.1): headless Firefox on the GPU-less Linux
+    // runner cannot create any GL context, even with webgl.force-enabled and
+    // Mesa llvmpipe/EGL installed. Real Firefox with a GPU is unaffected.
+    test.skip(browserName === 'firefox', 'No WebGL in headless Firefox on CI (SPEC §0.1)');
     await page.goto('/');
     // On failure the cell shows the browser's error, so the CI log says why.
     await expect(page.getByTestId('webgl2')).toHaveText('OK');

@@ -77,6 +77,7 @@ mesmo PR que o código, em commit anterior ao código.
 | `clippy.toml` proíbe `f32`/`f64::{sin,cos,powf,sqrt,exp,ln,…}` da std | Transforma a regra da libm em erro de CI | — |
 | Estado dinâmico do jogador em ponto fixo inteiro (0..=10000) | Determinismo trivial entre alvos; `PlayerDynamic` com 14 bytes | — |
 | Benches ficam por crate (`crates/*/benches/`) | Exigência do Cargo; `benches/` na raiz fica reservado | — |
+| Teste de fumaça WebGL2 **pulado no Firefox do CI** | Firefox headless no runner sem GPU não cria contexto GL nenhum (`tryNativeGL … FEATURE_FAILURE_WEBGL_EXHAUSTED_DRIVERS`), nem com `webgl.force-enabled=true` e Mesa llvmpipe/EGL instalado (o EGL surfaceless do Mesa funciona; o Firefox não o usa). Firefox real com GPU não é afetado; a lacuna é coberta só por validação manual | Se um runner com GPU ou um Firefox que use EGL surfaceless ficar disponível |
 
 **Pendência aberta:** os 4 blocos de atributos (10/9/8/8) não têm
 atributos de goleiro. Decidir antes da Fase 4.
@@ -390,12 +391,32 @@ WASM.
   fumaça de WebGL2 (glow, shader GLSL ES 3.00, readback de pixel) nos 3
   navegadores.
 - `Formation`: 4-4-2, 4-3-3, 4-2-3-1, 3-5-2, 5-3-2.
-- `FormationAnchor::compute(role, ball_pos, phase, tactics) -> Vec2`.
+- `FormationAnchor::compute(slot, ball_pos, phase, tactics, frame) -> Vec2`.
 - `Phase` + `PhaseStateMachine` com timers.
 - `PlayerKinematics::plan_trajectory` / `pos_at`.
 - `RoleBehavior`: stubs por posição.
 - **Testes:** âncoras; o centro de massa desloca com a bola; `pos_at` é
   determinístico e independe do número de avaliações.
+
+**Decisões de interface `[ALTERADO v2.1]`:**
+- **Espaço relativo ao time (`TeamFrame`):** formações e táticas são
+  escritas uma vez, com `depth` 0 = próprio gol e 1 = gol adversário, e
+  `lateral` -1 = direita do time e +1 = esquerda. O `TeamFrame` espelha
+  essas tabelas para quem ataca para a esquerda, e há teste garantindo a
+  simetria exata entre os dois lados.
+- **Tempo de partida em `u32` milissegundos**, nunca em f32 acumulado.
+  `LOGICAL_DT_MS = 100` e `TRANSITION_TICKS = 30` (3 s), contados em ticks
+  lógicos.
+- **Assinatura de `plan_trajectory`:** ficou
+  `plan_trajectory(from, target, speed_m_s, t_ms)`. É uma função pura, sem
+  depender do struct do jogador. `replan` parte de `pos_at` no instante da
+  nova decisão, então não há teletransporte.
+- **Velocidade máxima:** `top_speed(pace) = 5,5 + 0,035·pace` m/s (de
+  5,5 a 9,0 m/s).
+- **Táticas da Fase 3:** `Mentality` (5 níveis, ±8,4 m no bloco),
+  `Width` e `LineHeight` (±5 m na defesa, metade no meio-campo).
+- **Bola solta (`Possession::Loose`):** os times mantêm a fase e o
+  relógio de transição continua correndo.
 
 ## FASE 4 — Tick Lógico + Action Resolver (FASE-CHAVE)
 - `LOGICAL_DT = 100 ms`.
@@ -434,14 +455,15 @@ WASM.
   - **Firefox e WebKit** rodam os mesmos testes de render **sem comparação
     de pixel**, só para garantir que não quebram. O WebKit do CI informa
     "Apple GPU", mas é máscara de privacidade: no Linux é software, e não se
-    sabe se é estável entre runs. O Firefox depende de
-    `webgl.force-enabled` (ver 0.1).
+    sabe se é estável entre runs.
+  - **Firefox no CI não tem WebGL** (ver 0.1): os testes de render são
+    pulados nele, e a cobertura do Firefox fica na validação manual.
   - Isso substitui o item 8 da Seção 0 para screenshots de render.
   - Investigar a estabilidade do WebKit é opcional e não bloqueia nada.
 - **Testes Playwright:**
   - `match-render.spec.ts`: screenshot comparado com o golden do
-    Chromium, com tolerância de 1%. Nos outros navegadores, só checa que
-    não há erro de render.
+    Chromium, com tolerância de 1%. No WebKit, só checa que não há erro de
+    render. No Firefox, é pulado no CI (ver 0.1).
   - Determinismo visual (Chromium): 3 execuções com a mesma seed geram
     screenshots idênticos.
   - Teste de contrato da `Renderer2D` com um backend de gravação (sem
