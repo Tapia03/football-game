@@ -1093,6 +1093,23 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
   instantâneo, e o caminho de posição sem `Lead` é o código antigo. Golden
   **idêntico**; **537,6M = +0,39% sobre o item 4** (três tentativas
   anteriores com a física dentro da trajetória: +5,7%, +3,8%, +2,74%).
+- **Commit 2 da física (ligada, 15 m/s² / 80 ms / 15 rad/s) — PARADO,
+  não commitado (2026-10-02):**
+  - **O jogo roda:** bola parada 9%, 870 passes por partida, posse do
+    mandante 56% (a assimetria quase some), gols 5,5–5,9, acerto 61%.
+  - **Custo: 831M = +55% sobre o item 4** (teto 562M). Perfil: o
+    replanejamento físico (`steer`) dos 22 jogadores em todo tick (1,2
+    milhão de vezes por partida, ~200–320 instruções cada) soma +245M no
+    `tick_logic`; a posição com frenagem, +32M no `capture`; mais bolas em
+    voo, +17M em interceptação/recepção.
+  - **Experimento — manter o plano enquanto a intenção não muda** (alvo a
+    < 0,5 m e mesma velocidade, e o plano termina no alvo): mantém o plano
+    em 59,5% das chamadas, o jogo segue rodando (bola parada 9–10%, 865
+    passes), mas o custo fica em **734,6M (+37%)**. Uma primeira versão,
+    que mantinha planos que paravam aquém do alvo, travava os reinícios
+    (93% de bola parada).
+  - Conclusão: com replanejamento quase todo tick, a física completa não
+    cabe em +5%. Decisão pendente com o usuário.
 - **Orçamento pontual do passo de física (aprovado 2026-10-02):** até +5%
   sobre o item 4, com a chegada (frenagem + giro parado) no mesmo commit
   da física ligada; teto de 560M instruções (parar acima de 562M). Sem
