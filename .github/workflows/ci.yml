@@ -29,6 +29,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      # Diagnostics-only tools (feature `diagnostics`) are linted too.
+      - run: cargo clippy -p fm-match --all-targets --all-features -- -D warnings
       - run: cargo clippy --workspace --all-targets --target wasm32-unknown-unknown -- -D warnings
       - run: cargo test --workspace
 

@@ -789,8 +789,37 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
     recebeu a bola, sempre que há adversário a menos de `pressure_radius`,
     e ao atingir a saída forçada. Teste: `test_redecide_on_pressure_and_receive`.
     - Decisões completas por partida (média de 30): **40.299 → 17.334**
-      (−57%). O jogo quase não muda: passes 1.631 → 1.535 (84% nos dois),
-      gols 4,5 → 4,0, chutes 21,5 → 21,9.
+      (−57%). O contador só existe com a feature `diagnostics` (fora do
+      build do jogo).
+    - **Escolha do valor (instruções, seed 2026, e comportamento):**
+      cadência 2 = 583,1M (+2,9% sobre o item 1: estoura a regra de
+      1,5%); 3 = 540,5M; 4 = 512,9M, mas quantiza o momento do passe (a
+      faixa de 1,5–2 s com a bola cai de 43% para 16% dos passes) e corta
+      ~27% dos botes. Fixado em **3**.
+    - **Jogo antes/depois da cadência 3** (180 partidas cada, média ± erro
+      padrão sobre 6 blocos de 30):
+
+      | Métrica | Sem cadência | Cadência 3 | Leitura | Real (aprox.) |
+      |---|---|---|---|---|
+      | Gols | 4,60 ± 0,22 | 4,23 ± 0,12 | −8%, dentro do ruído | 2,7 |
+      | Chutes (no alvo) | 23,3 (8,2) | 21,7 (7,7) | −7%, ~1,4 EP | 25 (9) |
+      | Passes | 1.647 ± 12 | 1.541 ± 7 | **−6%, real** | ~900 |
+      | Acerto de passe | 84,0% | 83,5% | igual | ~80% |
+      | Posse (mandante) | 52,5% | 50,8% | igual | — |
+      | Posse contínua (tempo com a bola) | 19,9 s | 21,2 s | **+6,5%, real** | não verificado |
+      | xG por chute | 0,37 | 0,37 | igual | ~0,10 |
+      | xG por partida | 8,3 | 7,7 | −6,5%, ~1,1 EP | ~2,7 |
+      | Botes / faltas | 22,3 / 7,3 | 19,7 / 6,5 | −12% / −11%, ~2 EP | ~70 / 22 |
+
+      A cadência deixa a posse ~1,3 s mais longa por sequência: menos
+      passes e menos disputas. Nada se afasta do real; a distância até o
+      real (passes 1,7×, gols 1,6×, xG 3×, xG por chute 3,7×) é do
+      modelo e é tema de (c2) e dos itens 5–7, não da cadência.
+    - **Hipótese testada e descartada:** a queda de gols viria do portador
+      perder a "janela de chute" entre avaliações. Uma exceção
+      experimental (reavaliar todo tick dentro do raio de chute) recuperou
+      só ~0,2 gol (4,04 → 4,22 em 60 partidas), dentro do ruído. Não
+      adotada.
     - A cadência é parte do tick lógico, igual em Full, Reduced e Abstract:
       a paridade entre LODs se mantém. Ela muda o comportamento, então o
       golden é **regenerado** (esperado em (c1)).
@@ -801,9 +830,10 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
     consultas, e só as 11 do próprio time, 22: ambas **acima** das ~14 que
     substituiriam. Reabrir se o número de consultas por decisão crescer
     (itens 5 e 6).
-  - **Custo final do item 2 (instruções, seed 2026):** 539,5M, **−4,8%**
-    sobre o item 1 (566,6M) e −0,7% sobre o estado anterior a (c1)
-    (543,4M).
+  - **Custo final do item 2 (instruções, seed 2026):** 540,5M, **−4,6%**
+    sobre o item 1 (566,6M) e −0,5% sobre o estado anterior a (c1)
+    (543,4M). O CI mediu o mesmo número que a máquina local (539.461.992
+    no commit `5b362ed`): a contagem não depende do runner.
 - **Impedimento — só a linha, sem apito `[ALTERADO v2.1]`:**
   - a linha é dado do `TickFrame`: o penúltimo defensor (o goleiro conta),
     calculado uma vez por tick a partir das posições;
@@ -884,7 +914,7 @@ trabalho, passou com 43,7 ms num runner rápido.
   1,5% sobre o anterior, PARAR e trazer o perfil.
 - **Histórico (instruções, seed 2026):** antes de (c1) 543,4M; item 1
   566,6M (+4,3%, aceito antes desta regra existir); item 2 com cadência
-  539,5M (−4,8%).
+  540,5M (−4,6%).
 
 **`TuningParams` `[ALTERADO v2.1]`:** todas as constantes de calibração do
 motor (âncoras, decisão, duelo, falta e cartões, chute, passe, domínio,

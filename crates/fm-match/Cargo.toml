@@ -5,6 +5,11 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[features]
+# Engine counters for diagnostics tools only (e.g. carrier decisions per
+# match); never on in the game build.
+diagnostics = []
+
 [dependencies]
 fm-core.workspace = true
 fm-entities.workspace = true
@@ -23,6 +28,10 @@ harness = false
 [[bench]]
 name = "instructions"
 harness = false
+
+[[example]]
+name = "calibrate"
+required-features = ["diagnostics"]
 
 [lints]
 workspace = true

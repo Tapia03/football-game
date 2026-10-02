@@ -110,6 +110,7 @@ pub struct TeamState {
     pub tackles: u16,
     /// Full option evaluations by this team's carriers (decision cadence
     /// diagnostics; not used by the engine).
+    #[cfg(feature = "diagnostics")]
     pub decisions: u32,
 }
 

@@ -13,7 +13,7 @@ de arquitetura e regras é o [`docs/SPEC.md`](SPEC.md); este arquivo só diz
 - (c) Chutes + passes — dividido em **(c1)** (modelo de criação de
   jogadas, escopo B) e **(c2)** (calibração).
   - (c1) item 1 (xG, cobertura, domínio): feito, 566,6M instruções.
-  - (c1) item 2 (xT + moeda comum + cadência de decisão): feito, 539,5M.
+  - (c1) item 2 (xT + moeda comum + cadência de decisão): feito, 540,5M.
   - Próximo: item 3 (linha de impedimento).
 - (d) Comportamentos por papel — não iniciado.
 
@@ -45,7 +45,7 @@ Ver SPEC, Seção 0 e decisões das Fases 3–5. Os que mais pesam no dia a dia:
 
 ## Decisões pendentes
 - **Critério de saída de (c):** ≤ 45 ms, medido em instruções pela régua
-  (≤ ~593M). Hoje: 539,5M ≈ 41 ms.
+  (≤ ~593M). Hoje: 540,5M ≈ 41 ms.
 - **xT:** conferir a cópia contra `karun.in/blog/data/open_xt_12x8_v1.json`.
 
 ## Marcos

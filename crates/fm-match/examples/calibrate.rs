@@ -8,7 +8,8 @@
     clippy::cast_sign_loss,
     clippy::too_many_lines,
     clippy::items_after_statements,
-    clippy::format_collect
+    clippy::format_collect,
+    clippy::many_single_char_names
 )]
 use fm_match::demo::demo_match;
 use fm_match::{EventKind, LodLevel, MatchEngine, TuningParams};
@@ -58,11 +59,19 @@ fn main() {
         (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
     let mut dead = 0.0;
     let mut decisions = 0.0;
+    // Possession: held ticks per side, possession spells, and xG per shot.
+    let (mut held_home, mut held_all, mut spells) = (0u64, 0u64, 0u64);
+    let (mut xg_sum, mut xg_shots) = (0.0f64, 0u64);
     let (mut rel_pass, mut rel_shot) = ([0u64; 6], [0u64; 6]);
     // How pass flights end: receiver, other teammate, opponent, out of play,
     // knocked loose (miscontrol / deflection).
     let mut pass_end = [0u64; 5];
-    for seed in 0..u64::from(n) {
+    // FM_SEEDS_FROM shifts the seed set (to measure sampling noise).
+    let first: u64 = std::env::var("FM_SEEDS_FROM")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    for seed in first..first + u64::from(n) {
         let (db, mut setup) = demo_match(seed);
         setup.tuning = tuning;
         let mut e = MatchEngine::new(&setup, &db);
@@ -71,6 +80,8 @@ fn main() {
         let mut prev_ht = 0u32;
         let mut prev_held = false;
         let mut open_pass: Option<(u8, fm_match::Side)> = None;
+        let mut last_side: Option<fm_match::Side> = None;
+        let mut prev_frame = fm_match::TickFrame::capture(e.state());
         while !e.is_finished() {
             e.tick_logic();
             ticks += 1;
@@ -84,7 +95,24 @@ fn main() {
                             .unwrap_or(5);
                         match intent {
                             fm_match::state::FlightIntent::Pass { .. } => rel_pass[b] += 1,
-                            fm_match::state::FlightIntent::Shot { .. } => rel_shot[b] += 1,
+                            fm_match::state::FlightIntent::Shot { shooter, .. } => {
+                                rel_shot[b] += 1;
+                                // Unblocked xG of the shot, as the resolver
+                                // computes it, from where it was struck.
+                                let p = &s.players[shooter as usize];
+                                let end = s.attacking(p.side);
+                                let pos = prev_frame.pos(shooter as usize);
+                                let skill = fm_match::xg::shot_skill(
+                                    &p.attrs,
+                                    pos.distance(end.goal_centre()),
+                                    s.tuning.decision.long_shot_dist,
+                                );
+                                xg_sum += f64::from(
+                                    fm_match::xg::xg(pos, end, &s.tuning.xg)
+                                        * fm_match::xg::finisher(skill, &s.tuning.xg),
+                                );
+                                xg_shots += 1;
+                            }
                             fm_match::state::FlightIntent::Loose => {}
                         }
                     }
@@ -122,6 +150,18 @@ fn main() {
                         open_pass = Some((receiver, s.players[receiver as usize].side));
                     }
                 }
+                if let fm_match::state::BallState::Held { holder } = s.ball {
+                    let side = s.players[holder as usize].side;
+                    held_all += 1;
+                    if side == fm_match::Side::Home {
+                        held_home += 1;
+                    }
+                    if last_side != Some(side) {
+                        spells += 1;
+                        last_side = Some(side);
+                    }
+                }
+                prev_frame = fm_match::TickFrame::capture(s);
                 prev_held = matches!(s.ball, fm_match::state::BallState::Held { .. });
                 prev_ht = s.holder_ticks;
             }
@@ -178,6 +218,13 @@ fn main() {
         100.0 * pass_end[4] as f64 / pe as f64
     );
     println!("  carrier decisions per match: {:.0}", decisions / n);
+    println!(
+        "  possession home {:.1}% | spell {:.1} s held | xG/shot {:.3} | xG/match {:.2}",
+        100.0 * held_home as f64 / held_all.max(1) as f64,
+        held_all as f64 / spells.max(1) as f64 / 10.0,
+        xg_sum / xg_shots.max(1) as f64,
+        xg_sum / n
+    );
     println!(
         "  release ticks [<5 <10 <15 <20 <55 55+] pass:{} shot:{}",
         fmt(&rel_pass),

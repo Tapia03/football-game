@@ -145,6 +145,7 @@ impl MatchEngine {
             passes: 0,
             passes_completed: 0,
             tackles: 0,
+            #[cfg(feature = "diagnostics")]
             decisions: 0,
         };
         let mut state = MatchState {
@@ -497,7 +498,10 @@ fn on_ball(
             // Decision cadence: between decisions the carrier keeps doing
             // what it last chose (hold or dribble on to the same target).
             let action = if DecisionSystem::redecides(s, frame, h) {
-                s.team_mut(holder_side).decisions += 1;
+                #[cfg(feature = "diagnostics")]
+                {
+                    s.team_mut(holder_side).decisions += 1;
+                }
                 DecisionSystem::choose_action(s, frame, h)
             } else {
                 s.carrier_plan
