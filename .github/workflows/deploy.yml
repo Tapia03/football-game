@@ -33,6 +33,17 @@ jobs:
         id: secrets
         run: |
           if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            # Header values cannot contain whitespace: a token pasted with an
+            # embedded line break makes wrangler fail with an opaque
+            # "Headers.append: invalid header value". Fail early, never print it.
+            if printf '%s' "$CLOUDFLARE_API_TOKEN" | grep -q '[[:space:]]'; then
+              echo "::error::CLOUDFLARE_API_TOKEN contains whitespace/line breaks; re-paste it as a single line."
+              exit 1
+            fi
+            if printf '%s' "$CLOUDFLARE_ACCOUNT_ID" | grep -q '[[:space:]]'; then
+              echo "::error::CLOUDFLARE_ACCOUNT_ID contains whitespace/line breaks; re-paste it as a single line."
+              exit 1
+            fi
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
             echo "ready=false" >> "$GITHUB_OUTPUT"
@@ -62,6 +73,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: '4.147.0'
           command: >-
             pages deploy dist
             --project-name=${{ env.PAGES_PROJECT }}
