@@ -7,7 +7,8 @@
 use fm_core::{pitch, GoalEnd, Vec2};
 
 use crate::formation::Role;
-use crate::state::{MatchState, PLAYERS};
+use crate::phase::Side;
+use crate::state::{MatchPlayer, MatchState, PLAYERS};
 use crate::tick_frame::TickFrame;
 use crate::value;
 
@@ -15,6 +16,11 @@ use crate::value;
 pub enum Action {
     Pass {
         to: u8,
+    },
+    /// Pass into the space in front of a running team-mate.
+    ThroughPass {
+        to: u8,
+        target: Vec2,
     },
     Shoot,
     /// Kick it long and away: the carrier has nothing better (forced release
@@ -32,6 +38,58 @@ pub enum Action {
 }
 
 pub struct DecisionSystem;
+
+/// Passing skill in `[0, 1]` (keepers: distribution).
+fn passer_skill(p: &MatchPlayer) -> f32 {
+    if p.role == Role::Goalkeeper {
+        f32::from(p.attrs.goalkeeping.distribution) / 100.0
+    } else {
+        (0.5 * f32::from(p.attrs.technical.passing)
+            + 0.25 * f32::from(p.attrs.technical.technique)
+            + 0.25 * f32::from(p.attrs.mental.vision))
+            / 100.0
+    }
+}
+
+/// First touch in `[0, 1]`.
+fn first_touch(r: &MatchPlayer) -> f32 {
+    (0.6 * f32::from(r.attrs.technical.first_touch) + 0.4 * f32::from(r.attrs.technical.technique))
+        / 100.0
+}
+
+/// Chance a ball played from `from` to `target` survives every opponent of
+/// `side` along its lane (reach-in-time model, spec Fase 5 (c1) item 2).
+/// Passes longer than `lofted_dist` are played in the air (as the resolver
+/// does): only opponents near the kick or the landing zone can cut them.
+fn lane_survival(
+    state: &MatchState,
+    frame: &TickFrame,
+    side: Side,
+    from: Vec2,
+    target: Vec2,
+) -> f32 {
+    let v = &state.tuning.value;
+    let d = from.distance(target);
+    let dir = (target - from) / d.max(1e-3);
+    let lofted = v.lofted_lane && d > state.tuning.pass.lofted_dist;
+    let mut survive = 1.0;
+    for (j, o) in state.players.iter().enumerate() {
+        if o.side == side || !o.active() {
+            continue;
+        }
+        let rel = frame.pos(j) - from;
+        let along = rel.dot(dir).clamp(0.0, d);
+        if lofted && along > v.lofted_takeoff && along < d - v.lofted_landing {
+            continue;
+        }
+        let reach = v.body_reach + o.top_speed * (along / v.pass_speed - v.react_s).max(0.0);
+        let off2 = (rel - dir * along).length_squared();
+        if off2 < reach * reach {
+            survive *= 1.0 - v.pass_intercept_max * (1.0 - fm_core::math::sqrt(off2) / reach);
+        }
+    }
+    survive
+}
 
 impl DecisionSystem {
     /// What the carrier `me` does this tick. Call only for the ball holder.
@@ -94,6 +152,11 @@ impl DecisionSystem {
             }
         }
         let (best_pass_ev, best_to) = Self::best_pass(state, frame, me, best_ev);
+        let (through_ev, through) = if state.tuning.value.through_balls {
+            Self::best_through(state, frame, me, best_ev)
+        } else {
+            (f32::MIN, None)
+        };
         #[cfg(debug_assertions)]
         {
             // The pruned search must agree with the full one whenever its
@@ -112,6 +175,12 @@ impl DecisionSystem {
             if best_pass_ev > best_ev {
                 best = Action::Pass { to };
                 best_ev = best_pass_ev;
+            }
+        }
+        if let Some((to, target)) = through {
+            if through_ev > best_ev {
+                best = Action::ThroughPass { to, target };
+                best_ev = through_ev;
             }
         }
         if !is_keeper {
@@ -193,8 +262,11 @@ impl DecisionSystem {
         let target = frame.pos(to);
         let d = from.distance(target);
         let dir = (target - from) / d.max(1e-3);
+        let lofted = v.lofted_lane && d > state.tuning.pass.lofted_dist;
         let pressure_r2 = dt.pressure_radius * dt.pressure_radius;
-        // Probability the pass survives every opponent along its lane.
+        // Probability the pass survives every opponent along its lane (one
+        // fused loop with the receiver-pressure check; same model as
+        // `lane_survival`).
         let mut survive = 1.0;
         let mut receiver_pressed = false;
         for (j, o) in state.players.iter().enumerate() {
@@ -205,6 +277,9 @@ impl DecisionSystem {
             receiver_pressed |= (oj - target).length_squared() < pressure_r2;
             let rel = oj - from;
             let along = rel.dot(dir).clamp(0.0, d);
+            if lofted && along > v.lofted_takeoff && along < d - v.lofted_landing {
+                continue;
+            }
             let reach = v.body_reach + o.top_speed * (along / v.pass_speed - v.react_s).max(0.0);
             // Squared distances first: the square root only for the few
             // opponents actually within reach of the lane.
@@ -213,18 +288,9 @@ impl DecisionSystem {
                 survive *= 1.0 - v.pass_intercept_max * (1.0 - fm_core::math::sqrt(off2) / reach);
             }
         }
-        let skill = if p.role == Role::Goalkeeper {
-            f32::from(p.attrs.goalkeeping.distribution) / 100.0
-        } else {
-            (0.5 * f32::from(p.attrs.technical.passing)
-                + 0.25 * f32::from(p.attrs.technical.technique)
-                + 0.25 * f32::from(p.attrs.mental.vision))
-                / 100.0
-        };
-        let accuracy = (1.0 - d * v.pass_error_per_m * (1.5 - skill)).max(v.pass_accuracy_min);
-        let touch = (0.6 * f32::from(r.attrs.technical.first_touch)
-            + 0.4 * f32::from(r.attrs.technical.technique))
-            / 100.0;
+        let accuracy =
+            (1.0 - d * v.pass_error_per_m * (1.5 - passer_skill(p))).max(v.pass_accuracy_min);
+        let touch = first_touch(r);
         let control = (ct.base + ct.touch * touch
             - if d > state.tuning.pass.lofted_dist {
                 ct.high_ball_penalty
@@ -238,6 +304,68 @@ impl DecisionSystem {
             })
         .clamp(ct.range.0, ct.range.1);
         survive * accuracy * control
+    }
+
+    /// Best through ball: into the space beyond the line in front of a
+    /// running team-mate (spec Fase 5 (c1), item 5). Success = lane
+    /// survival × accuracy × winning the race to the ball × first touch on
+    /// the run; valued in the common currency at the target. Targets whose
+    /// threat cannot beat `floor` are skipped (same rule as `best_pass`).
+    fn best_through(
+        state: &MatchState,
+        frame: &TickFrame,
+        me: usize,
+        floor: f32,
+    ) -> (f32, Option<(u8, Vec2)>) {
+        let k = &state.tuning.decision;
+        let v = &state.tuning.value;
+        let ct = &state.tuning.control;
+        let p = &state.players[me];
+        let end = state.attacking(p.side);
+        let dir = end.direction();
+        let from = frame.pos(me);
+        let grid = &v.xt;
+        let mut best = (f32::MIN, None);
+        for (i, r) in state.players.iter().enumerate() {
+            if i == me || r.side != p.side || !r.active() || r.run_until <= state.tick {
+                continue;
+            }
+            let target = Vec2::new(
+                (r.run_target.x + dir * state.tuning.pass.through_lead)
+                    .clamp(1.0, pitch::LENGTH - 1.0),
+                r.run_target.y,
+            );
+            let d = from.distance(target);
+            if !(k.pass_min_dist..=k.pass_max_dist).contains(&d) {
+                continue;
+            }
+            let gain = value::xt(grid, target, end);
+            if gain <= floor || gain <= best.0 {
+                continue;
+            }
+            // Race: the runner against the quickest opponent (keeper too).
+            let t_runner = frame.pos(i).distance(target) / r.top_speed.max(0.1);
+            let t_opponent = state
+                .players
+                .iter()
+                .enumerate()
+                .filter(|(_, o)| o.side != p.side && o.active())
+                .map(|(j, o)| frame.pos(j).distance(target) / o.top_speed.max(0.1))
+                .fold(f32::MAX, f32::min)
+                + v.react_s;
+            let race = (0.5 + (t_opponent - t_runner) / v.race_scale_s).clamp(0.0, 1.0);
+            let accuracy =
+                (1.0 - d * v.pass_error_per_m * (1.5 - passer_skill(p))).max(v.pass_accuracy_min);
+            let control = (ct.base + ct.touch * first_touch(r) - v.through_control_penalty)
+                .clamp(ct.range.0, ct.range.1);
+            let success =
+                lane_survival(state, frame, p.side, from, target) * accuracy * race * control;
+            let ev = success * gain - (1.0 - success) * value::xt(grid, target, end.opposite());
+            if ev > best.0 {
+                best = (ev, u8::try_from(i).ok().map(|to| (to, target)));
+            }
+        }
+        best
     }
 
     /// Best pass target and its expected value: success × xT at the
@@ -492,6 +620,8 @@ impl DecisionSystem {
 #[cfg(test)]
 mod tests {
     use super::{Action, DecisionSystem};
+    use crate::formation::Role;
+    use crate::state::MatchState;
     use crate::test_support::placed_state;
     use crate::tick_frame::TickFrame;
     use fm_core::{GoalEnd, Vec2};
@@ -538,6 +668,60 @@ mod tests {
             !redecides(2, Some(Vec2::new(me.x + 6.0, me.y))),
             "far opponent"
         );
+    }
+
+    /// Home carrier (5) at x=55 on the ball; home striker running along an
+    /// away back line at x=80 (keeper at 104), level with it at x=79.
+    fn through_scene(extra: &[(usize, Vec2)]) -> (MatchState, usize) {
+        let probe = placed_state(&[], 5);
+        let st = (0..11)
+            .find(|&i| probe.players[i].role == Role::Striker)
+            .expect("a striker");
+        let mut placed = vec![
+            (5, Vec2::new(55.0, 34.0)),
+            (st, Vec2::new(79.0, 34.0)),
+            (11, Vec2::new(104.0, 34.0)),
+        ];
+        placed.extend((12..16).map(|j| {
+            let k = f32::from(u8::try_from(j - 12).unwrap());
+            (j, Vec2::new(80.0, 14.0 + 13.0 * k))
+        }));
+        placed.extend_from_slice(extra);
+        let mut s = placed_state(&placed, 5);
+        s.tuning.value.through_balls = true;
+        s.tuning.value.lofted_lane = true;
+        s.holder_ticks = 7;
+        let p = &mut s.players[st];
+        p.run_target = Vec2::new(79.5, 34.0);
+        p.run_until = s.tick + 10;
+        (s, st)
+    }
+
+    #[test]
+    fn through_ball_into_space_for_a_runner() {
+        let (s, st) = through_scene(&[]);
+        let f = TickFrame::capture(&s);
+        match DecisionSystem::choose_action(&s, &f, 5) {
+            Action::ThroughPass { to, target } => {
+                assert_eq!(usize::from(to), st);
+                assert!(
+                    target.x > 80.0,
+                    "into the space beyond the line: {target:?}"
+                );
+            }
+            other => panic!("expected a through ball, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn no_through_ball_when_a_defender_covers_the_space() {
+        // A covering defender deep behind the line wins the race.
+        let (s, _) = through_scene(&[(16, Vec2::new(88.0, 34.0))]);
+        let f = TickFrame::capture(&s);
+        assert!(!matches!(
+            DecisionSystem::choose_action(&s, &f, 5),
+            Action::ThroughPass { .. }
+        ));
     }
 
     #[test]

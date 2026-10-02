@@ -54,6 +54,10 @@ pub struct PassTuning {
     /// Clearance length (m, ±20%) and max angular spread (rad).
     pub clear_dist: f32,
     pub clear_angle: f32,
+    /// Through ball: aimed this far beyond the runner's onside point (m),
+    /// rolling into space at this speed when it gets there (m/s).
+    pub through_lead: f32,
+    pub through_arrival_speed: f32,
 }
 
 /// Shot execution and goalkeeping.
@@ -263,6 +267,10 @@ pub struct ValueTuning {
     pub pass_speed: f32,
     pub react_s: f32,
     pub body_reach: f32,
+    /// A lofted pass can only be cut within this distance of the kick, or
+    /// of where it lands (m).
+    pub lofted_takeoff: f32,
+    pub lofted_landing: f32,
     /// Pass accuracy: `1 − d · error_per_m · (1.5 − skill)`, floored.
     pub pass_error_per_m: f32,
     pub pass_accuracy_min: f32,
@@ -271,6 +279,15 @@ pub struct ValueTuning {
     pub dribble_keep_open: f32,
     pub dribble_keep_cramped_base: f32,
     pub dribble_keep_cramped_skill: f32,
+    /// Item 5 of (c1) is paused (spec): through balls and the lofted-pass
+    /// lane model are implemented but off until the user decides.
+    pub through_balls: bool,
+    pub lofted_lane: bool,
+    /// Through ball race: the runner wins if it gets there first; the
+    /// chance moves 0 → 1 over this many seconds of margin (centred on 0).
+    pub race_scale_s: f32,
+    /// First touch on a ball met on the run is this much harder.
+    pub through_control_penalty: f32,
     /// Keeping the ball when holding it under pressure.
     pub hold_keep_pressed: f32,
     /// Share of the current threat a static possession loses per tick on
@@ -295,6 +312,8 @@ impl Default for ValueTuning {
             pass_speed: 14.0,
             react_s: 0.25,
             body_reach: 0.8,
+            lofted_takeoff: 2.0,
+            lofted_landing: 5.0,
             // Average passer: ~88% on target at 30 m; elite ~94%.
             pass_error_per_m: 0.004,
             pass_accuracy_min: 0.5,
@@ -302,6 +321,10 @@ impl Default for ValueTuning {
             // An average dribbler keeps it ~65% of the time into a marker.
             dribble_keep_cramped_base: 0.45,
             dribble_keep_cramped_skill: 0.4,
+            through_balls: false,
+            lofted_lane: false,
+            race_scale_s: 1.5,
+            through_control_penalty: 0.05,
             hold_keep_pressed: 0.85,
             // Worth nothing after ~3.3 s of waiting.
             hold_erosion: 0.03,
@@ -410,6 +433,9 @@ impl Default for PassTuning {
             // A hoofed clearance: ~45 m, up to ~0.5 rad off straight.
             clear_dist: 45.0,
             clear_angle: 0.5,
+            // Into the space behind the line, dying for the runner.
+            through_lead: 8.0,
+            through_arrival_speed: 0.5,
         }
     }
 }

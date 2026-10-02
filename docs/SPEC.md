@@ -909,6 +909,38 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
   - Testes: corre até a linha e nunca além; mira o vão aberto; não corre
     sem posse nem sem espaço; só atacantes e pontas.
   - Golden de paridade regenerado (comportamento novo).
+- **(c1) item 5 — passe em profundidade: implementado, DESLIGADO, item
+  pausado (2026-10-02).**
+  - Código: `Action::ThroughPass { to, target }`; alvo = `run_target` do
+    corredor + 8 m além da linha, no corredor dele; sucesso = sobrevivência
+    na linha de passe × precisão × corrida até a bola (corredor contra o
+    adversário mais rápido, inclusive o goleiro) × domínio em movimento;
+    valor na moeda comum. Execução: `resolve_pass_to` (o passe normal virou
+    um caso dele, bit a bit igual), bola chega a 0,5 m/s ao ponto.
+  - Chaves no `ValueTuning`, **ambas `false`**: `through_balls` e
+    `lofted_lane`. Desligado, o jogo e o golden são os do item 4
+    (535,9M, +0,05%). Os testes ligam as chaves.
+  - **Por que pausado (medido, 30–60 partidas):**
+    1. Ligado como desenhado: **0,2 passe em profundidade por partida**
+       (real: ~5–15) e **+3,12% de instruções**, só para procurar.
+       Diagnóstico: a sobrevivência estimada na linha de passe tem mediana
+       **0,04**, porque esses passes são longos (mediana 42 m) e o modelo
+       de alcance trata todo passe como rasteiro a ~14 m/s.
+    2. **Inconsistência encontrada (afeta também o item 2):** acima de
+       28 m o resolver joga **pelo alto**, mas a estimativa de sucesso não
+       sabe disso; passes longos normais também são subestimados. Correção
+       (`lofted_lane`): no passe pelo alto só contam adversários a até 2 m
+       da saída ou 5 m da queda.
+    3. Com a correção: **134 passes em profundidade por partida**, gols
+       6,2–7,8, acerto de passe 65%, **+5,1% de instruções**. O modelo é
+       sensível demais às estimativas de sucesso (corrida até a bola com
+       posições paradas, sem a inércia de quem já corre nem o giro do
+       defensor).
+    4. Testados sem efeito suficiente: só avaliar corredores a ≤ 3 m do
+       ponto legal (E1: 0,1 por partida) e +0,5 s de giro para defensores
+       de linha (E1+E2: 0,4–0,5 por partida).
+  - Decisão pendente com o usuário: como estimar a corrida até a bola e o
+    passe pelo alto antes de religar, e o orçamento do item.
 - **Impedimento — só a linha, sem apito `[ALTERADO v2.1]`:**
   - a linha é dado do `TickFrame`: o penúltimo defensor (o goleiro conta),
     calculado uma vez por tick a partir das posições;

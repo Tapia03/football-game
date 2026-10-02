@@ -59,6 +59,7 @@ fn main() {
         (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
     let mut dead = 0.0;
     let mut decisions = 0.0;
+    let mut throughs = 0.0;
     // Possession: held ticks per side, possession spells, and xG per shot.
     let (mut held_home, mut held_all, mut spells) = (0u64, 0u64, 0u64);
     let (mut xg_sum, mut xg_shots) = (0.0f64, 0u64);
@@ -214,6 +215,7 @@ fn main() {
         ok += f64::from(s.teams[0].passes_completed + s.teams[1].passes_completed);
         tackles += f64::from(s.teams[0].tackles + s.teams[1].tackles);
         decisions += f64::from(s.teams[0].decisions + s.teams[1].decisions);
+        throughs += f64::from(s.teams[0].through_passes + s.teams[1].through_passes);
     }
     let n = f64::from(n);
     println!(
@@ -242,7 +244,11 @@ fn main() {
         100.0 * pass_end[3] as f64 / pe as f64,
         100.0 * pass_end[4] as f64 / pe as f64
     );
-    println!("  carrier decisions per match: {:.0}", decisions / n);
+    println!(
+        "  carrier decisions per match: {:.0} | through balls {:.1}",
+        decisions / n,
+        throughs / n
+    );
     println!(
         "  runs/match {:.0} | ticks with a runner {:.1}% | runner-ticks past the line {:.1}%",
         runs_started as f64 / n,

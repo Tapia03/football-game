@@ -118,6 +118,9 @@ pub struct TeamState {
     /// diagnostics; not used by the engine).
     #[cfg(feature = "diagnostics")]
     pub decisions: u32,
+    /// Through balls played (diagnostics only).
+    #[cfg(feature = "diagnostics")]
+    pub through_passes: u32,
 }
 
 /// Everything `tick_logic` reads and writes.

@@ -150,6 +150,8 @@ impl MatchEngine {
             tackles: 0,
             #[cfg(feature = "diagnostics")]
             decisions: 0,
+            #[cfg(feature = "diagnostics")]
+            through_passes: 0,
         };
         let mut state = MatchState {
             match_seed: setup.match_seed,
@@ -529,7 +531,11 @@ fn on_ball(
                     targets[h] = here;
                     urgency[h] = s.tuning.decision.hold_urgency;
                 }
-                Action::Pass { .. } | Action::Shoot | Action::Clear | Action::Tackle { .. } => {}
+                Action::Pass { .. }
+                | Action::ThroughPass { .. }
+                | Action::Shoot
+                | Action::Clear
+                | Action::Tackle { .. } => {}
             }
             // Defending the carrier (if they still have it): the nearest
             // defender contains goal-side at the zone's distance, the second

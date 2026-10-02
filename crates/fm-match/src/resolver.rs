@@ -50,6 +50,15 @@ impl ActionResolver {
     pub fn resolve(state: &mut MatchState, frame: &TickFrame, actor: usize, action: Action) {
         match action {
             Action::Pass { to } => Self::resolve_pass(state, frame, actor, usize::from(to)),
+            Action::ThroughPass { to, target } => {
+                #[cfg(feature = "diagnostics")]
+                {
+                    let side = state.players[actor].side;
+                    state.team_mut(side).through_passes += 1;
+                }
+                let arrive = state.tuning.pass.through_arrival_speed;
+                Self::resolve_pass_to(state, frame, actor, usize::from(to), target, arrive);
+            }
             Action::Shoot => Self::resolve_shot(state, frame, actor, false),
             Action::Clear => Self::resolve_clear(state, frame, actor),
             Action::Tackle { on } => Self::resolve_tackle(state, frame, actor, usize::from(on)),
@@ -95,11 +104,24 @@ impl ActionResolver {
     /// Pass to teammate `to`. Accuracy from passing/technique/vision (keepers:
     /// distribution); error grows with pressure and distance.
     pub fn resolve_pass(state: &mut MatchState, frame: &TickFrame, actor: usize, to: usize) {
+        let arrive = state.tuning.pass.arrival_speed;
+        Self::resolve_pass_to(state, frame, actor, to, frame.pos(to), arrive);
+    }
+
+    /// Pass meant for `to`, aimed at `target` (their feet, or the space in
+    /// front of a runner), arriving at `arrive` m/s if played on the ground.
+    pub fn resolve_pass_to(
+        state: &mut MatchState,
+        frame: &TickFrame,
+        actor: usize,
+        to: usize,
+        target: Vec2,
+        arrive: f32,
+    ) {
         let mut rng = state.next_rng(actor);
         let k = state.tuning.pass;
         let p = state.players[actor];
         let from = frame.ball(state).xy();
-        let target = frame.pos(to);
         let skill = if p.role == Role::Goalkeeper {
             unit(p.attrs.goalkeeping.distribution)
         } else {
@@ -123,7 +145,7 @@ impl ActionResolver {
         } else {
             // Arrives at ~8 m/s: firm enough to beat interceptors, soft
             // enough to control (a 20 m pass takes ~1.8 s).
-            (dir * BallFlight::rolling_speed_arriving(aim_d, k.arrival_speed)).extend(0.0)
+            (dir * BallFlight::rolling_speed_arriving(aim_d, arrive)).extend(0.0)
         };
         state.team_mut(p.side).passes += 1;
         Self::kick(
@@ -619,5 +641,23 @@ mod tests {
             p_control(50, 8.0, Some(Vec2::new(51.0, 30.0)), 0.0) < base,
             "pressed"
         );
+    }
+
+    #[test]
+    fn through_ball_rolls_into_the_space_for_the_runner() {
+        use crate::decision::Action;
+        let target = Vec2::new(80.0, 34.0);
+        let mut s = placed_state(&[(5, Vec2::new(60.0, 34.0)), (9, Vec2::new(70.0, 30.0))], 5);
+        let f = TickFrame::capture(&s);
+        ActionResolver::resolve(&mut s, &f, 5, Action::ThroughPass { to: 9, target });
+        let BallState::Flight { flight, intent } = s.ball else {
+            panic!("ball should be in flight");
+        };
+        assert_eq!(intent, FlightIntent::Pass { receiver: 9 });
+        // Where the ball comes to rest: near the space aimed at (passing
+        // error included), not at the receiver's feet.
+        let rest = flight.pos_at(f.now_ms + 20_000).xy();
+        assert!(rest.distance(target) < 4.0, "rests at {rest:?}");
+        assert!(rest.distance(Vec2::new(70.0, 30.0)) > 5.0);
     }
 }
