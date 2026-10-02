@@ -10,8 +10,9 @@ de arquitetura e regras é o [`docs/SPEC.md`](SPEC.md); este arquivo só diz
 - (b) Modelo de defesa — feito. 75 botes/partida, 19,4 faltas.
 - Otimização de performance (cache de voo + trajetória compartilhada) —
   feito. **41,2 ms no CI** (meta 40, gate 50).
-- (c) Chutes + passes — **diagnóstico feito, bloqueado em decisão** (ver
-  abaixo).
+- (c) Chutes + passes — diagnóstico feito. Dividido em **(c1)** (modelo de
+  criação de jogadas, escopo B, ver SPEC) e **(c2)** (calibração).
+  (c1) espera a URL do spike (pipeline ponta a ponta) e a ordem final.
 - (d) Comportamentos por papel — não iniciado.
 
 ## PRs
@@ -39,10 +40,8 @@ Ver SPEC, Seção 0 e decisões das Fases 3–5. Os que mais pesam no dia a dia:
 - Mudança de arquitetura atualiza o SPEC no mesmo PR, antes do código.
 
 ## Decisões pendentes
-- **2026-10-02 — ordem de (c) e (d).** Só com constantes, (c) não chega às
-  metas sem usar o mecanismo errado: as chances vêm de bola solta por domínio
-  ruim. Proposta: antecipar de (d) o passe para o espaço, a corrida de
-  ruptura e o drible 1×1, e depois calibrar (c). SPEC, Fase 5, item (c).
+- **2026-10-02 — ordem dos itens de (c1):** proposta mover a tabela xT /
+  moeda comum para logo depois da base comum (ver resposta na sessão).
 - **Critério de saída de (c):** ≤ 45 ms no CI (regra 46–50 ms). Hoje: 41,2 ms.
 
 ## Previews
@@ -55,5 +54,7 @@ Ver SPEC, Seção 0 e decisões das Fases 3–5. Os que mais pesam no dia a dia:
   Fase 5 (d) ou 6.
 - **Vermelhos** 0,53/partida (real 0,15) e **pênaltis** 0,02 (real 0,3).
   Alvo: Fase 6.
-- **Tempo de bola parada** 4% (real ~35%): reinícios curtos demais. Entra na
-  calibração de (c).
+- **Tempo de bola parada** 4% (real ~35%): reinícios curtos demais. Entra em
+  (c2).
+- **Impedimento não apitado** (decisão): infla gols em profundidade. Viés
+  conhecido, não corrigir em (c2); a solução é a fase do apito.

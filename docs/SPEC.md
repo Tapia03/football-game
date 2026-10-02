@@ -677,8 +677,49 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
     marcador é só "apertada", sem duelo).
 
   Esses itens são do escopo de (d) (comportamentos por papel). Calibrar
-  (c) antes de (d) fixaria constantes que (d) vai invalidar. A decisão
-  sobre a ordem está pendente com o usuário.
+  (c) antes de (d) fixaria constantes que (d) vai invalidar.
+- **Decisão (2026-10-02): (c) vira (c1) + (c2).**
+  - **(c1) — modelo de criação de jogadas, escopo B (médio):**
+    - xG estimado no momento da decisão (distância e ângulo da boca do
+      gol). O bloqueio passa a ser a fração do gol coberta pelos corpos na
+      frente. A saída forçada não chuta mais: passa ou afasta;
+    - domínio realista desde o início (`first_touch`, velocidade e altura
+      da bola, pressão);
+    - linha de impedimento como dado do tick;
+    - estado `Run` para atacantes e pontas, respeitando a linha;
+    - passe em profundidade mirando à frente do corredor;
+    - tabela xT + moeda comum de valor para chute, passe e condução
+      (substitui as notas ad hoc);
+    - apoio sem bola: 3–4 companheiros próximos escolhem posição com linha
+      de passe aberta;
+    - drible 1×1 como duelo no `ActionResolver`;
+    - tabela (one-two).
+  - **Fora de (c1), vai para (d):** máquinas de estado completas por
+    papel, overlap, cruzamento/cabeceio, gatilhos de pressão, contra-ataque.
+  - **(c2) — calibração** contra o real, só com (c1) em pé. A meta de (c1)
+    é o modelo fazer sentido, não os números fecharem. O teto de 1.303
+    passes / 64% do modelo antigo não é referência.
+  - **Orçamento:** se qualquer passo passar de 45 ms no CI, PARAR e trazer
+    o perfil. "Quase dentro" não vale.
+  - **Paridade:** a referência bit a bit será **regenerada de propósito**
+    em (c1): a partir do domínio realista, o comportamento muda por
+    decisão. Cada regeneração entra no commit que muda o comportamento,
+    com o motivo na mensagem.
+- **Impedimento — só a linha, sem apito `[ALTERADO v2.1]`:**
+  - a linha é dado do `TickFrame`: o penúltimo defensor (o goleiro conta),
+    calculado uma vez por tick a partir das posições;
+  - corredores em `Run` não escolhem alvo além da própria linha;
+  - não se apita nada: sem tiro livre, sem evento, sem mudança em
+    reinício. O apito vira fase própria depois;
+  - **viés conhecido:** se um corredor ficar além da linha (a linha anda
+    depois que ele escolheu o alvo), o motor não flagra. Isso infla gols em
+    profundidade em relação ao real. **Não é bug a corrigir em (c2)**; a
+    correção é a fase do apito.
+- **Tabela xT:** ponto de partida é a tabela pública de Karun Singh
+  (Expected Threat, 12×8 zonas, dados da Premier League), como dado fixo
+  no `TuningParams`. **Não é derivada do motor**, porque isso seria
+  circular. Pode não transferir perfeitamente para o nosso motor: em (c2)
+  é revisada contra o motor já estruturado.
 - **Ferramentas:** `examples/decision_stats.rs` (tempo com a bola,
   comprimento de passe, distância de chute, passes por posse) e
   `examples/calibrate.rs` (estatísticas com `chave=valor` sobrescrevendo o
