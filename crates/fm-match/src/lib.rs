@@ -1,18 +1,21 @@
-//! Match engine: logical tick, analytic kinematics, decisions, action resolver, snapshots. Implemented in Phases 3-6.
-//!
-//! Phase 0 only wires the crate into the workspace so the dependency graph
-//! and CI are in place before any logic lands.
+//! Match engine. Phase 3: team-relative frame, formations, anchors, phases,
+//! analytic player kinematics and role stubs. The logical tick, action
+//! resolver and snapshots arrive in Phase 4.
 
 #![forbid(unsafe_code)]
 
-/// Crate name, used by the workspace smoke test to prove the crate links.
-pub const CRATE_NAME: &str = "fm-match";
+pub mod anchor;
+pub mod formation;
+pub mod frame;
+pub mod kinematics;
+pub mod phase;
+pub mod role;
+pub mod tactics;
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn crate_links_against_core() {
-        assert_eq!(super::CRATE_NAME, "fm-match");
-        assert!(fm_core::pi_libm() > 3.0);
-    }
-}
+pub use anchor::FormationAnchor;
+pub use formation::{Formation, Line, Role, Slot};
+pub use frame::{Rel, TeamFrame};
+pub use kinematics::{PlayerKinematics, Trajectory};
+pub use phase::{Phase, PhaseStateMachine, Possession, Side, LOGICAL_DT_MS, TRANSITION_TICKS};
+pub use role::{RoleBehavior, RoleContext, RoleIntent};
+pub use tactics::{LineHeight, Mentality, Tactics, Width};
