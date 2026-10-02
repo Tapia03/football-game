@@ -33,17 +33,25 @@ jobs:
         id: secrets
         run: |
           if [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ]; then
-            # Header values cannot contain whitespace: a token pasted with an
-            # embedded line break makes wrangler fail with an opaque
-            # "Headers.append: invalid header value". Fail early, never print it.
-            if printf '%s' "$CLOUDFLARE_API_TOKEN" | grep -q '[[:space:]]'; then
-              echo "::error::CLOUDFLARE_API_TOKEN contains whitespace/line breaks; re-paste it as a single line."
-              exit 1
-            fi
-            if printf '%s' "$CLOUDFLARE_ACCOUNT_ID" | grep -q '[[:space:]]'; then
-              echo "::error::CLOUDFLARE_ACCOUNT_ID contains whitespace/line breaks; re-paste it as a single line."
-              exit 1
-            fi
+            # Header values cannot contain inner whitespace: a token pasted with
+            # an embedded line break makes wrangler fail with an opaque
+            # "Headers.append: invalid header value". Leading/trailing
+            # whitespace is trimmed by Headers and only warned about. Never
+            # print the values.
+            for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID; do
+              value="${!name}"
+              trimmed="${value#"${value%%[![:space:]]*}"}"
+              trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+              case "$trimmed" in
+                *[[:space:]]*)
+                  echo "::error::$name contains whitespace/line breaks inside the value; re-paste it as a single line."
+                  exit 1
+                  ;;
+              esac
+              if [ "$trimmed" != "$value" ]; then
+                echo "::warning::$name has leading/trailing whitespace (tolerated, but worth re-pasting)."
+              fi
+            done
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
             echo "ready=false" >> "$GITHUB_OUTPUT"
