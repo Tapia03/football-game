@@ -1,21 +1,36 @@
-//! Match engine. Phase 3: team-relative frame, formations, anchors, phases,
-//! analytic player kinematics and role stubs. The logical tick, action
-//! resolver and snapshots arrive in Phase 4.
+//! Match engine: one logical tick (10 Hz) for every LOD, analytic player and
+//! ball motion, event-indexed RNG (spec 3.A, 3.B).
 
 #![forbid(unsafe_code)]
 
 pub mod anchor;
+pub mod ball;
+pub mod decision;
+pub mod demo;
+pub mod engine;
+pub mod events;
 pub mod formation;
 pub mod frame;
 pub mod kinematics;
+pub mod parity;
 pub mod phase;
+pub mod resolver;
 pub mod role;
+pub mod snapshot;
+pub mod state;
 pub mod tactics;
 
 pub use anchor::{AnchorTuning, FormationAnchor, PhaseShape};
+pub use ball::BallFlight;
+pub use decision::{Action, DecisionSystem};
+pub use engine::{MatchEngine, MatchSetup, TeamSheet, FULL_TICKS, HALF_TICKS};
+pub use events::{CardKind, EventKind, MatchEvent, RestartKind};
 pub use formation::{Formation, Line, Role, Slot};
 pub use frame::{Rel, TeamFrame};
 pub use kinematics::{PlayerKinematics, Trajectory};
 pub use phase::{Phase, PhaseStateMachine, Possession, Side, LOGICAL_DT_MS, TRANSITION_TICKS};
+pub use resolver::ActionResolver;
 pub use role::{RoleBehavior, RoleContext, RoleIntent};
+pub use snapshot::{LodLevel, MatchSnapshot, PlayerSnapshot};
+pub use state::MatchState;
 pub use tactics::{LineHeight, Mentality, Tactics, Width};

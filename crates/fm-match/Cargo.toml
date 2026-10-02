@@ -7,6 +7,10 @@ publish.workspace = true
 
 [dependencies]
 fm-core.workspace = true
+fm-entities.workspace = true
+
+[dev-dependencies]
+fm-test-utils = { workspace = true, features = ["alloc-counter"] }
 
 [lints]
 workspace = true

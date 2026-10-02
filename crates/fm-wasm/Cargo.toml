@@ -16,6 +16,7 @@ fm-render.workspace = true
 [dev-dependencies]
 wasm-bindgen-test.workspace = true
 fm-entities.workspace = true
+fm-match.workspace = true
 
 [lints]
 workspace = true

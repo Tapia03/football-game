@@ -486,6 +486,24 @@ WASM.
 - **Auditoria de assinaturas (critério 18):** um teste lê o fonte e
   garante que `choose_action` e `resolve` não recebem `dt` nem `LodLevel`.
 
+**Calibração base da Fase 4 (média de 60 partidas demo, `examples/match_stats`):**
+
+| Métrica por partida | Fase 4 | Real (aprox.) | Situação |
+|---|---|---|---|
+| Gols | 2,4 | 2,7 | ok |
+| Chutes (no alvo) | 11,5 (5,4) | 25 (9) | baixo |
+| Faltas | 17 | 22 | ok |
+| Amarelos / vermelhos | 2,2 / 0,32 | 4 / 0,15 | amarelo baixo, vermelho alto |
+| Pênaltis | 1,1 | 0,3 | alto |
+| Passes (acerto) | 358 (57%) | 900 (80%) | baixo |
+| Tentativas de desarme | 876 | ~70 | muito alto (só 2% viram falta) |
+| Custo nativo, release | 72 ms | — | Fase 12: 380 partidas → ~27 s em 1 thread |
+
+Causa comum: ainda não há organização defensiva (marcação, pressão
+coordenada) nem circulação de bola. Isso é exatamente a Fase 5, que deve
+recalibrar contra a coluna "Real". As constantes estão em `AnchorTuning`,
+`decision.rs` e `resolver.rs`, cada uma com uma linha de racional.
+
 ## FASE 5 — Role Behaviors
 - State machines completas por posição e `DecisionSystem::choose_action`.
 - **Testes:**

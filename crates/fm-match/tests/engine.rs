@@ -1,0 +1,145 @@
+//! Phase 4 exit criteria (spec Fase 4): cross-LOD consistency and
+//! determinism across runs. Parity native↔WASM lives in `parity.rs` and
+//! `fm-wasm/tests/web.rs`.
+
+use fm_match::demo::demo_match;
+use fm_match::{EventKind, LodLevel, MatchEngine, MatchSnapshot};
+
+fn play(seed: u64, lod: LodLevel) -> (MatchEngine, usize) {
+    let (db, setup) = demo_match(seed);
+    let mut engine = MatchEngine::new(&setup, &db);
+    let mut snapshots = 0;
+    engine.run(lod, |_| snapshots += 1);
+    (engine, snapshots)
+}
+
+/// BLOCKING (spec Fase 4.5): same seed ⇒ identical score, scorers, cards
+/// and shots in Full, Reduced and Abstract — and, stronger, an identical
+/// final match state, bit for bit.
+#[test]
+fn test_cross_lod_consistency() {
+    for seed in [1_u64, 7, 42] {
+        let (full, n_full) = play(seed, LodLevel::Full);
+        let (reduced, n_reduced) = play(seed, LodLevel::Reduced);
+        let (abstract_, n_abstract) = play(seed, LodLevel::Abstract);
+
+        // LOD really changes the sampling rate…
+        assert_eq!(n_full, 6 * n_reduced, "Full samples 60 Hz, Reduced 10 Hz");
+        assert_eq!(n_abstract, 0);
+        assert!(n_reduced > 50_000);
+
+        // …and nothing else.
+        assert_eq!(
+            full.events(),
+            reduced.events(),
+            "seed {seed}: Full vs Reduced"
+        );
+        assert_eq!(
+            full.events(),
+            abstract_.events(),
+            "seed {seed}: Full vs Abstract"
+        );
+        assert_eq!(full.state(), reduced.state(), "seed {seed}: final state");
+        assert_eq!(full.state(), abstract_.state(), "seed {seed}: final state");
+
+        // Spell out the spec's list explicitly too.
+        let pick = |e: &MatchEngine| {
+            e.events()
+                .iter()
+                .filter(|ev| {
+                    matches!(
+                        ev.kind,
+                        EventKind::Goal { .. } | EventKind::Card { .. } | EventKind::Shot { .. }
+                    )
+                })
+                .copied()
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(pick(&full), pick(&abstract_));
+        assert!(full.is_finished() && abstract_.is_finished());
+    }
+}
+
+/// Spec Fase 4.6: same seed ⇒ same positions at logical tick 500.
+#[test]
+fn test_determinism_across_runs() {
+    let at_tick = |seed| -> MatchSnapshot {
+        let (db, setup) = demo_match(seed);
+        let mut e = MatchEngine::new(&setup, &db);
+        for _ in 0..500 {
+            e.tick_logic();
+        }
+        assert_eq!(e.state().tick, 500);
+        e.sample(LodLevel::Reduced, e.state().now_ms())
+            .expect("snapshot")
+    };
+    let bits = |s: &MatchSnapshot| -> Vec<u32> {
+        s.players
+            .iter()
+            .flat_map(|p| [p.pos.x.to_bits(), p.pos.y.to_bits()])
+            .chain([s.ball.x.to_bits(), s.ball.y.to_bits(), s.ball.z.to_bits()])
+            .collect()
+    };
+    for seed in [3_u64, 99] {
+        let a = at_tick(seed);
+        let b = at_tick(seed);
+        assert_eq!(bits(&a), bits(&b), "seed {seed}");
+        assert_eq!(a, b);
+    }
+    // A different seed must actually produce a different match.
+    assert_ne!(bits(&at_tick(3)), bits(&at_tick(4)));
+}
+
+/// Sampling is read-only: interleaving samples at arbitrary times does not
+/// change the match.
+#[test]
+fn sampling_has_no_side_effects() {
+    let (db, setup) = demo_match(11);
+    let mut quiet = MatchEngine::new(&setup, &db);
+    let mut noisy = MatchEngine::new(&setup, &db);
+    for _ in 0..3_000 {
+        quiet.tick_logic();
+        noisy.tick_logic();
+        let now = noisy.state().now_ms();
+        for off in [99, 0, 50, 13, 77] {
+            let _ = noisy.sample(LodLevel::Full, now + off);
+        }
+    }
+    assert_eq!(quiet.state(), noisy.state());
+}
+
+/// Guards against a degenerate engine (Phase 4 calibration baseline; Phase 5
+/// tightens toward real football). Bounds are deliberately wide.
+#[test]
+fn match_statistics_are_plausible() {
+    let seeds = 0_u64..6;
+    let n = 6.0;
+    let (mut goals, mut shots, mut fouls, mut reds) = (0.0, 0.0, 0.0, 0.0);
+    for seed in seeds {
+        let (e, _) = play(seed, LodLevel::Abstract);
+        assert_eq!(e.state().events.dropped(), 0, "event log overflow");
+        for ev in e.events() {
+            match ev.kind {
+                EventKind::Goal { .. } => goals += 1.0,
+                EventKind::Shot { .. } => shots += 1.0,
+                EventKind::Foul { .. } => fouls += 1.0,
+                EventKind::Card {
+                    card: fm_match::CardKind::Red,
+                    ..
+                } => reds += 1.0,
+                _ => {}
+            }
+        }
+        // Every match has both halves and a final whistle.
+        assert!(e.events().iter().any(|ev| ev.kind == EventKind::HalfTime));
+        assert_eq!(
+            e.events().last().map(|ev| ev.kind),
+            Some(EventKind::FullTime)
+        );
+    }
+    let (goals, shots, fouls, reds) = (goals / n, shots / n, fouls / n, reds / n);
+    assert!((0.5..=7.0).contains(&goals), "goals/match {goals}");
+    assert!((3.0..=80.0).contains(&shots), "shots/match {shots}");
+    assert!((3.0..=60.0).contains(&fouls), "fouls/match {fouls}");
+    assert!(reds <= 2.0, "reds/match {reds}");
+}
