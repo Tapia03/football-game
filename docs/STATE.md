@@ -10,9 +10,11 @@ de arquitetura e regras é o [`docs/SPEC.md`](SPEC.md); este arquivo só diz
 - (b) Modelo de defesa — feito. 75 botes/partida, 19,4 faltas.
 - Otimização de performance (cache de voo + trajetória compartilhada) —
   feito. **41,2 ms no CI** (meta 40, gate 50).
-- (c) Chutes + passes — diagnóstico feito. Dividido em **(c1)** (modelo de
-  criação de jogadas, escopo B, ver SPEC) e **(c2)** (calibração).
-  (c1) espera a URL do spike (pipeline ponta a ponta) e a ordem final.
+- (c) Chutes + passes — dividido em **(c1)** (modelo de criação de
+  jogadas, escopo B) e **(c2)** (calibração).
+  - (c1) item 1 (xG, cobertura, domínio): feito, 566,6M instruções.
+  - (c1) item 2 (xT + moeda comum + cadência de decisão): feito, 539,5M.
+  - Próximo: item 3 (linha de impedimento).
 - (d) Comportamentos por papel — não iniciado.
 
 ## PRs
@@ -36,13 +38,15 @@ Ver SPEC, Seção 0 e decisões das Fases 3–5. Os que mais pesam no dia a dia:
 - libm para toda função transcendental. `unsafe` só em `fm-render/src/ffi/`
   e `fm-test-utils::alloc_counter`.
 - Toolchain fixa em 1.99.0. Orçamento de `tick_logic` em Abstract: meta 40 ms,
-  gate 50 ms. A meta não se ajusta.
+  gate 50 ms (alarme não bloqueante). A meta não se ajusta. **Checkpoint
+  fino = instruções (callgrind)**, +1,5% no máximo por item; régua
+  543,4M ≈ 41,2 ms.
 - Mudança de arquitetura atualiza o SPEC no mesmo PR, antes do código.
 
 ## Decisões pendentes
-- **2026-10-02 — ordem dos itens de (c1):** proposta mover a tabela xT /
-  moeda comum para logo depois da base comum (ver resposta na sessão).
-- **Critério de saída de (c):** ≤ 45 ms no CI (regra 46–50 ms). Hoje: 41,2 ms.
+- **Critério de saída de (c):** ≤ 45 ms, medido em instruções pela régua
+  (≤ ~593M). Hoje: 539,5M ≈ 41 ms.
+- **xT:** conferir a cópia contra `karun.in/blog/data/open_xt_12x8_v1.json`.
 
 ## Marcos
 - **2026-10-02 — pipeline ponta a ponta confirmado:** WASM → WebGL2 (glow) →

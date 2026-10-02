@@ -145,6 +145,7 @@ impl MatchEngine {
             passes: 0,
             passes_completed: 0,
             tackles: 0,
+            decisions: 0,
         };
         let mut state = MatchState {
             match_seed: setup.match_seed,
@@ -160,6 +161,7 @@ impl MatchEngine {
             }),
             last_touch: Side::Home,
             holder_ticks: 0,
+            carrier_plan: Action::Hold,
             phase_sm: PhaseStateMachine::new(Side::Home),
             phases: [Phase::SetPiece; 2],
             second_half: false,
@@ -492,7 +494,15 @@ fn on_ball(
             let h = holder as usize;
             s.holder_ticks += 1;
             let holder_side = s.players[h].side;
-            let action = DecisionSystem::choose_action(s, frame, h);
+            // Decision cadence: between decisions the carrier keeps doing
+            // what it last chose (hold or dribble on to the same target).
+            let action = if DecisionSystem::redecides(s, frame, h) {
+                s.team_mut(holder_side).decisions += 1;
+                DecisionSystem::choose_action(s, frame, h)
+            } else {
+                s.carrier_plan
+            };
+            s.carrier_plan = action;
             ActionResolver::resolve(s, frame, h, action);
             let here = frame.pos(h);
             match action {

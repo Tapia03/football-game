@@ -20,5 +20,9 @@ criterion = { version = "0.8", default-features = false, features = ["cargo_benc
 name = "tick_logic"
 harness = false
 
+[[bench]]
+name = "instructions"
+harness = false
+
 [lints]
 workspace = true

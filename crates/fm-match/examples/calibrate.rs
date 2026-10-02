@@ -20,6 +20,7 @@ fn apply(t: &mut TuningParams, key: &str, v: f32) {
         "shoot_range" => t.decision.shoot_range = v,
         "block_radius" => t.xg.block_radius = v,
         "act_margin" => t.value.act_margin = v,
+        "decision_cadence_ticks" => t.decision.decision_cadence_ticks = u,
         "pass_intercept_max" => t.value.pass_intercept_max = v,
         "hold_keep_pressed" => t.value.hold_keep_pressed = v,
         "forced_release_ticks" => t.value.forced_release_ticks = u,
@@ -56,6 +57,7 @@ fn main() {
     let (mut goals, mut shots, mut on, mut passes, mut ok, mut tackles, mut fouls) =
         (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
     let mut dead = 0.0;
+    let mut decisions = 0.0;
     let (mut rel_pass, mut rel_shot) = ([0u64; 6], [0u64; 6]);
     // How pass flights end: receiver, other teammate, opponent, out of play,
     // knocked loose (miscontrol / deflection).
@@ -146,6 +148,7 @@ fn main() {
         passes += f64::from(s.teams[0].passes + s.teams[1].passes);
         ok += f64::from(s.teams[0].passes_completed + s.teams[1].passes_completed);
         tackles += f64::from(s.teams[0].tackles + s.teams[1].tackles);
+        decisions += f64::from(s.teams[0].decisions + s.teams[1].decisions);
     }
     let n = f64::from(n);
     println!(
@@ -174,6 +177,7 @@ fn main() {
         100.0 * pass_end[3] as f64 / pe as f64,
         100.0 * pass_end[4] as f64 / pe as f64
     );
+    println!("  carrier decisions per match: {:.0}", decisions / n);
     println!(
         "  release ticks [<5 <10 <15 <20 <55 55+] pass:{} shot:{}",
         fmt(&rel_pass),

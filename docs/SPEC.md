@@ -780,8 +780,30 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
   - **Custo:** +32% de instruções sobre o item 1 (callgrind, uma partida:
     575M → 760M). O perfil aponta `best_pass` (38%: estimativa de sucesso
     para até 10 destinos em todo tick com a bola, que agora é 71% do jogo)
-    e a interpolação xT (~9–16%). Acima do orçamento: decisão pendente com
-    o usuário antes do item 3.
+    e a interpolação xT (~9–16%). Acima do orçamento; resolvido pela
+    cadência de decisão abaixo.
+  - **Cadência de decisão `[ALTERADO v2.1]`:** o portador reavalia as
+    opções a cada `decision_cadence_ticks` (3 ticks ≈ 0,3 s) e, entre uma
+    avaliação e outra, mantém o plano (`carrier_plan`: segurar, ou conduzir
+    até o mesmo alvo). **Exceções, reavaliação imediata:** no tick em que
+    recebeu a bola, sempre que há adversário a menos de `pressure_radius`,
+    e ao atingir a saída forçada. Teste: `test_redecide_on_pressure_and_receive`.
+    - Decisões completas por partida (média de 30): **40.299 → 17.334**
+      (−57%). O jogo quase não muda: passes 1.631 → 1.535 (84% nos dois),
+      gols 4,5 → 4,0, chutes 21,5 → 21,9.
+    - A cadência é parte do tick lógico, igual em Full, Reduced e Abstract:
+      a paridade entre LODs se mantém. Ela muda o comportamento, então o
+      golden é **regenerado** (esperado em (c1)).
+  - **Cache de xT das 22 posições: avaliado e não implementado.** Contagem
+    real: 20 consultas de xT por decisão (6 da condução em posições novas,
+    que nenhum cache cobre; 2 do segurar; ~12 dos passes, já reduzidas pela
+    poda). Pré-calcular as 22 posições nos dois sentidos custaria 44
+    consultas, e só as 11 do próprio time, 22: ambas **acima** das ~14 que
+    substituiriam. Reabrir se o número de consultas por decisão crescer
+    (itens 5 e 6).
+  - **Custo final do item 2 (instruções, seed 2026):** 539,5M, **−4,8%**
+    sobre o item 1 (566,6M) e −0,7% sobre o estado anterior a (c1)
+    (543,4M).
 - **Impedimento — só a linha, sem apito `[ALTERADO v2.1]`:**
   - a linha é dado do `TickFrame`: o penúltimo defensor (o goleiro conta),
     calculado uma vez por tick a partir das posições;
@@ -808,8 +830,9 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
     McKay Johns (`mckayjohns/youtube-videos`, `data/xT_Grid.csv`), que
     republica a grade de Karun Singh. Os 96 valores entram como estão, sem
     recálculo. Sinais de que é a grade certa: simétrica na largura e com
-    0,2575 na célula central em frente ao gol. A conferência byte a byte
-    contra o JSON original fica pendente.
+    0,2575 na célula central em frente ao gol. **Pendente de verificação
+    contra `karun.in/blog/data/open_xt_12x8_v1.json`.** O essencial — ser
+    externa ao motor — está garantido.
   - **Conversão de coordenadas:** a grade divide o campo inteiro em 12
     colunas iguais no comprimento e 8 linhas iguais na largura, em
     coordenadas normalizadas. No nosso campo (105 × 68 m): coluna =
@@ -836,6 +859,32 @@ por teste.
 **Orçamento:** a meta continua em 40 ms e o gate em 50 ms. Se a Fase 5
 estourar, o perfil aponta o custo e o assunto volta para decisão humana.
 A meta não é ajustada.
+
+**Medição do orçamento `[ALTERADO v2.1]`:** tempo de relógio no CI mede a
+máquina, não o código. O mesmo motor mediu **41,6 ms e 52,9 ms** em dois
+runners (runs 30 e 32, mediana de 7), e o item 2 de (c1), com +32% de
+trabalho, passou com 43,7 ms num runner rápido.
+- **Checkpoint fino (bloqueante):** contagem de instruções do
+  `tick_logic` com callgrind (`benches/instructions.rs`). Uma partida
+  completa em Abstract, seed 2026 (a mesma do criterion), medindo
+  "montagem + partida − montagem". Determinística: duas execuções dão o
+  mesmo número. Falha se subir mais de **1,5%** sobre a linha de base
+  commitada (`golden/instructions.txt`, o último item aceito);
+  `UPDATE_INSTRUCTIONS=1` regrava a base ao aceitar um item.
+- **Régua de conversão:** **543,4M instruções ≈ 41,2 ms**. Origem: commit
+  `416e2a5` medido com este bench (543.405.929) e o criterion
+  `tick_logic/full_match_abstract` do mesmo commit no CI (run 30:
+  41,2 ms, mesma seed). Portanto ~13,2M instruções por ms. É aproximação:
+  instruções não são tempo, e funções caras por instrução (libm) pesam
+  diferente.
+- **Gate em ms (50 ms) e meta (40 ms):** continuam rodando como **alarme
+  grosseiro, não bloqueante**. Não são o critério de checkpoint.
+- **Regra de checkpoint de (c1):** depois de cada item, reportar
+  instruções (e o equivalente em ms pela régua). Se o item subir mais de
+  1,5% sobre o anterior, PARAR e trazer o perfil.
+- **Histórico (instruções, seed 2026):** antes de (c1) 543,4M; item 1
+  566,6M (+4,3%, aceito antes desta regra existir); item 2 com cadência
+  539,5M (−4,8%).
 
 **`TuningParams` `[ALTERADO v2.1]`:** todas as constantes de calibração do
 motor (âncoras, decisão, duelo, falta e cartões, chute, passe, domínio,

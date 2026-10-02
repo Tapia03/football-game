@@ -123,6 +123,28 @@ impl DecisionSystem {
         best
     }
 
+    /// Whether the carrier `me` re-evaluates its options this tick (decision
+    /// cadence): on the tick it got the ball, every `decision_cadence_ticks`
+    /// after that, at once when an opponent is within `pressure_radius`,
+    /// and once it must release the ball. Otherwise it keeps its plan.
+    #[must_use]
+    pub fn redecides(state: &MatchState, frame: &TickFrame, me: usize) -> bool {
+        let t = &state.tuning.decision;
+        let ticks = state.holder_ticks;
+        if ticks <= 1
+            || (ticks - 1) % t.decision_cadence_ticks.max(1) == 0
+            || ticks >= state.tuning.value.forced_release_ticks
+        {
+            return true;
+        }
+        let side = state.players[me].side;
+        let pos = frame.pos(me);
+        let r2 = t.pressure_radius * t.pressure_radius;
+        state.players.iter().enumerate().any(|(j, o)| {
+            o.side != side && o.active() && (frame.pos(j) - pos).length_squared() < r2
+        })
+    }
+
     /// `keep · xT(at_keep) − (1 − keep) · opponents' xT(at_lose)`.
     fn keep_or_lose(
         state: &MatchState,
@@ -484,6 +506,38 @@ mod tests {
         s.holder_ticks = holding;
         let f = TickFrame::capture(&s);
         DecisionSystem::choose_action(&s, &f, 10)
+    }
+
+    #[test]
+    fn test_redecide_on_pressure_and_receive() {
+        let c = GoalEnd::Right.goal_centre();
+        let me = Vec2::new(c.x - 40.0, c.y);
+        let cadence = placed_state(&[], 10).tuning.decision.decision_cadence_ticks;
+        assert!(cadence >= 2, "the test needs ticks between decisions");
+        let redecides = |ticks: u32, opponent_at: Option<Vec2>| {
+            let mut placed = vec![(10, me)];
+            if let Some(o) = opponent_at {
+                placed.push((13, o));
+            }
+            let mut s = placed_state(&placed, 10);
+            s.holder_ticks = ticks;
+            let f = TickFrame::capture(&s);
+            DecisionSystem::redecides(&s, &f, 10)
+        };
+        // Just received the ball: decides at once.
+        assert!(redecides(1, None), "on receiving");
+        // Unpressed, between two looks: keeps its plan.
+        assert!(!redecides(2, None), "between looks");
+        // The next look comes after the cadence.
+        assert!(redecides(1 + cadence, None), "on cadence");
+        // Pressed (opponent within pressure radius): decides every tick.
+        let presser = Some(Vec2::new(me.x + 1.0, me.y));
+        assert!(redecides(2, presser), "under pressure");
+        // An opponent outside the radius is not pressure.
+        assert!(
+            !redecides(2, Some(Vec2::new(me.x + 6.0, me.y))),
+            "far opponent"
+        );
     }
 
     #[test]

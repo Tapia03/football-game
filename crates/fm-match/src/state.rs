@@ -5,6 +5,7 @@ use fm_core::{GoalEnd, Vec2, Vec3};
 use fm_entities::{PlayerAttributes, PlayerId};
 
 use crate::ball::BallFlight;
+use crate::decision::Action;
 use crate::events::{EventLog, RestartKind};
 use crate::formation::{Formation, Role};
 use crate::frame::TeamFrame;
@@ -107,6 +108,9 @@ pub struct TeamState {
     pub passes: u16,
     pub passes_completed: u16,
     pub tackles: u16,
+    /// Full option evaluations by this team's carriers (decision cadence
+    /// diagnostics; not used by the engine).
+    pub decisions: u32,
 }
 
 /// Everything `tick_logic` reads and writes.
@@ -119,6 +123,9 @@ pub struct MatchState {
     pub ball: BallState,
     pub last_touch: Side,
     pub holder_ticks: u32,
+    /// What the carrier is doing between decisions (decision cadence,
+    /// spec Fase 5 (c1)): only `Hold` or `Dribble` carry over.
+    pub carrier_plan: Action,
     pub phase_sm: PhaseStateMachine,
     /// Phases computed at the current tick, `[home, away]`.
     pub phases: [Phase; 2],

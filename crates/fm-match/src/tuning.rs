@@ -15,6 +15,9 @@ pub struct DecisionTuning {
     /// Ticks a carrier keeps the ball before releasing it unless pressed.
     pub min_hold_ticks: u32,
     pub keeper_hold_ticks: u32,
+    /// The carrier re-evaluates its options every this many ticks, and at
+    /// once when it has just received the ball or is pressed.
+    pub decision_cadence_ticks: u32,
     /// Shots are only considered inside this distance (m).
     pub shoot_range: f32,
     /// Beyond this distance `long_shots` replaces `finishing` (m).
@@ -331,6 +334,9 @@ impl Default for DecisionTuning {
             // First touch + look up ≈ 0.4 s; keepers ≈ 1.5 s.
             min_hold_ticks: 4,
             keeper_hold_ticks: 15,
+            // ~0.3 s between looks: nobody re-reads ten passing options
+            // every 100 ms.
+            decision_cadence_ticks: 3,
             // Beyond ~30 m the xG of any shot is < 0.02: not worth computing.
             shoot_range: 30.0,
             long_shot_dist: 20.0,
