@@ -2,45 +2,62 @@
 
 Resumo de uma tela que sobrevive a compactações de sessão. A fonte de verdade
 de arquitetura e regras é o [`docs/SPEC.md`](SPEC.md); este arquivo só diz
-*onde estamos*. Atualizado em **2026-10-02** (pausa por orçamento).
+*onde estamos*. Atualizado em **2026-10-02** (pausa por orçamento, fim da sessão).
 
 ## Fase atual — PAUSADA (orçamento)
 **Fase 5 — Role Behaviors**, branch `fase-5` (sem PR aberto). Ponto de
-retorno: tag `pre-pause-2026-10` (o commit deste STATE; o código é o de
-`5d34253`, com CI verde em todos os jobs, inclusive paridade WASM e bench).
+retorno: tag `pre-pause-fase5-item5` (este commit de STATE). O código é o
+de `5d34253`: CI verde em todos os jobs, inclusive paridade WASM e bench.
 
-### Onde cada parte está
-- (a) `TickFrame` — feito. (b) Modelo de defesa — feito. Otimização (cache
-  de voo + trajetória compartilhada) — feita.
-- (c) dividido em (c1) modelo de criação de jogadas e (c2) calibração.
-  - (c1) item 1 (xG, cobertura, domínio): **pronto**.
-  - (c1) item 2 (xT + moeda comum + cadência 3): **pronto**.
-  - (c1) item 3 (linha de impedimento, calculada só nos ticks com
-    corredor): **pronto**.
-  - (c1) item 4 (estado `Run`): **pronto**.
-  - (c1) item 5: **parcial/pendente**. Passo 1 (`lofted_lane`) ligado;
-    passo 2 (passe em profundidade) commitado **desligado**
-    (`through_balls = false`, acerto ≈ 0,3%). Refazer na física nova.
-  - (c1) itens 6–8: **não iniciados**.
-  - (c1) item 9 (construção desde a defesa): **previsto** (Caminho A).
-- (c2) calibração e (d) comportamentos por papel — não iniciados.
+### Onde exatamente paramos
+Há **duas numerações de "passo"** diferentes. Não confundir:
+- **Passos do Caminho A** (a ordem de (c1), abaixo). Paramos no **passo 2**
+  (defesa ajustada à física): o engajamento está feito; falta **acompanhar
+  corredores** e **goleiro saindo do gol**.
+- **Passos do item 5** (passe em profundidade). Passo 1 (`lofted_lane`)
+  ligado; passo 2 (tempo de chegada + corredor legal) implementado e
+  **desligado**. O item 5 não andou desde então: ele é refeito no **passo 4
+  do Caminho A**, sobre a física nova.
 
-### Caminho A (ordem aprovada) e onde paramos
-1. Física de movimento — **feito** (commit 1 `8e5e7e8` + commit 2
-   `5d34253`): física (15 m/s² / 80 ms / 15 rad/s) só para quem está no
-   lance; o resto arcade na cadência 3.
-2. Defesa ajustada à física — **em andamento**. Feito: engajamento (o
+A física no lance e o engajamento (`5d34253`) são os **passos 1–2 do
+Caminho A**, não o passo 2 do item 5.
+
+### Caminho A (ordem aprovada)
+1. Física de movimento — **feito** (`8e5e7e8` + `5d34253`): reação,
+   aceleração, giro e chegada (15 m/s² / 80 ms / 15 rad/s), só para quem
+   está no lance; o resto arcade na cadência 3.
+2. Defesa ajustada à física — **em andamento.** Feito: engajamento (o
    escolhido pela nota do bote, a até 4,5 m, parte para cima; o bote sai a
-   1,8 m). **Paramos aqui.** Falta: acompanhar corredores e goleiro saindo
-   do gol. **Retomar por aqui, com a regra de +1,5% por item de volta.**
+   1,8 m). **RETOMAR AQUI:** acompanhar corredores (com o equilíbrio
+   corrida × apoio) e goleiro saindo do gol. Regra de custo: +1,5% por
+   item, de volta.
 3. Item 9: construção desde a defesa.
-4. Refazer o item 5 em cima da física nova.
-5. Itens 6–8.
-Depois: (c2), (d), PR `fase-5` → `main`.
+4. Refazer o item 5 (passe em profundidade) sobre a física nova.
+5. Itens 6–8 (apoio sem bola → drible 1×1 → tabela).
+Depois: (c2) calibração, (d) comportamentos por papel, PR `fase-5` → `main`.
+
+### Itens de (c1)
+| Item | Estado |
+|---|---|
+| 1 xG, cobertura, domínio | pronto |
+| 2 xT + moeda comum + cadência 3 | pronto |
+| 3 linha de impedimento | pronto |
+| 4 estado `Run` | pronto |
+| 5 passe em profundidade | parcial: passo 1 ligado; passo 2 desligado, refazer (Caminho A, passo 4) |
+| 6 apoio sem bola | não iniciado |
+| 7 drible 1×1 | não iniciado |
+| 8 tabela | não iniciado |
+| 9 construção desde a defesa | previsto (Caminho A, passo 3) |
+
+Também prontos na Fase 5: (a) `TickFrame`, (b) modelo de defesa,
+otimização (cache de voo + trajetória compartilhada). (c2) e (d): não
+iniciados.
 
 ### Commits na `fase-5` (sobre `main`, mais recente primeiro)
 | Hash | Resumo |
 |---|---|
+| (este) | docs: consolida estado no fim da Fase 5 (item 5 parcial) |
+| `1b329ab` | STATE: consolidação antes da pausa |
 | `5d34253` | Física no lance + engajamento defensivo (596,3M) |
 | `9953a2d` | SPEC: física só no lance; medição 588,9M; teste de faltas falhou |
 | `36a13b5` | SPEC: física completa custa +55% (+37% mantendo planos) |
@@ -72,27 +89,63 @@ Depois: (c2), (d), PR `fase-5` → `main`.
 | `4e83ba1` | Toolchain 1.99.0 + stable-canary |
 | `1a931d3` | Exemplo `timing` |
 
-### Não commitado
-- Árvore de trabalho limpa; **nenhum stash**.
-- Patches de experimento só no scratchpad da sessão (efêmero, **some com
-  o container**): física completa rejeitada (+37%) e variantes do item 5.
-  Nada neles é necessário: o código aprovado está commitado e os números
-  dos experimentos estão no SPEC.
+### No SPEC, mas não no código
+- **Invariante 18 do lado do passe:** a estimativa de linha de passe ainda
+  supõe a cinemática antiga (acerto 56%). Caminho A, passo 4, ou (c2).
+- **Defesa acompanha corredores + equilíbrio corrida × apoio** e **goleiro
+  saindo do gol**: o resto do passo 2 do Caminho A.
+- **Item 9** (construção desde a defesa) e **itens 6–8**: só a ordem e o
+  escopo.
+- **Valores realistas da física** (4,5 m/s² / 200 ms / 6 rad/s): no
+  código estão os conservadores (15 / 80 / 15).
+- **Apito de impedimento** e **regra do kickoff**: fases próprias depois.
 
-### Dívidas
-- **Explícita (custo):** 596,3M instruções, **3,3M acima do teto de saída
-  de (c) (593M ≈ 45 ms)**. Precisa ser devolvido antes de fechar (c).
-- **Frágil (teste):** `match_statistics_are_plausible` exige ≥ 3 faltas
-  por partida. Nas 6 seeds do teste mede **6,0** (margem 3,0); na média de
-  180 partidas a taxa é **3,6** (margem 0,6). As 6 seeds estão acima da
-  média, e um item que baixe as faltas pode quebrar o teste sem aviso.
+### Implementado, mas desligado
+- Passe em profundidade (`ValueTuning.through_balls = false`).
+- Contadores de diagnóstico (só com a feature `diagnostics`).
 
-### Sinais pendentes para (c2) (não calibrar antes)
+### Dívidas conhecidas
+- **Custo:** 596,3M instruções, **3,3M acima do teto de saída de (c)
+  (593M ≈ 45 ms)**. Devolver antes de fechar (c).
+- **Teste frágil:** `match_statistics_are_plausible` (≥ 3 faltas por
+  partida) usa só 6 seeds e mede **6,0**; a média de 180 partidas é
+  **3,6**. As 6 seeds não representam a média.
+- **Acerto de passe 56%** (real ~80%): invariante 18 do lado do passe →
+  Caminho A passo 4 ou (c2).
+- **Botes 10 / faltas 3,6** (real ~70 / 22): calibração em (c2).
 - **Posse do mandante não convergida:** 73% (arcade) → 56,9% (física) →
   42,5% (física + engajamento). Troca de lado a cada mudança de movimento.
-- **Acerto de passe 56%** (real ~80%): invariante 18 do lado do passe →
-  passo 4 do Caminho A ou (c2).
-- **Botes/faltas 10 / 3,6** (real ~70 / 22).
+- **Gols 5,3** por partida (real ~2,7); xG por chute 0,23 (real ~0,10).
+
+### Branches vivas
+| Branch | Papel |
+|---|---|
+| `main` | o que está mergeado (até a Fase 4, `d0a6823`) |
+| `fase-5` | branch de trabalho; PR só no fim da fase |
+| `fase-6-v0` | spike de render sobre o motor de antes da física; **nunca mergeia** |
+| `spike-render-v2` | render da `fase-6-v0` sobre o motor de `5d34253` (só arquivos de render, motor e `docs/` intactos); **nunca mergeia** |
+| `spike-render` | primeiro spike (frame estático); **nunca mergeia** |
+
+### Comandos para retomar
+```sh
+git checkout fase-5
+cargo test --workspace --release
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo fmt --all -- --check
+# Bench de instruções (callgrind, seed 2026; falha se > +1,5% sobre
+# crates/fm-match/golden/instructions.txt). UPDATE_INSTRUCTIONS=1 regrava.
+cargo bench -p fm-match --bench instructions
+# Golden de paridade nativo×WASM, depois de mudar comportamento:
+UPDATE_GOLDEN=1 cargo test -p fm-match --release --lib parity
+# Calibrador (180 partidas, 4-3-3 e 4-4-2):
+FM_FORMATIONS=433,442 cargo run --release -p fm-match --features diagnostics --example calibrate
+# Spike visual: push em qualquer branch spike-* dispara o deploy
+# (.github/workflows/deploy.yml) e publica em
+# https://<branch>.football-game-b5k.pages.dev
+```
+Para atualizar o spike com um motor novo: refazer `spike-render-v2` a
+partir da `fase-5` e copiar só os arquivos de render da `fase-6-v0` (ver o
+commit `d6f433a`).
 
 ## PRs
 | PR | Conteúdo | Estado |
@@ -132,6 +185,8 @@ Ver SPEC, Seção 0 e decisões das Fases 3–5. Os que mais pesam no dia a dia:
   bola, "OK (5754 vértices)").
 
 ## Previews
+- Spike visual atual (motor de `5d34253`):
+  https://spike-render-v2.football-game-b5k.pages.dev
 - Spike de render: https://spike-render.football-game-b5k.pages.dev (o sufixo
   `-b5k` do subdomínio é do Cloudflare).
 
