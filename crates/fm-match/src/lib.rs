@@ -19,8 +19,11 @@ pub mod role;
 pub mod snapshot;
 pub mod state;
 pub mod tactics;
+#[cfg(test)]
+mod test_support;
 pub mod tick_frame;
 pub mod tuning;
+pub mod xg;
 
 pub use anchor::{AnchorTuning, FormationAnchor, PhaseShape};
 pub use ball::BallFlight;

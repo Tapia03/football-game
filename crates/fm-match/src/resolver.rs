@@ -34,12 +34,24 @@ fn idx_u8(i: usize) -> u8 {
 
 pub struct ActionResolver;
 
+/// Inputs of a shot's outcome draw.
+#[derive(Clone, Copy)]
+struct ShotContext {
+    dist: f32,
+    skill: f32,
+    pressure: f32,
+    /// Unblocked goal probability (geometry × finisher).
+    xg: f32,
+    penalty: bool,
+}
+
 impl ActionResolver {
     /// Applies `action` by player `actor` to the match state.
     pub fn resolve(state: &mut MatchState, frame: &TickFrame, actor: usize, action: Action) {
         match action {
             Action::Pass { to } => Self::resolve_pass(state, frame, actor, usize::from(to)),
             Action::Shoot => Self::resolve_shot(state, frame, actor, false),
+            Action::Clear => Self::resolve_clear(state, frame, actor),
             Action::Tackle { on } => Self::resolve_tackle(state, frame, actor, usize::from(on)),
             // Movement-only actions: the carrier's trajectory is planned by
             // the engine; nothing random happens.
@@ -136,20 +148,31 @@ impl ActionResolver {
         let end = state.attacking(p.side);
         let goal = end.goal_centre();
         let dist = from.xy().distance(goal);
-        let shot_skill = if dist > state.tuning.decision.long_shot_dist {
-            0.6 * unit(p.attrs.technical.long_shots)
-        } else {
-            0.6 * unit(p.attrs.technical.finishing)
-        } + 0.2 * unit(p.attrs.mental.composure)
-            + 0.2 * unit(p.attrs.technical.technique);
+        let shot_skill =
+            crate::xg::shot_skill(&p.attrs, dist, state.tuning.decision.long_shot_dist);
         let pressure = if penalty {
             0.0
         } else {
             Self::pressure_on(state, frame, actor)
         };
+        // Goal probability of this shot if nothing is in the way: blocking is
+        // physical (bodies in the ball's path intercept it in flight), so it
+        // is not discounted here — the decision already anticipated it.
+        let xg = crate::xg::xg(from.xy(), end, &state.tuning.xg)
+            * crate::xg::finisher(shot_skill, &state.tuning.xg);
 
-        let (on_target, outcome) =
-            Self::shot_outcome(state, &mut rng, p.side, dist, shot_skill, pressure, penalty);
+        let (on_target, outcome) = Self::shot_outcome(
+            state,
+            &mut rng,
+            p.side,
+            ShotContext {
+                dist,
+                skill: shot_skill,
+                pressure,
+                xg,
+                penalty,
+            },
+        );
 
         // Aim point on the goal line: inside the frame if on target.
         let half = pitch::GOAL_WIDTH / 2.0;
@@ -200,24 +223,23 @@ impl ActionResolver {
 
     /// Draws whether a shot is on target and, if so, whether the keeper saves
     /// it. Draw order is fixed (on-target, then save) — it is part of the
-    /// replay contract.
+    /// replay contract. Open play: the goal probability is the shot's xG
+    /// scaled by the keeper and pressure, and the save probability is what
+    /// makes on-target × not-saved equal it.
     fn shot_outcome(
         state: &MatchState,
         rng: &mut Rng,
         side: Side,
-        dist: f32,
-        shot_skill: f32,
-        pressure: f32,
-        penalty: bool,
+        c: ShotContext,
     ) -> (bool, ShotOutcome) {
         let st = state.tuning.shot;
         // On target: better finishers and closer shots; pressure hurts.
-        let p_on = if penalty {
-            st.penalty_on_base + st.penalty_on_skill * shot_skill
+        let p_on = if c.penalty {
+            st.penalty_on_base + st.penalty_on_skill * c.skill
         } else {
-            (st.on_target_base + st.on_target_skill * shot_skill
-                - dist / st.on_target_dist_div
-                - st.on_target_pressure * pressure)
+            (st.on_target_base + st.on_target_skill * c.skill
+                - c.dist / st.on_target_dist_div
+                - st.on_target_pressure * c.pressure)
                 .clamp(st.on_target_range.0, st.on_target_range.1)
         };
         let on_target = rng.chance(p_on);
@@ -228,7 +250,7 @@ impl ActionResolver {
             let p_save = keeper.map_or(0.0, |k| {
                 let g = &state.players[k].attrs.goalkeeping;
                 // One-on-ones matter more close in; reflexes always.
-                let close = if dist < st.one_on_one_dist {
+                let close = if c.dist < st.one_on_one_dist {
                     st.one_on_one_close
                 } else {
                     st.one_on_one_far
@@ -237,14 +259,15 @@ impl ActionResolver {
                     + 0.3 * unit(g.positioning_gk)
                     + 0.15 * unit(g.handling)
                     + close * unit(g.one_on_ones);
-                if penalty {
+                if c.penalty {
                     (st.penalty_save_base + st.penalty_save_keeper * gk
-                        - st.penalty_save_skill * shot_skill)
+                        - st.penalty_save_skill * c.skill)
                         .clamp(st.penalty_save_range.0, st.penalty_save_range.1)
                 } else {
-                    (st.save_base + st.save_keeper * gk - st.save_skill * shot_skill
-                        + dist / st.save_dist_div)
-                        .clamp(st.save_range.0, st.save_range.1)
+                    let p_goal = c.xg
+                        * (st.keeper_base - st.keeper_skill * gk)
+                        * (1.0 - st.goal_pressure * c.pressure);
+                    (1.0 - p_goal / p_on).clamp(st.save_range.0, st.save_range.1)
                 }
             });
             if rng.chance(p_save) {
@@ -257,6 +280,19 @@ impl ActionResolver {
         };
 
         (on_target, outcome)
+    }
+
+    /// Long, high clearance toward the opponents' half; nobody in particular
+    /// is meant to get it.
+    fn resolve_clear(state: &mut MatchState, frame: &TickFrame, actor: usize) {
+        let mut rng = state.next_rng(actor);
+        let k = state.tuning.pass;
+        let p = state.players[actor];
+        let forward = state.attacking(p.side).direction();
+        let dir = rotate(Vec2::new(forward, 0.0), k.clear_angle * tri(&mut rng));
+        let d = k.clear_dist * (1.0 + 0.2 * tri(&mut rng));
+        let v = BallFlight::lofted_velocity(dir, d, k.lofted_base_s + d / k.lofted_per_m);
+        Self::kick(state, frame, actor, v, FlightIntent::Loose);
     }
 
     /// Tackle on the carrier `on`: foul, clean win, ball knocked loose, or
@@ -391,21 +427,22 @@ impl ActionResolver {
         crate::engine::set_restart(state, frame, kind, fouled.side, spot);
     }
 
-    /// A player within reach of a loose ball tries to bring it under control.
-    /// Returns true if they now hold it.
-    pub fn try_receive(state: &mut MatchState, frame: &TickFrame, actor: usize) -> bool {
-        let mut rng = state.next_rng(actor);
+    /// Probability that `actor` brings the ball under control with one touch
+    /// (spec Fase 5 (c1): professional first touch rarely fails on a normal
+    /// pass). First touch & technique; fast, high, contested or intercepted
+    /// balls are harder.
+    #[must_use]
+    pub fn control_probability(
+        state: &MatchState,
+        frame: &TickFrame,
+        actor: usize,
+        intent: FlightIntent,
+        speed: f32,
+    ) -> f32 {
         let k = state.tuning.control;
-        let now = state.now_ms();
-        let p = state.players[actor];
-        let BallState::Flight { flight, intent } = state.ball else {
-            return false;
-        };
-        let vel = flight.vel_at(now);
-        let speed = vel.length();
+        let p = &state.players[actor];
         let height = frame.ball(state).z;
         let is_keeper = p.role == Role::Goalkeeper;
-        // Control odds: first touch & technique; fast or high balls are harder.
         let touch = if is_keeper {
             unit(p.attrs.goalkeeping.handling)
         } else {
@@ -414,7 +451,7 @@ impl ActionResolver {
         // Cutting out an opponent's pass is a reaction, not a prepared touch.
         let intercepting = matches!(intent, FlightIntent::Pass { receiver }
             if state.players[usize::from(receiver)].side != p.side);
-        let p_control = (k.base + k.touch * touch
+        (k.base + k.touch * touch
             - k.speed_penalty * (speed - k.easy_speed).max(0.0)
             - if height > 1.0 && !is_keeper {
                 k.high_ball_penalty
@@ -425,8 +462,22 @@ impl ActionResolver {
                 k.intercept_penalty
             } else {
                 0.0
-            })
-        .clamp(k.range.0, k.range.1);
+            }
+            - k.pressure_penalty * Self::pressure_on(state, frame, actor))
+        .clamp(k.range.0, k.range.1)
+    }
+
+    /// A player within reach of a loose ball tries to bring it under control.
+    /// Returns true if they now hold it.
+    pub fn try_receive(state: &mut MatchState, frame: &TickFrame, actor: usize) -> bool {
+        let mut rng = state.next_rng(actor);
+        let now = state.now_ms();
+        let p = state.players[actor];
+        let BallState::Flight { flight, intent } = state.ball else {
+            return false;
+        };
+        let vel = flight.vel_at(now);
+        let p_control = Self::control_probability(state, frame, actor, intent, vel.length());
 
         if rng.chance(p_control) {
             if let FlightIntent::Pass { receiver } = intent {
@@ -519,5 +570,54 @@ impl ActionResolver {
     #[must_use]
     pub fn side_of(state: &MatchState, idx: usize) -> Side {
         state.players[idx].side
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ActionResolver;
+    use crate::ball::BallFlight;
+    use crate::state::{BallState, FlightIntent};
+    use crate::test_support::placed_state;
+    use crate::tick_frame::TickFrame;
+    use fm_core::{Vec2, Vec3};
+
+    /// Home player 7 receiving a ground pass from 9 at `speed` m/s, with an
+    /// optional opponent (13) at `opp`.
+    fn p_control(first_touch: u8, speed: f32, opp: Option<Vec2>, height: f32) -> f32 {
+        let at = Vec2::new(50.0, 30.0);
+        let mut placed = vec![(7, at), (9, Vec2::new(30.0, 30.0))];
+        if let Some(o) = opp {
+            placed.push((13, o));
+        }
+        let mut s = placed_state(&placed, 9);
+        s.players[7].attrs.technical.first_touch = first_touch;
+        s.players[7].attrs.technical.technique = first_touch;
+        let now = s.now_ms();
+        s.ball = BallState::Flight {
+            flight: BallFlight::kick(now, at.extend(height), Vec3::new(speed, 0.0, 0.0)),
+            intent: FlightIntent::Pass { receiver: 7 },
+        };
+        let f = TickFrame::capture(&s);
+        ActionResolver::control_probability(&s, &f, 7, FlightIntent::Pass { receiver: 7 }, speed)
+    }
+
+    #[test]
+    fn first_touch_is_professional_on_a_normal_pass() {
+        let typical = p_control(50, 8.0, None, 0.0);
+        let good = p_control(80, 8.0, None, 0.0);
+        assert!((0.88..=0.92).contains(&typical), "typical {typical}");
+        assert!((0.93..=0.98).contains(&good), "good {good}");
+    }
+
+    #[test]
+    fn hard_balls_are_harder_to_control() {
+        let base = p_control(50, 8.0, None, 0.0);
+        assert!(p_control(50, 20.0, None, 0.0) < base, "fast");
+        assert!(p_control(50, 8.0, None, 1.5) < base, "high");
+        assert!(
+            p_control(50, 8.0, Some(Vec2::new(51.0, 30.0)), 0.0) < base,
+            "pressed"
+        );
     }
 }

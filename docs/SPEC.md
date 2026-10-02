@@ -705,6 +705,42 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
     em (c1): a partir do domínio realista, o comportamento muda por
     decisão. Cada regeneração entra no commit que muda o comportamento,
     com o motivo na mensagem.
+- **Ordem aprovada de (c1):** 1. base comum → 2. tabela xT + moeda comum
+  → 3. linha de impedimento → 4. estado `Run` → 5. passe em profundidade →
+  6. apoio sem bola → 7. drible 1×1 → 8. tabela. Os itens 1 e 2 são commits
+  separados, cada um com paridade verificada, para poder reverter só o 2.
+- **(c1) item 1 — base comum `[ALTERADO v2.1]`:**
+  - **xG geométrico** (`xg.rs`): logística no ângulo da boca do gol (via
+    `atan2` do libm) e na distância. Coeficientes ajustados por âncoras
+    centrais na faixa dos modelos públicos (6 m ≈ 0,40; 11 m ≈ 0,17;
+    20 m ≈ 0,05; 25 m ≈ 0,03); revisão em (c2). Fator do finalizador
+    `0,6 + 0,8 × habilidade` (neutro em 0,5).
+  - **Bloqueio por cobertura:** fração do ângulo da boca do gol coberta por
+    corpos adversários de linha entre o chutador e o gol (meia-largura
+    0,5 m; união de intervalos). O goleiro já está no xG geométrico. A
+    nota binária "defensor a menos de 1 m da linha × 0,3" foi removida.
+  - **Decisão de chute:** chuta quando o xG estimado (geometria ×
+    finalizador × parte descoberta) ≥ `shoot_xg_min` (0,06). Valor próprio,
+    sem competir com as notas ad hoc de passe/condução; o item 2 troca isso
+    pela moeda comum.
+  - **Saída forçada não chuta mais:** passa para a melhor opção ou, sem
+    passe, faz `Clear` (bola longa ~45 m para a frente, `Loose`).
+  - **Desfecho do chute ligado ao xG:** P(gol) = xG sem bloqueio ×
+    goleiro (`1,2 − 0,4 × gk`) × pressão (−15%). O sorteio no alvo
+    continua igual; P(defesa) é a que faz no alvo × não defendido = P(gol).
+    Bloqueio não entra aqui: é físico (o chute é interceptado em voo). A
+    decisão antecipa o bloqueio, a física o executa — sem dupla contagem.
+    Ordem dos sorteios inalterada.
+  - **Domínio realista:** `control.base` 0,82 + 0,16 × toque (receptor
+    típico ~90%, bom ~95%), pressão a menos de `pressure_radius` −6%,
+    bola alta −15%, rápida e interceptação como antes.
+  - **Paridade:** o golden é regenerado neste commit, de propósito.
+  - **Medido (30 partidas, só para registro; não é meta de (c1)):** 25
+    chutes (7,9 no alvo), 3,7 gols, 4.100 passes (71%), 70 botes. Os chutes
+    agora vêm da decisão (5% depois de 5,5 s com a bola, todos por valor
+    próprio, nenhum forçado); 72% de menos de 11 m, porque o portador ainda
+    conduz até perto do gol antes de chutar. Os passes subiram porque o
+    domínio deixou de devolver a bola.
 - **Impedimento — só a linha, sem apito `[ALTERADO v2.1]`:**
   - a linha é dado do `TickFrame`: o penúltimo defensor (o goleiro conta),
     calculado uma vez por tick a partir das posições;

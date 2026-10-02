@@ -16,6 +16,9 @@ pub enum Action {
         to: u8,
     },
     Shoot,
+    /// Kick it long and away: the carrier has nothing better (forced release
+    /// without a pass on).
+    Clear,
     /// Carry the ball toward `target`.
     Dribble {
         target: Vec2,
@@ -75,26 +78,20 @@ impl DecisionSystem {
         }
 
         let dist_goal = my_pos.distance(goal);
-        let shoot_score = Self::shoot_score(state, frame, me, my_pos, goal);
+        // A shot is taken on its own value: the estimated xG after blocking
+        // (spec Fase 5 (c1), item 1).
+        if Self::shot_xg(state, frame, me) >= state.tuning.xg.shoot_xg_min {
+            return Action::Shoot;
+        }
         let (best_pass, best_to) = Self::best_pass(state, frame, me, my_pos, forward);
         let dribble_score = Self::dribble_score(state, frame, me, my_pos, forward, dist_goal);
 
-        if shoot_score > t.shoot_threshold
-            && shoot_score >= best_pass
-            && shoot_score >= dribble_score
-        {
-            return Action::Shoot;
-        }
         // Forced release: once carrying has no value left, holding forever is
-        // not an option (it deadlocked the match) — shoot if in range,
-        // otherwise play the best available pass, whatever its score.
+        // not an option (it deadlocked the match). Play the best available
+        // pass whatever its score, or clear it. Never a forced shot: a shot
+        // is only taken on its own value.
         if state.holder_ticks >= t.carry_decay_start + carry_span_ticks(t.carry_decay_span) {
-            if shoot_score > 0.0 {
-                return Action::Shoot;
-            }
-            if let Some(to) = best_to {
-                return Action::Pass { to };
-            }
+            return best_to.map_or(Action::Clear, |to| Action::Pass { to });
         }
         if let Some(to) = best_to {
             if best_pass >= dribble_score {
@@ -112,47 +109,22 @@ impl DecisionSystem {
         Action::Hold
     }
 
-    /// Shot value: worth more the closer and more central (rationale: xG
-    /// falls steeply with distance and with angle off-centre; most shots come
-    /// from inside ~18 m).
-    fn shoot_score(
-        state: &MatchState,
-        frame: &TickFrame,
-        me: usize,
-        my_pos: Vec2,
-        goal: Vec2,
-    ) -> f32 {
+    /// The carrier's estimated xG for a shot now: geometry × finisher ×
+    /// uncovered share of the goal mouth. Zero for keepers and out of range.
+    #[must_use]
+    pub fn shot_xg(state: &MatchState, frame: &TickFrame, me: usize) -> f32 {
         let t = &state.tuning.decision;
         let p = &state.players[me];
-        let dist_goal = my_pos.distance(goal);
+        let end = state.attacking(p.side);
+        let pos = frame.pos(me);
+        let dist_goal = pos.distance(end.goal_centre());
         if dist_goal >= t.shoot_range || p.role == Role::Goalkeeper {
             return 0.0;
         }
-        let skill = if dist_goal > t.long_shot_dist {
-            f32::from(p.attrs.technical.long_shots)
-        } else {
-            f32::from(p.attrs.technical.finishing)
-        } / 100.0;
-        let central = (1.0 - (my_pos.y - pitch::HALF_WIDTH).abs() / t.central_width)
-            .clamp(t.central_min, 1.0);
-        // Bodies in the shooting lane (outfield only) block most shots.
-        let lane = state
-            .players
-            .iter()
-            .enumerate()
-            .filter(|(_, o)| o.side != p.side && o.active() && o.role != Role::Goalkeeper)
-            .map(|(j, _)| dist_to_segment(frame.pos(j), my_pos, goal))
-            .fold(f32::MAX, f32::min);
-        let blocked = if lane < t.shot_block_dist {
-            t.shot_blocked_factor
-        } else {
-            1.0
-        };
-        (t.shoot_base + t.shoot_skill * skill)
-            * (1.0 - dist_goal / t.shoot_range)
-            * central
-            * blocked
-            * t.shoot_gain
+        let skill = crate::xg::shot_skill(&p.attrs, dist_goal, t.long_shot_dist);
+        crate::xg::xg(pos, end, &state.tuning.xg)
+            * crate::xg::finisher(skill, &state.tuning.xg)
+            * (1.0 - crate::xg::coverage(state, frame, me, end))
     }
 
     /// Best pass target and its score: progress toward goal, open lane, not
@@ -414,8 +386,49 @@ impl DecisionSystem {
 
 #[cfg(test)]
 mod tests {
-    use super::dist_to_segment;
-    use fm_core::Vec2;
+    use super::{dist_to_segment, Action, DecisionSystem};
+    use crate::test_support::placed_state;
+    use crate::tick_frame::TickFrame;
+    use fm_core::{GoalEnd, Vec2};
+
+    /// Home striker (10) on the ball `dist` m straight out from the right
+    /// goal, `holding` ticks into possession, with extra placed players.
+    fn striker_at(dist: f32, holding: u32, others: &[(usize, Vec2)]) -> Action {
+        let c = GoalEnd::Right.goal_centre();
+        let mut placed = vec![(10, Vec2::new(c.x - dist, c.y))];
+        placed.extend_from_slice(others);
+        let mut s = placed_state(&placed, 10);
+        s.holder_ticks = holding;
+        let f = TickFrame::capture(&s);
+        DecisionSystem::choose_action(&s, &f, 10)
+    }
+
+    #[test]
+    fn open_shot_is_taken_on_its_own_value() {
+        assert_eq!(striker_at(11.0, 5, &[]), Action::Shoot);
+    }
+
+    #[test]
+    fn covered_goal_is_not_shot_at() {
+        let c = GoalEnd::Right.goal_centre();
+        let blocker = (13, Vec2::new(c.x - 13.0, c.y));
+        assert_ne!(striker_at(15.0, 5, &[blocker]), Action::Shoot);
+    }
+
+    #[test]
+    fn forced_release_never_shoots() {
+        // Long on the ball, goal covered, no team-mate within passing range
+        // (they are all parked far away): the carrier clears, never shoots.
+        let c = GoalEnd::Right.goal_centre();
+        let blocker = (13, Vec2::new(c.x - 13.0, c.y));
+        assert_eq!(striker_at(15.0, 500, &[blocker]), Action::Clear);
+        // With a team-mate on, it is a pass.
+        let mate = (9, Vec2::new(c.x - 25.0, c.y + 10.0));
+        assert_eq!(
+            striker_at(15.0, 500, &[blocker, mate]),
+            Action::Pass { to: 9 }
+        );
+    }
 
     #[test]
     fn segment_distance() {

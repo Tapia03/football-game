@@ -16,20 +16,8 @@ pub struct DecisionTuning {
     pub keeper_hold_ticks: u32,
     /// Shots are only considered inside this distance (m).
     pub shoot_range: f32,
-    /// Minimum shot score to shoot.
-    pub shoot_threshold: f32,
     /// Beyond this distance `long_shots` replaces `finishing` (m).
     pub long_shot_dist: f32,
-    pub shoot_base: f32,
-    pub shoot_skill: f32,
-    pub shoot_gain: f32,
-    /// Lateral distance at which centrality reaches 0 (m), and its floor.
-    pub central_width: f32,
-    pub central_min: f32,
-    /// A defender within this distance of the shot line blocks it (m)…
-    pub shot_block_dist: f32,
-    /// …multiplying the shot score by this.
-    pub shot_blocked_factor: f32,
     pub pass_min_dist: f32,
     pub pass_max_dist: f32,
     pub pass_base: f32,
@@ -80,6 +68,9 @@ pub struct PassTuning {
     /// Max relative length error: `base - skill·k`.
     pub length_base: f32,
     pub length_skill: f32,
+    /// Clearance length (m, ±20%) and max angular spread (rad).
+    pub clear_dist: f32,
+    pub clear_angle: f32,
 }
 
 /// Shot execution and goalkeeping.
@@ -92,10 +83,13 @@ pub struct ShotTuning {
     pub on_target_range: (f32, f32),
     pub penalty_on_base: f32,
     pub penalty_on_skill: f32,
-    pub save_base: f32,
-    pub save_keeper: f32,
-    pub save_skill: f32,
-    pub save_dist_div: f32,
+    /// Goal probability of a shot = xG × finisher × keeper × pressure;
+    /// keeper factor = `keeper_base - keeper_skill·gk`.
+    pub keeper_base: f32,
+    pub keeper_skill: f32,
+    /// Fraction of the goal probability lost when the shooter is pressed.
+    pub goal_pressure: f32,
+    /// Save probability given on target, derived from the above, clamped.
     pub save_range: (f32, f32),
     pub penalty_save_base: f32,
     pub penalty_save_keeper: f32,
@@ -206,6 +200,8 @@ pub struct ControlTuning {
     pub speed_penalty: f32,
     pub high_ball_penalty: f32,
     pub intercept_penalty: f32,
+    /// An opponent within `pressure_radius` of the receiver.
+    pub pressure_penalty: f32,
     pub range: (f32, f32),
 }
 
@@ -236,6 +232,40 @@ impl RestartTuning {
     }
 }
 
+/// Expected goals (spec Fase 5 (c1)): logistic in the goal-mouth angle and
+/// the distance to goal, then scaled by the finisher.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct XgTuning {
+    /// `logit(xG) = intercept + w_angle·angle(rad) + w_dist·distance(m)`.
+    pub intercept: f32,
+    pub w_angle: f32,
+    pub w_dist: f32,
+    /// Finisher factor: `skill_base + skill_k·skill` (1.0 at skill 0.5).
+    pub skill_base: f32,
+    pub skill_k: f32,
+    /// Half-width of a body blocking the goal mouth (m).
+    pub block_radius: f32,
+    /// The carrier shoots when its estimated xG (after blocking) reaches
+    /// this. Item 2 of (c1) replaces it with the common value currency.
+    pub shoot_xg_min: f32,
+}
+
+impl Default for XgTuning {
+    fn default() -> Self {
+        // Fitted through central anchors in the range of public xG models:
+        // 6 m ≈ 0.40, 11 m ≈ 0.17, 20 m ≈ 0.05, 25 m ≈ 0.03. Revisit in (c2).
+        Self {
+            intercept: -1.354,
+            w_angle: 1.447,
+            w_dist: -0.1057,
+            skill_base: 0.6,
+            skill_k: 0.8,
+            block_radius: 0.5,
+            shoot_xg_min: 0.06,
+        }
+    }
+}
+
 /// All engine calibration. `Default` = each block's current calibration.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct TuningParams {
@@ -243,6 +273,7 @@ pub struct TuningParams {
     pub decision: DecisionTuning,
     pub pass: PassTuning,
     pub shot: ShotTuning,
+    pub xg: XgTuning,
     pub duel: DuelTuning,
     pub defending: DefendingTuning,
     pub discipline: DisciplineTuning,
@@ -257,17 +288,9 @@ impl Default for DecisionTuning {
             // First touch + look up ≈ 0.4 s; keepers ≈ 1.5 s.
             min_hold_ticks: 4,
             keeper_hold_ticks: 15,
-            // xG falls steeply with distance/angle; most shots < 18 m.
-            shoot_range: 25.0,
-            shoot_threshold: 0.60,
+            // Beyond ~30 m the xG of any shot is < 0.02: not worth computing.
+            shoot_range: 30.0,
             long_shot_dist: 20.0,
-            shoot_base: 0.25,
-            shoot_skill: 0.75,
-            shoot_gain: 2.2,
-            central_width: 30.0,
-            central_min: 0.2,
-            shot_block_dist: 1.0,
-            shot_blocked_factor: 0.3,
             pass_min_dist: 4.0,
             pass_max_dist: 45.0,
             pass_base: 0.4,
@@ -311,6 +334,9 @@ impl Default for PassTuning {
             angle_pressure: 0.08,
             length_base: 0.15,
             length_skill: 0.12,
+            // A hoofed clearance: ~45 m, up to ~0.5 rad off straight.
+            clear_dist: 45.0,
+            clear_angle: 0.5,
         }
     }
 }
@@ -325,12 +351,12 @@ impl Default for ShotTuning {
             on_target_range: (0.05, 0.85),
             penalty_on_base: 0.8,
             penalty_on_skill: 0.12,
-            // ~70% of on-target shots are saved in real football.
-            save_base: 0.5,
-            save_keeper: 0.4,
-            save_skill: 0.3,
-            save_dist_div: 80.0,
-            save_range: (0.15, 0.92),
+            // An average keeper (gk 0.5) leaves the xG unchanged; the best
+            // concede ~20% fewer, the worst ~20% more.
+            keeper_base: 1.2,
+            keeper_skill: 0.4,
+            goal_pressure: 0.15,
+            save_range: (0.05, 0.97),
             penalty_save_base: 0.12,
             penalty_save_keeper: 0.2,
             penalty_save_skill: 0.1,
@@ -419,13 +445,17 @@ impl Default for ControlTuning {
             max_height: 1.8,
             keeper_max_height: 2.6,
             retouch_ticks: 5,
-            base: 0.6,
-            touch: 0.37,
+            // Professional first touch rarely fails on a normal pass: a
+            // typical receiver (touch 0.5) controls ~90%, a good one ~95%;
+            // fast, high or contested balls are harder.
+            base: 0.82,
+            touch: 0.16,
             easy_speed: 12.0,
             speed_penalty: 0.015,
-            high_ball_penalty: 0.2,
+            high_ball_penalty: 0.15,
             intercept_penalty: 0.25,
-            range: (0.15, 0.97),
+            pressure_penalty: 0.06,
+            range: (0.15, 0.98),
         }
     }
 }

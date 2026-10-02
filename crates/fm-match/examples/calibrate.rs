@@ -17,11 +17,11 @@ fn apply(t: &mut TuningParams, key: &str, v: f32) {
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let u = v as u32;
     match key {
-        "shoot_threshold" => t.decision.shoot_threshold = v,
-        "shot_blocked_factor" => t.decision.shot_blocked_factor = v,
-        "shot_block_dist" => t.decision.shot_block_dist = v,
-        "shoot_gain" => t.decision.shoot_gain = v,
         "shoot_range" => t.decision.shoot_range = v,
+        "shoot_xg_min" => t.xg.shoot_xg_min = v,
+        "block_radius" => t.xg.block_radius = v,
+        "keeper_base" => t.shot.keeper_base = v,
+        "control_pressure" => t.control.pressure_penalty = v,
         "pressure_radius" => t.decision.pressure_radius = v,
         "min_hold_ticks" => t.decision.min_hold_ticks = u,
         "pass_base" => t.decision.pass_base = v,
@@ -44,7 +44,6 @@ fn apply(t: &mut TuningParams, key: &str, v: f32) {
         "w_fresh" => t.defending.w_fresh = v,
         "foul_base" => t.discipline.foul_base = v,
         "on_target_base" => t.shot.on_target_base = v,
-        "save_base" => t.shot.save_base = v,
         "intercept_radius" => t.control.intercept_radius = v,
         "control_base" => t.control.base = v,
         _ => panic!("unknown key {key}"),
