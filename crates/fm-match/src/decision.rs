@@ -4,11 +4,12 @@
 //! Takes only the match state and the actor — no `dt`, no LOD (criterion 18).
 //! Phase 5 replaces the scoring with full role behaviours.
 
-use fm_core::{pitch, Vec2};
+use fm_core::{pitch, GoalEnd, Vec2};
 
 use crate::formation::Role;
 use crate::state::{MatchState, PLAYERS};
 use crate::tick_frame::TickFrame;
+use crate::value;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Action {
@@ -32,33 +33,22 @@ pub enum Action {
 
 pub struct DecisionSystem;
 
-/// Whole ticks in the carry-decay span (it is configured as `f32`).
-fn carry_span_ticks(span: f32) -> u32 {
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // small, ≥ 0
-    let ticks = span.max(0.0).ceil() as u32;
-    ticks
-}
-
-/// Shortest distance from `p` to the segment `a`→`b`.
-fn dist_to_segment(p: Vec2, a: Vec2, b: Vec2) -> f32 {
-    let ab = b - a;
-    let len2 = ab.length_squared();
-    if len2 < 1e-6 {
-        return p.distance(a);
-    }
-    let t = ((p - a).dot(ab) / len2).clamp(0.0, 1.0);
-    p.distance(a + ab * t)
-}
-
 impl DecisionSystem {
     /// What the carrier `me` does this tick. Call only for the ball holder.
+    ///
+    /// Every option is valued in one currency — the probability that this
+    /// possession ends in a goal (spec Fase 5 (c1), item 2): shots by their
+    /// estimated xG, everything else by Expected Threat after the action,
+    /// minus the opponents' threat where the ball would be lost. The carrier
+    /// keeps the ball unless something beats keeping it by `act_margin`.
     #[must_use]
     pub fn choose_action(state: &MatchState, frame: &TickFrame, me: usize) -> Action {
         let t = &state.tuning.decision;
+        let v = &state.tuning.value;
         let p = &state.players[me];
         let my_pos = frame.pos(me);
-        let goal = state.attacking(p.side).goal_centre();
-        let forward = state.attacking(p.side).direction();
+        let end = state.attacking(p.side);
+        let is_keeper = p.role == Role::Goalkeeper;
 
         let nearest_opp = state
             .players
@@ -68,7 +58,7 @@ impl DecisionSystem {
             .map(|(j, _)| frame.pos(j).distance(my_pos))
             .fold(f32::MAX, f32::min);
         let pressed = nearest_opp < t.pressure_radius;
-        let min_hold = if p.role == Role::Goalkeeper {
+        let min_hold = if is_keeper {
             t.keeper_hold_ticks
         } else {
             t.min_hold_ticks
@@ -77,42 +67,85 @@ impl DecisionSystem {
             return Action::Hold;
         }
 
-        let dist_goal = my_pos.distance(goal);
-        // A shot is taken on its own value: the estimated xG after blocking
-        // (spec Fase 5 (c1), item 1).
-        if Self::shot_xg(state, frame, me) >= state.tuning.xg.shoot_xg_min {
-            return Action::Shoot;
-        }
-        let (best_pass, best_to) = Self::best_pass(state, frame, me, my_pos, forward);
-        let dribble_score = Self::dribble_score(state, frame, me, my_pos, forward, dist_goal);
-
-        // Forced release: once carrying has no value left, holding forever is
-        // not an option (it deadlocked the match). Play the best available
-        // pass whatever its score, or clear it. Never a forced shot: a shot
-        // is only taken on its own value.
-        if state.holder_ticks >= t.carry_decay_start + carry_span_ticks(t.carry_decay_span) {
+        // Forced release (deadlock guard): best pass whatever its value, or
+        // clear. Never a forced shot: a shot is only taken on its value.
+        if state.holder_ticks >= v.forced_release_ticks {
+            let (_, best_to) = Self::best_pass(state, frame, me, f32::MIN);
             return best_to.map_or(Action::Clear, |to| Action::Pass { to });
         }
-        if let Some(to) = best_to {
-            if best_pass >= dribble_score {
-                return Action::Pass { to };
+
+        let hold_keep = if pressed { v.hold_keep_pressed } else { 1.0 };
+        #[allow(clippy::cast_precision_loss)] // ticks on the ball ≪ 2^23
+        let waited = state.holder_ticks as f32;
+        let hold_ev = Self::keep_or_lose(state, my_pos, my_pos, end, hold_keep)
+            * (1.0 - v.hold_erosion * waited).max(0.0);
+
+        // Candidates in a fixed order; strict `>` keeps the earliest on ties.
+        let mut best = Action::Hold;
+        let mut best_ev = hold_ev + v.act_margin;
+        // Coverage only lowers a shot's value: skip it when even the
+        // unblocked shot cannot win (same result, less work).
+        let open_shot = Self::open_shot_xg(state, frame, me);
+        if open_shot > best_ev {
+            let shot_ev = open_shot * (1.0 - crate::xg::coverage(state, frame, me, end));
+            if shot_ev > best_ev {
+                best = Action::Shoot;
+                best_ev = shot_ev;
             }
         }
-        if dribble_score > f32::MIN {
-            let target = Vec2::new(
-                (my_pos.x + forward * t.dribble_step).clamp(1.0, pitch::LENGTH - 1.0),
-                // Drift slightly toward the goal's centre line.
-                my_pos.y + (goal.y - my_pos.y).clamp(-1.0, 1.0),
-            );
-            return Action::Dribble { target };
+        let (best_pass_ev, best_to) = Self::best_pass(state, frame, me, best_ev);
+        #[cfg(debug_assertions)]
+        {
+            // The pruned search must agree with the full one whenever its
+            // result can be chosen.
+            let (full_ev, full_to) = Self::best_pass(state, frame, me, f32::MIN);
+            if full_ev > best_ev {
+                debug_assert_eq!(
+                    (best_pass_ev.to_bits(), best_to),
+                    (full_ev.to_bits(), full_to)
+                );
+            } else {
+                debug_assert!(best_to.is_none() || best_pass_ev <= best_ev);
+            }
         }
-        Action::Hold
+        if let Some(to) = best_to {
+            if best_pass_ev > best_ev {
+                best = Action::Pass { to };
+                best_ev = best_pass_ev;
+            }
+        }
+        if !is_keeper {
+            let (dribble_ev, target) = Self::dribble(state, frame, me);
+            if dribble_ev > best_ev {
+                best = Action::Dribble { target };
+            }
+        }
+        best
+    }
+
+    /// `keep · xT(at_keep) − (1 − keep) · opponents' xT(at_lose)`.
+    fn keep_or_lose(
+        state: &MatchState,
+        at_keep: Vec2,
+        at_lose: Vec2,
+        end: GoalEnd,
+        keep: f32,
+    ) -> f32 {
+        let grid = &state.tuning.value.xt;
+        keep * value::xt(grid, at_keep, end)
+            - (1.0 - keep) * value::xt(grid, at_lose, end.opposite())
     }
 
     /// The carrier's estimated xG for a shot now: geometry × finisher ×
     /// uncovered share of the goal mouth. Zero for keepers and out of range.
     #[must_use]
     pub fn shot_xg(state: &MatchState, frame: &TickFrame, me: usize) -> f32 {
+        let end = state.attacking(state.players[me].side);
+        Self::open_shot_xg(state, frame, me) * (1.0 - crate::xg::coverage(state, frame, me, end))
+    }
+
+    /// Shot xG before blocking: geometry × finisher.
+    fn open_shot_xg(state: &MatchState, frame: &TickFrame, me: usize) -> f32 {
         let t = &state.tuning.decision;
         let p = &state.players[me];
         let end = state.attacking(p.side);
@@ -122,23 +155,85 @@ impl DecisionSystem {
             return 0.0;
         }
         let skill = crate::xg::shot_skill(&p.attrs, dist_goal, t.long_shot_dist);
-        crate::xg::xg(pos, end, &state.tuning.xg)
-            * crate::xg::finisher(skill, &state.tuning.xg)
-            * (1.0 - crate::xg::coverage(state, frame, me, end))
+        crate::xg::xg(pos, end, &state.tuning.xg) * crate::xg::finisher(skill, &state.tuning.xg)
     }
 
-    /// Best pass target and its score: progress toward goal, open lane, not
-    /// too long.
+    /// Estimated chance that a pass from `me` to `to` arrives and is
+    /// controlled: not cut out in the lane × on target × first touch.
+    #[must_use]
+    pub fn pass_success(state: &MatchState, frame: &TickFrame, me: usize, to: usize) -> f32 {
+        let dt = &state.tuning.decision;
+        let v = &state.tuning.value;
+        let ct = &state.tuning.control;
+        let p = &state.players[me];
+        let r = &state.players[to];
+        let from = frame.pos(me);
+        let target = frame.pos(to);
+        let d = from.distance(target);
+        let dir = (target - from) / d.max(1e-3);
+        let pressure_r2 = dt.pressure_radius * dt.pressure_radius;
+        // Probability the pass survives every opponent along its lane.
+        let mut survive = 1.0;
+        let mut receiver_pressed = false;
+        for (j, o) in state.players.iter().enumerate() {
+            if o.side == p.side || !o.active() {
+                continue;
+            }
+            let oj = frame.pos(j);
+            receiver_pressed |= (oj - target).length_squared() < pressure_r2;
+            let rel = oj - from;
+            let along = rel.dot(dir).clamp(0.0, d);
+            let reach = v.body_reach + o.top_speed * (along / v.pass_speed - v.react_s).max(0.0);
+            // Squared distances first: the square root only for the few
+            // opponents actually within reach of the lane.
+            let off2 = (rel - dir * along).length_squared();
+            if off2 < reach * reach {
+                survive *= 1.0 - v.pass_intercept_max * (1.0 - fm_core::math::sqrt(off2) / reach);
+            }
+        }
+        let skill = if p.role == Role::Goalkeeper {
+            f32::from(p.attrs.goalkeeping.distribution) / 100.0
+        } else {
+            (0.5 * f32::from(p.attrs.technical.passing)
+                + 0.25 * f32::from(p.attrs.technical.technique)
+                + 0.25 * f32::from(p.attrs.mental.vision))
+                / 100.0
+        };
+        let accuracy = (1.0 - d * v.pass_error_per_m * (1.5 - skill)).max(v.pass_accuracy_min);
+        let touch = (0.6 * f32::from(r.attrs.technical.first_touch)
+            + 0.4 * f32::from(r.attrs.technical.technique))
+            / 100.0;
+        let control = (ct.base + ct.touch * touch
+            - if d > state.tuning.pass.lofted_dist {
+                ct.high_ball_penalty
+            } else {
+                0.0
+            }
+            - if receiver_pressed {
+                ct.pressure_penalty
+            } else {
+                0.0
+            })
+        .clamp(ct.range.0, ct.range.1);
+        survive * accuracy * control
+    }
+
+    /// Best pass target and its expected value: success × xT at the
+    /// receiver − failure × the opponents' xT there. Targets whose threat
+    /// cannot beat `floor` are skipped before the costly success estimate
+    /// (a pass is never worth more than the threat where it arrives); the
+    /// result is then the same whenever it beats `floor`.
     fn best_pass(
         state: &MatchState,
         frame: &TickFrame,
         me: usize,
-        my_pos: Vec2,
-        forward: f32,
+        floor: f32,
     ) -> (f32, Option<u8>) {
         let k = &state.tuning.decision;
         let p = &state.players[me];
-        let mut best_pass = f32::MIN;
+        let my_pos = frame.pos(me);
+        let end = state.attacking(p.side);
+        let mut best_ev = f32::MIN;
         let mut best_to = None;
         for (i, t) in state.players.iter().enumerate() {
             if i == me || t.side != p.side || !t.active() {
@@ -149,74 +244,62 @@ impl DecisionSystem {
             if !(k.pass_min_dist..=k.pass_max_dist).contains(&d) {
                 continue;
             }
-            let progress = (tp.x - my_pos.x) * forward;
-            let openness = state
+            let grid = &state.tuning.value.xt;
+            let gain = value::xt(grid, tp, end);
+            if gain <= floor || gain <= best_ev {
+                continue;
+            }
+            let success = Self::pass_success(state, frame, me, i);
+            let ev = success * gain - (1.0 - success) * value::xt(grid, tp, end.opposite());
+            // Strict `>` keeps the lowest index on ties: deterministic.
+            if ev > best_ev {
+                best_ev = ev;
+                best_to = u8::try_from(i).ok();
+            }
+        }
+        (best_ev, best_to)
+    }
+
+    /// Best dribble step (straight on or 45° either way): expected value
+    /// and target. Into space the ball is nearly always kept; into a marker
+    /// it depends on dribbling (item 7 replaces this with the 1v1 duel).
+    fn dribble(state: &MatchState, frame: &TickFrame, me: usize) -> (f32, Vec2) {
+        let t = &state.tuning.decision;
+        let v = &state.tuning.value;
+        let p = &state.players[me];
+        let my_pos = frame.pos(me);
+        let end = state.attacking(p.side);
+        let forward = end.direction();
+        let cramped_keep = v.dribble_keep_cramped_base
+            + v.dribble_keep_cramped_skill * f32::from(p.attrs.technical.dribbling) / 100.0;
+        let mut best = (f32::MIN, my_pos);
+        // Straight first so it wins ties; diagonals are unit vectors too.
+        for dy in [0.0, 1.0, -1.0] {
+            let dir = Vec2::new(forward, dy).normalize();
+            let ahead = my_pos + dir * t.dribble_probe_ahead;
+            let space = state
                 .players
                 .iter()
                 .enumerate()
                 .filter(|(_, o)| o.side != p.side && o.active())
-                .map(|(j, _)| dist_to_segment(frame.pos(j), my_pos, tp))
-                .fold(k.pass_lane_cap, f32::min);
-            let mut score =
-                k.pass_base + progress / k.pass_progress_div + openness / k.pass_open_div
-                    - d / k.pass_len_div;
-            // Lanes narrower than ~2.5 m tend to get cut out.
-            if openness < k.pass_narrow_lane {
-                score -= (k.pass_narrow_lane - openness) * k.pass_narrow_penalty;
-            }
-            if t.role == Role::Goalkeeper {
-                score -= k.pass_to_keeper_penalty;
-            }
-            // Strict `>` keeps the lowest index on ties: deterministic.
-            if score > best_pass {
-                best_pass = score;
-                best_to = u8::try_from(i).ok();
+                .map(|(j, _)| frame.pos(j).distance(ahead))
+                .fold(f32::MAX, f32::min);
+            let keep = if space > t.dribble_space_min {
+                v.dribble_keep_open
+            } else {
+                cramped_keep
+            };
+            let step = my_pos + dir * t.dribble_step;
+            let target = Vec2::new(
+                step.x.clamp(1.0, pitch::LENGTH - 1.0),
+                step.y.clamp(1.0, pitch::WIDTH - 1.0),
+            );
+            let ev = Self::keep_or_lose(state, target, my_pos, end, keep);
+            if ev > best.0 {
+                best = (ev, target);
             }
         }
-        (best_pass, best_to)
-    }
-
-    /// Dribble value: needs space in front; decays with time on the ball.
-    fn dribble_score(
-        state: &MatchState,
-        frame: &TickFrame,
-        me: usize,
-        my_pos: Vec2,
-        forward: f32,
-        dist_goal: f32,
-    ) -> f32 {
-        let t = &state.tuning.decision;
-        let p = &state.players[me];
-        if p.role == Role::Goalkeeper {
-            return f32::MIN;
-        }
-        let ahead = Vec2::new(my_pos.x + forward * t.dribble_probe_ahead, my_pos.y);
-        let space = state
-            .players
-            .iter()
-            .enumerate()
-            .filter(|(_, o)| o.side != p.side && o.active())
-            .map(|(j, _)| frame.pos(j).distance(ahead))
-            .fold(f32::MAX, f32::min);
-        // Long carries are rare: the value of dribbling decays after ~2.5 s
-        // on the ball, pushing the carrier to release it.
-        #[allow(clippy::cast_precision_loss)] // ticks on the ball ≪ 2^23
-        let carry_decay = (1.0
-            - (state.holder_ticks.saturating_sub(t.carry_decay_start) as f32) / t.carry_decay_span)
-            .max(0.0);
-        // Near goal, running into a packed box rarely beats a pass.
-        let near_goal = if dist_goal < t.near_goal_dist {
-            t.near_goal_factor
-        } else {
-            1.0
-        };
-        if space > t.dribble_space_min {
-            (t.dribble_base + space.min(t.dribble_space_cap) / t.dribble_space_div)
-                * carry_decay
-                * near_goal
-        } else {
-            t.dribble_cramped * carry_decay * near_goal
-        }
+        best
     }
 
     /// cos of the angle at the carrier between the defender and the goal the
@@ -386,7 +469,7 @@ impl DecisionSystem {
 
 #[cfg(test)]
 mod tests {
-    use super::{dist_to_segment, Action, DecisionSystem};
+    use super::{Action, DecisionSystem};
     use crate::test_support::placed_state;
     use crate::tick_frame::TickFrame;
     use fm_core::{GoalEnd, Vec2};
@@ -404,8 +487,31 @@ mod tests {
     }
 
     #[test]
-    fn open_shot_is_taken_on_its_own_value() {
-        assert_eq!(striker_at(11.0, 5, &[]), Action::Shoot);
+    fn shoots_when_the_shot_beats_carrying_on() {
+        // Unmarked 7 m out: xG ≈ 0.35 beats the threat of carrying closer.
+        assert_eq!(striker_at(7.0, 5, &[]), Action::Shoot);
+    }
+
+    #[test]
+    fn carries_in_when_unmarked_far_out() {
+        // Unmarked 20 m out (xG ≈ 0.05): carrying into the box is worth more.
+        assert!(matches!(striker_at(20.0, 5, &[]), Action::Dribble { .. }));
+    }
+
+    #[test]
+    fn passes_into_threat_through_an_open_lane_only() {
+        let c = GoalEnd::Right.goal_centre();
+        // Carrier 45 m out with a marker in front of them, off to one side
+        // (dribbling is cramped); a team-mate 20 m further forward in space.
+        let marker = (13, Vec2::new(c.x - 42.0, c.y - 3.0));
+        let mate = (9, Vec2::new(c.x - 25.0, c.y + 12.0));
+        assert_eq!(striker_at(45.0, 5, &[marker, mate]), Action::Pass { to: 9 });
+        // A defender standing in that lane: the pass is no longer worth it.
+        let in_lane = (14, Vec2::new(c.x - 35.0, c.y + 6.0));
+        assert_ne!(
+            striker_at(45.0, 5, &[marker, mate, in_lane]),
+            Action::Pass { to: 9 }
+        );
     }
 
     #[test]
@@ -427,17 +533,6 @@ mod tests {
         assert_eq!(
             striker_at(15.0, 500, &[blocker, mate]),
             Action::Pass { to: 9 }
-        );
-    }
-
-    #[test]
-    fn segment_distance() {
-        let a = Vec2::new(0.0, 0.0);
-        let b = Vec2::new(10.0, 0.0);
-        assert!((dist_to_segment(Vec2::new(5.0, 3.0), a, b) - 3.0).abs() < 1e-5);
-        assert!((dist_to_segment(Vec2::new(-4.0, 3.0), a, b) - 5.0).abs() < 1e-5);
-        assert!(
-            (dist_to_segment(Vec2::new(1.0, 1.0), a, a) - fm_core::math::sqrt(2.0)).abs() < 1e-5
         );
     }
 }

@@ -5,6 +5,7 @@
 
 use crate::anchor::AnchorTuning;
 use crate::events::RestartKind;
+use crate::value::{KARUN_SINGH_XT, XT_COLS, XT_ROWS};
 
 /// Carrier decision: hold / shoot / pass / dribble scoring.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -20,30 +21,9 @@ pub struct DecisionTuning {
     pub long_shot_dist: f32,
     pub pass_min_dist: f32,
     pub pass_max_dist: f32,
-    pub pass_base: f32,
-    pub pass_progress_div: f32,
-    /// Lane openness is capped at this (m).
-    pub pass_lane_cap: f32,
-    pub pass_open_div: f32,
-    pub pass_len_div: f32,
-    /// Lanes narrower than this are penalised (m)…
-    pub pass_narrow_lane: f32,
-    /// …by this much per metre missing.
-    pub pass_narrow_penalty: f32,
-    pub pass_to_keeper_penalty: f32,
     /// How far ahead the dribble space probe looks (m).
     pub dribble_probe_ahead: f32,
     pub dribble_space_min: f32,
-    pub dribble_base: f32,
-    pub dribble_space_cap: f32,
-    pub dribble_space_div: f32,
-    pub dribble_cramped: f32,
-    /// Dribble value starts decaying after this many ticks on the ball…
-    pub carry_decay_start: u32,
-    /// …reaching zero this many ticks later.
-    pub carry_decay_span: f32,
-    pub near_goal_dist: f32,
-    pub near_goal_factor: f32,
     /// Distance of each dribble step target (m).
     pub dribble_step: f32,
     /// Fraction of top speed when carrying / holding the ball.
@@ -245,9 +225,6 @@ pub struct XgTuning {
     pub skill_k: f32,
     /// Half-width of a body blocking the goal mouth (m).
     pub block_radius: f32,
-    /// The carrier shoots when its estimated xG (after blocking) reaches
-    /// this. Item 2 of (c1) replaces it with the common value currency.
-    pub shoot_xg_min: f32,
 }
 
 impl Default for XgTuning {
@@ -261,7 +238,72 @@ impl Default for XgTuning {
             skill_base: 0.6,
             skill_k: 0.8,
             block_radius: 0.5,
-            shoot_xg_min: 0.06,
+        }
+    }
+}
+
+/// Common value currency of the carrier's options (spec Fase 5 (c1),
+/// item 2): expected value = P(keep) × xT(after) − P(lose) × opponents'
+/// xT(where lost); shots are worth their estimated xG.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ValueTuning {
+    /// Expected Threat grid, `[row][col]` (see `value::KARUN_SINGH_XT`).
+    pub xt: [[f32; XT_COLS]; XT_ROWS],
+    /// An action must beat keeping the ball by this much to be taken.
+    pub act_margin: f32,
+    /// Pass interception estimate: an opponent cuts a pass if, by the time
+    /// the ball passes him, his reach (`body_reach` + top speed × time
+    /// after `react_s`) covers his distance to the lane. The chance falls
+    /// linearly from `intercept_max` (on the lane) to 0 (at the reach).
+    /// The ball is assumed to travel at `pass_speed` m/s on average.
+    pub pass_intercept_max: f32,
+    pub pass_speed: f32,
+    pub react_s: f32,
+    pub body_reach: f32,
+    /// Pass accuracy: `1 − d · error_per_m · (1.5 − skill)`, floored.
+    pub pass_error_per_m: f32,
+    pub pass_accuracy_min: f32,
+    /// Keeping the ball while dribbling into space, and into a marker:
+    /// `cramped_base + cramped_skill · dribbling`.
+    pub dribble_keep_open: f32,
+    pub dribble_keep_cramped_base: f32,
+    pub dribble_keep_cramped_skill: f32,
+    /// Keeping the ball when holding it under pressure.
+    pub hold_keep_pressed: f32,
+    /// Share of the current threat a static possession loses per tick on
+    /// the ball (the defence settles while the carrier waits): holding is
+    /// worth `1 − erosion · ticks_on_ball` of the threat, floored at 0.
+    pub hold_erosion: f32,
+    /// After this many ticks on the ball the carrier must release it (pass
+    /// or clear): the deadlock guard of Fase 5 (b).
+    pub forced_release_ticks: u32,
+}
+
+impl Default for ValueTuning {
+    fn default() -> Self {
+        Self {
+            xt: KARUN_SINGH_XT,
+            // ~0.2% goal probability: below that, passing is not worth it.
+            act_margin: 0.002,
+            // A defender squarely in the lane cuts most passes.
+            pass_intercept_max: 0.7,
+            // ~14 m/s average over a ground pass; 0.25 s to react; a leg
+            // reaches ~0.8 m.
+            pass_speed: 14.0,
+            react_s: 0.25,
+            body_reach: 0.8,
+            // Average passer: ~88% on target at 30 m; elite ~94%.
+            pass_error_per_m: 0.004,
+            pass_accuracy_min: 0.5,
+            dribble_keep_open: 0.97,
+            // An average dribbler keeps it ~65% of the time into a marker.
+            dribble_keep_cramped_base: 0.45,
+            dribble_keep_cramped_skill: 0.4,
+            hold_keep_pressed: 0.85,
+            // Worth nothing after ~3.3 s of waiting.
+            hold_erosion: 0.03,
+            // 5.5 s on the ball (the old carry-decay end).
+            forced_release_ticks: 55,
         }
     }
 }
@@ -274,6 +316,7 @@ pub struct TuningParams {
     pub pass: PassTuning,
     pub shot: ShotTuning,
     pub xg: XgTuning,
+    pub value: ValueTuning,
     pub duel: DuelTuning,
     pub defending: DefendingTuning,
     pub discipline: DisciplineTuning,
@@ -293,25 +336,8 @@ impl Default for DecisionTuning {
             long_shot_dist: 20.0,
             pass_min_dist: 4.0,
             pass_max_dist: 45.0,
-            pass_base: 0.4,
-            pass_progress_div: 40.0,
-            pass_lane_cap: 6.0,
-            pass_open_div: 10.0,
-            pass_len_div: 80.0,
-            pass_narrow_lane: 2.5,
-            pass_narrow_penalty: 0.25,
-            pass_to_keeper_penalty: 0.3,
             dribble_probe_ahead: 6.0,
             dribble_space_min: 5.0,
-            dribble_base: 0.55,
-            dribble_space_cap: 20.0,
-            dribble_space_div: 40.0,
-            dribble_cramped: 0.15,
-            // Long carries are rare: decays after ~2.5 s on the ball.
-            carry_decay_start: 25,
-            carry_decay_span: 30.0,
-            near_goal_dist: 22.0,
-            near_goal_factor: 0.5,
             dribble_step: 5.0,
             // Running with the ball ≈ 60% of sprint speed.
             carry_urgency: 0.6,

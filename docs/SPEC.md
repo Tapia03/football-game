@@ -741,6 +741,48 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
     próprio, nenhum forçado); 72% de menos de 11 m, porque o portador ainda
     conduz até perto do gol antes de chutar. Os passes subiram porque o
     domínio deixou de devolver a bola.
+- **(c1) item 2 — tabela xT + moeda comum `[ALTERADO v2.1]`:**
+  - **Moeda:** toda opção do portador vale "probabilidade de esta posse
+    terminar em gol". Chute = xG estimado (item 1). Passe, condução e
+    segurar = P(manter) × xT(depois) − P(perder) × xT do adversário onde a
+    bola se perde. O portador age se a melhor opção supera segurar por
+    `act_margin` (0,002).
+  - **xT** (`value.rs`): grade aberta 12×8 de Karun Singh (Premier League;
+    cópia usada: a republicada no repositório público de tutoriais de McKay
+    Johns, `xT_Grid.csv`, porque o site original é bloqueado pelo proxy do
+    ambiente), interpolação bilinear entre centros de células.
+  - **Sucesso do passe (estimado, sem RNG):** sobrevivência a cada
+    adversário × precisão (distância e habilidade) × domínio do receptor
+    (mesma fórmula do item 1). Um adversário corta se o alcance dele quando
+    a bola passa (`0,8 m + velocidade × (t − 0,25 s)`, bola a ~14 m/s)
+    cobre a distância até a linha. Quem está colado no passador não reage a
+    tempo; quem está longe na linha tem tempo. Substitui "abertura < 4 m".
+  - **Condução:** melhor de três direções (frente e diagonais 45°). No
+    espaço mantém 97%; contra marcador, `0,45 + 0,4 × drible` (o item 7
+    troca isso pelo duelo 1×1).
+  - **Segurar:** vale `1 − 0,03 × ticks com a bola` do xT atual (posse
+    parada perde valor enquanto a defesa se organiza; zero em ~3,3 s). Uma
+    erosão fixa por decisão foi testada e falhou (o portador segurava até a
+    saída forçada).
+  - **Removidas** as notas ad hoc de passe e condução (base, progresso,
+    abertura, comprimento, linha estreita, passe ao goleiro, decaimento da
+    condução, fator perto do gol) e o limiar fixo de xG do item 1.
+  - **Saída forçada** continua como trava de impasse (55 ticks): melhor
+    passe pelo valor ou `Clear`.
+  - **Otimização exata:** o valor de um passe nunca passa do xT do destino,
+    então destinos cujo xT não supera o melhor valor atual são descartados
+    antes da estimativa cara; a cobertura do gol só é calculada se o chute
+    descoberto pode vencer. Um `debug_assert` refaz a busca completa e
+    compara bit a bit em todas as partidas dos testes em debug.
+  - **Paridade:** golden regenerado neste commit, de propósito.
+  - **Medido (30 partidas; não é meta):** 4,5 gols, 21 chutes (7,5 no
+    alvo), 1.630 passes (84%), 22 botes. Passes saem sobretudo entre 1 e
+    2,5 s com a bola; 16–19% ainda pela saída forçada.
+  - **Custo:** +32% de instruções sobre o item 1 (callgrind, uma partida:
+    575M → 760M). O perfil aponta `best_pass` (38%: estimativa de sucesso
+    para até 10 destinos em todo tick com a bola, que agora é 71% do jogo)
+    e a interpolação xT (~9–16%). Acima do orçamento: decisão pendente com
+    o usuário antes do item 3.
 - **Impedimento — só a linha, sem apito `[ALTERADO v2.1]`:**
   - a linha é dado do `TickFrame`: o penúltimo defensor (o goleiro conta),
     calculado uma vez por tick a partir das posições;

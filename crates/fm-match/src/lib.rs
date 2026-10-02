@@ -23,6 +23,7 @@ pub mod tactics;
 mod test_support;
 pub mod tick_frame;
 pub mod tuning;
+pub mod value;
 pub mod xg;
 
 pub use anchor::{AnchorTuning, FormationAnchor, PhaseShape};

@@ -12,7 +12,7 @@
 )]
 use fm_match::demo::demo_match;
 use fm_match::state::{BallState, FlightIntent};
-use fm_match::{MatchEngine, Side, TickFrame};
+use fm_match::{Action, DecisionSystem, MatchEngine, Side, TickFrame};
 
 fn bucket(v: f32, edges: &[f32]) -> usize {
     edges.iter().position(|&e| v < e).unwrap_or(edges.len())
@@ -38,6 +38,8 @@ fn main() {
     let (mut held, mut flight, mut dead) = (0u64, 0u64, 0u64);
     let mut seq_passes: Vec<u32> = Vec::new();
     let (mut cur_side, mut cur_passes) = (None::<Side>, 0u32);
+    // Carrier's choice each tick it holds the ball: hold, dribble, pass, shoot, clear.
+    let mut choice = [0u64; 5];
     for seed in 0..n {
         let (db, setup) = demo_match(seed);
         let mut e = MatchEngine::new(&setup, &db);
@@ -49,6 +51,14 @@ fn main() {
             match s.ball {
                 BallState::Held { holder } => {
                     held += 1;
+                    let f = TickFrame::capture(s);
+                    choice[match DecisionSystem::choose_action(s, &f, holder as usize) {
+                        Action::Hold => 0,
+                        Action::Dribble { .. } => 1,
+                        Action::Pass { .. } => 2,
+                        Action::Shoot => 3,
+                        _ => 4,
+                    }] += 1;
                     let side = s.players[holder as usize].side;
                     if cur_side != Some(side) {
                         if cur_side.is_some() {
@@ -123,6 +133,10 @@ fn main() {
         q(0.5),
         q(0.9),
         100.0 * shot_ht.iter().filter(|&&t| t >= 55).count() as f64 / shot_ht.len() as f64
+    );
+    println!(
+        "carrier choice [hold | dribble | pass | shoot | clear]: {}",
+        pct(&choice)
     );
     let mut sp = [0u64; 5];
     for &k in &seq_passes {
