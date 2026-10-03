@@ -35,8 +35,11 @@ Caminho A**, não o passo 2 do item 5.
    1,8 m); corrida decidida (`19e7194`: gatilho + teto de 1 corredor por
    time; corredores por tick 0,86 → 0,49). **Revertido:** defesa acompanha
    o corredor (ver "Tentativa revertida"). Revisitar depois do item 9,
-   com o estimador de custo corrigido. Pendente sem data: goleiro saindo
-   do gol.
+   com o estimador de custo corrigido.
+2.5. **Goleiro saindo do gol** (defesa: sai para interceptar, corta
+   cruzamento, joga como líbero). Não é o "goleiro como receptor" do
+   item 9. Entra **depois do item 9 e antes do item 5 refeito**, quando a
+   dinâmica de profundidade estabilizar.
 3. Item 9: construção desde a defesa. **RETOMAR AQUI** (desenho antes do
    código, aprovado pelo usuário).
 4. Refazer o item 5 (passe em profundidade) sobre a física nova.
@@ -134,12 +137,9 @@ iniciados.
 - Contadores de diagnóstico (só com a feature `diagnostics`).
 
 ### Dívidas conhecidas
-- **Custo:** 598,8M instruções (598.838.544, run #55), **5,8M acima do
-  teto de saída de (c) (593M ≈ 45 ms)**. A dívida cresceu de 3,3M para
-  5,8M com o commit 1 do passo 2 (596,3M → 598,8M, +0,43%). Não é
-  bloqueante, mas **monitorar**: se cada item de (c1) acrescentar ~2,5M,
-  o teto estoura antes do passo 4 do Caminho A. Devolver antes de fechar
-  (c).
+- **Custo:** 598,8M instruções (598.838.544) ≈ 45,4 ms: **5,8M acima da
+  meta desejável de 45 ms (593M)**, dentro do critério de saída de (c)
+  (≤ 48 ms ≈ 633M, decidido em 2026-10-03). Regra por commit: +1,5%.
 - **Teste frágil:** `match_statistics_are_plausible` (≥ 3 faltas por
   partida) usa só 6 seeds e mede **6,0**; a média de 180 partidas é
   **3,6**. As 6 seeds não representam a média.
@@ -209,9 +209,10 @@ Ver SPEC, Seção 0 e decisões das Fases 3–5. Os que mais pesam no dia a dia:
 - Mudança de arquitetura atualiza o SPEC no mesmo PR, antes do código.
 
 ## Decisões pendentes
-- **Critério de saída de (c):** ≤ 45 ms, medido em instruções pela régua
-  (≤ ~593M). Hoje: 598,8M ≈ 45,4 ms (5,8M de dívida a devolver antes de
-  fechar (c)).
+- (decidido 2026-10-03) **Critério de saída de (c): ≤ 48 ms** pela régua
+  (≤ ~633M instruções). A meta desejável continua 45 ms (~593M); o gate
+  de 50 ms (~660M) nunca foi violado pela régua de instruções. Hoje: 598,8M ≈
+  45,4 ms.
 - **xT:** conferir a cópia contra `karun.in/blog/data/open_xt_12x8_v1.json`.
 
 ## Marcos

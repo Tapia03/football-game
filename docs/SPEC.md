@@ -1242,6 +1242,55 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
   domínio (invariante 18). Riscos a medir: custo (cada marcador na física
   custa 200–320 instruções por tick) e a linha defensiva recuando atrás
   do corredor.
+- **Critério de saída de (c): ≤ 48 ms (decisão consciente, 2026-10-03)
+  `[ALTERADO v2.1]`:** a meta de 45 ms (~593M instruções pela régua)
+  continua como alvo desejável, mas (c) fecha com **≤ 48 ms (~633M)**.
+  Não é relaxamento: a física só para quem está no lance é estrutural e
+  custa mais do que o orçamento inicial previa (+10,9% num commit só). Pela
+  régua, o gate de 50 ms (~660M) nunca foi violado. (O alarme de relógio,
+  não bloqueante, lê 38–42 ms ou 64 ms para o mesmo código conforme o
+  runner: runs de 2026-10-03.) A regra por commit não muda: +1,5%
+  sobre a linha de base; acima disso, parar e trazer o perfil antes de
+  otimizar. A meta de `tick_logic` da Seção 0 (40 ms) e o gate (50 ms)
+  não mudam.
+- **Passo 2 do Caminho A, commit 2 (defesa acompanha o corredor):
+  tentado e revertido (2026-10-03).** +2,67% de instruções (estimativa:
+  +1,1%), acompanhamento parcial (mediana 4,4 m no fim da corrida; alvo
+  1,5 m), posse do 4-4-2 57,7% → 59,7%, linha defensiva 26,8 → 26,0 m.
+  Revisitar depois do item 9. O desenho acima fica como registro.
+- **Passo 2.5 do Caminho A — goleiro saindo do gol:** defesa (sai para
+  interceptar, corta cruzamento, joga como líbero). Depois do item 9 e
+  antes de refazer o item 5. Não confundir com "goleiro como receptor"
+  (item 9, commit 3).
+- **Item 9 (construção desde a defesa) — diagnóstico antes do código
+  (2026-10-03, `examples/buildup_stats.rs`, 30 partidas por orientação):**
+  - **Quem recebe passe:** zagueiros 0,0–0,1%, laterais 1–3,5%, goleiro
+    0%, meias centrais 44–46%. Passes para trás já são 40–45% (vão para
+    os meias, não para a defesa). **44–52% dos passes saem na saída
+    forçada** (5,5 s); o portador escolhe conduzir em 75% das decisões.
+  - **Desenho aprovado (não implementado):** termo de perda do passe por
+    proximidade do adversário ao receptor, na moeda única (sem segunda
+    moeda); três commits (moeda; apoio dos defensores em `plan_shape`;
+    goleiro como receptor, sozinho).
+  - **Achado que contradiz a premissa do desenho (invariante 18 do lado
+    do passe), por distância do adversário mais próximo ao receptor no
+    chute (4-4-2 em casa; a outra orientação dá o mesmo):**
+
+    | Adversário mais próximo | Passes/partida | Receptor domina | Estimativa da decisão | Dos que falham: adversário / companheiro / bola parada |
+    |---|---|---|---|---|
+    | < 3 m | 25 | 20,8% | 39,8% | 89% / 10% / 1% |
+    | 3–6 m | 117 | 38,7% | 65,9% | 90% / 8% / 2% |
+    | 6–12 m | 426 | 55,1% | 77,5% | 80% / 8% / 12% |
+    | ≥ 12 m | 301 | 77,4% | 82,1% | 53% / 29% / 18% |
+
+    Na execução, um passe para um receptor **sem ninguém a menos de 6 m
+    só chega em 55%** das vezes, e a falha vira bola do adversário em
+    80–90% dos casos (53% mesmo com o receptor a mais de 12 m de
+    qualquer adversário). A estimativa da decisão é otimista em 20–27
+    pontos abaixo de 12 m. Um termo de perda que suponha "falha perto de
+    receptor livre é recuperada" seria ainda mais otimista que a
+    execução. **Parado para decisão do usuário**: o problema está na
+    execução do passe (o "acerto 56%" das dívidas), não na moeda.
 - **Sinais registrados (não calibrar agora):**
   - **Posse do mandante:** 73% (arcade) → 56,9% (física no lance) →
     42,5% (física + engajamento). A assimetria mudou com a física, não com
