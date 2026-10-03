@@ -23,6 +23,7 @@ fn apply(t: &mut TuningParams, key: &str, v: f32) {
         "act_margin" => t.value.act_margin = v,
         "through_balls" => t.value.through_balls = v > 0.5,
         "run_ticks" => t.runs.run_ticks = u,
+        "max_runners" => t.runs.max_runners = u,
         "decision_cadence_ticks" => t.decision.decision_cadence_ticks = u,
         "pass_intercept_max" => t.value.pass_intercept_max = v,
         "hold_keep_pressed" => t.value.hold_keep_pressed = v,
@@ -56,7 +57,11 @@ fn main() {
         let (k, v) = arg.split_once('=').expect("key=value");
         apply(&mut tuning, k, v.parse().expect("number"));
     }
-    let n = 30u32;
+    // FM_MATCHES overrides the 30 matches per run (180 for a full measure).
+    let n: u32 = std::env::var("FM_MATCHES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(30);
     let (mut goals, mut shots, mut on, mut passes, mut ok, mut tackles, mut fouls) =
         (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
     let mut dead = 0.0;
@@ -273,9 +278,10 @@ fn main() {
         100.0 * (passes_ok_all - through_ok) / f64::max(passes_all - throughs, 1.0)
     );
     println!(
-        "  runs/match {:.0} | ticks with a runner {:.1}% | runner-ticks past the line {:.1}%",
+        "  runs/match {:.0} | ticks with a runner {:.1}% | runners per tick {:.3} | runner-ticks past the line {:.1}%",
         runs_started as f64 / n,
         100.0 * run_ticks as f64 / (54_000.0 * n),
+        runner_ticks as f64 / (54_000.0 * n),
         100.0 * beyond as f64 / runner_ticks.max(1) as f64
     );
     println!(

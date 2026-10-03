@@ -2,9 +2,13 @@
 //! side in possession run into the most open lane up to — never past — the
 //! offside line, so that there is somebody to play forward to.
 //!
-//! Deterministic (no RNG). Runners pick their target on the carrier's
-//! decision cadence, all on the same tick, and the offside line is computed
-//! only on those ticks (spec: item 3 debt). Between looks the runner keeps
+//! A run is decided, not just allowed (spec Fase 5, Caminho A passo 2): it
+//! starts only when the carrier can serve it (not pressed, the run ends
+//! within passing range) and the side has fewer than `max_runners` runs
+//! live; the runner with the most open lane goes.
+//!
+//! Deterministic (no RNG). Runs start on the carrier's decision cadence,
+//! and the offside line is computed only on those ticks (spec: item 3 debt). Between looks the runner keeps
 //! running to the same point; the line may move meanwhile — the engine does
 //! not flag offside (known bias, spec Fase 5 "Impedimento").
 
@@ -55,29 +59,61 @@ pub fn plan_runs(state: &mut MatchState, frame: &mut TickFrame) {
             && p.run_until <= tick
             && p.run_ready_tick <= tick
     };
-    // Compute the line only if somebody could use it.
-    if !(start..start + 11).any(|i| eligible(i, state)) {
+    let rt = state.tuning.runs;
+    // Cap (spec Fase 5, Caminho A passo 2): a side has at most `max_runners`
+    // runs live, whatever its formation; the other runners stay on their
+    // anchors as short support.
+    let mut active_runs = 0;
+    let mut any_eligible = false;
+    for i in start..start + 11 {
+        active_runs += u32::from(i != holder as usize && state.players[i].run_until > tick);
+        any_eligible |= eligible(i, state);
+    }
+    if active_runs >= rt.max_runners || !any_eligible {
         return;
     }
+    // Trigger: the carrier must be able to serve the run — not pressed now…
+    let hpos = frame.pos(holder as usize);
+    let dt = &state.tuning.decision;
+    let r2 = dt.pressure_radius * dt.pressure_radius;
+    let other = side_index(side.other()) * 11;
+    if (other..other + 11)
+        .any(|j| state.players[j].active() && (frame.pos(j) - hpos).length_squared() < r2)
+    {
+        return;
+    }
+    // Compute the line only now that somebody could use it.
     frame.compute_offside(state);
     let Some(line) = frame.offside_line(side) else {
         return;
     };
-    let rt = state.tuning.runs;
     let dir = state.attacking(side).direction();
-    for i in start..start + 11 {
-        if !eligible(i, state) {
-            continue;
+    // The most open lanes run, lowest index first on ties.
+    for _ in active_runs..rt.max_runners {
+        let mut best: Option<(f32, usize, Vec2)> = None;
+        for i in start..start + 11 {
+            if !eligible(i, state) {
+                continue;
+            }
+            let pos = frame.pos(i);
+            // Room in front of the runner, up to the line.
+            if (line - pos.x) * dir < rt.min_room {
+                continue;
+            }
+            let (gap, y) = open_lane(state, frame, side, pos.y, line);
+            let target = Vec2::new(line - dir * rt.onside_margin, y);
+            // …and the run must end within the carrier's passing range.
+            let reach = target.distance(hpos);
+            if reach < dt.pass_min_dist || reach > dt.pass_max_dist {
+                continue;
+            }
+            if best.map_or(true, |(g, _, _)| gap > g) {
+                best = Some((gap, i, target));
+            }
         }
-        let pos = frame.pos(i);
-        // Room in front of the runner, up to the line.
-        if (line - pos.x) * dir < rt.min_room {
-            continue;
-        }
-        let target = Vec2::new(
-            line - dir * rt.onside_margin,
-            open_lane_y(state, frame, side, pos.y, line),
-        );
+        let Some((_, i, target)) = best else {
+            return;
+        };
         let off_the_ball = f32::from(state.players[i].attrs.mental.off_the_ball) / 100.0;
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // ≥ 0, small
         let cooldown = (rt.cooldown_base - rt.cooldown_skill * off_the_ball).max(0.0) as u32;
@@ -89,8 +125,15 @@ pub fn plan_runs(state: &mut MatchState, frame: &mut TickFrame) {
 }
 
 /// Lateral position (within `lane_reach` of `from_y`) farthest from the
-/// opposing outfielders near the line: the most open lane.
-fn open_lane_y(state: &MatchState, frame: &TickFrame, side: Side, from_y: f32, line: f32) -> f32 {
+/// opposing outfielders near the line — the most open lane — and how far
+/// that is: `(gap, y)`.
+fn open_lane(
+    state: &MatchState,
+    frame: &TickFrame,
+    side: Side,
+    from_y: f32,
+    line: f32,
+) -> (f32, f32) {
     let rt = &state.tuning.runs;
     let start = side_index(side.other()) * 11;
     let mut best = (f32::MIN, from_y);
@@ -113,7 +156,7 @@ fn open_lane_y(state: &MatchState, frame: &TickFrame, side: Side, from_y: f32, l
             best = (gap, y);
         }
     }
-    best.1
+    best
 }
 
 /// The run target and urgency of player `i`, if it is running now.
@@ -151,6 +194,10 @@ mod tests {
         let mut s = placed_state(&placed, 5);
         let cadence = s.tuning.decision.decision_cadence_ticks;
         s.tick = 10 * cadence;
+        // Only `st` may run: the other runners (parked far away) are resting.
+        for i in (0..11).filter(|&i| i != st) {
+            s.players[i].run_ready_tick = u32::MAX;
+        }
         let mut f = TickFrame::capture(&s);
         f.observe_ball(&s);
         f.set_phases([Phase::InPossession, Phase::OutOfPossession]);
@@ -224,6 +271,84 @@ mod tests {
         let (mut s, mut f, st) = setup(&line_level);
         plan_runs(&mut s, &mut f);
         assert_eq!(s.players[st].run_until, 0, "no room to run");
+    }
+
+    /// `setup` plus a second home runner `other`, placed at `at` and rested.
+    fn setup_two(at: Vec2) -> (MatchState, TickFrame, usize, usize) {
+        let (s, _, st) = setup(&back_line());
+        let other = (0..11)
+            .find(|&i| i != st && is_runner(s.players[i].role))
+            .expect("a second runner");
+        let mut placed = vec![
+            (st, Vec2::new(60.0, 34.0)),
+            (other, at),
+            (5, Vec2::new(50.0, 30.0)),
+            (11, Vec2::new(104.0, 34.0)),
+        ];
+        placed.extend_from_slice(&back_line());
+        let mut s2 = placed_state(&placed, 5);
+        s2.tick = s.tick;
+        for i in (0..11).filter(|&i| i != st && i != other) {
+            s2.players[i].run_ready_tick = u32::MAX;
+        }
+        let mut f = TickFrame::capture(&s2);
+        f.observe_ball(&s2);
+        f.set_phases([Phase::InPossession, Phase::OutOfPossession]);
+        (s2, f, st, other)
+    }
+
+    fn running(s: &MatchState, i: usize) -> bool {
+        s.players[i].run_until > s.tick
+    }
+
+    #[test]
+    fn one_run_at_a_time_and_the_most_open_lane_goes() {
+        // `st` at y=34 has the 27–40 gap (6 m either side at best); the
+        // other runner at y=6 has the whole flank outside the first
+        // defender (y=14): the wider lane, so it is the one that runs.
+        let (mut s, mut f, st, other) = setup_two(Vec2::new(60.0, 6.0));
+        plan_runs(&mut s, &mut f);
+        assert!(running(&s, other), "the most open lane runs");
+        assert!(!running(&s, st), "cap of one run per side");
+        // While that run is live nobody else starts one.
+        s.tick += s.tuning.decision.decision_cadence_ticks;
+        plan_runs(&mut s, &mut f);
+        assert!(!running(&s, st), "still capped");
+        // Once it is over, the rested runner can go.
+        s.tick = s.players[other]
+            .run_until
+            .next_multiple_of(s.tuning.decision.decision_cadence_ticks);
+        plan_runs(&mut s, &mut f);
+        assert!(running(&s, st), "the next run starts after the first ends");
+    }
+
+    #[test]
+    fn a_higher_cap_lets_more_runners_go() {
+        let (mut s, mut f, st, other) = setup_two(Vec2::new(60.0, 6.0));
+        s.tuning.runs.max_runners = 2;
+        plan_runs(&mut s, &mut f);
+        assert!(running(&s, st) && running(&s, other));
+    }
+
+    #[test]
+    fn no_run_when_the_carrier_cannot_serve_it() {
+        // Pressed carrier: an opponent inside the pressure radius.
+        let mut pressed = back_line();
+        pressed.push((16, Vec2::new(51.0, 30.0)));
+        let (mut s, mut f, st) = setup(&pressed);
+        plan_runs(&mut s, &mut f);
+        assert!(!running(&s, st), "pressed carrier: no run");
+        // Carrier too far for the pass: the run would end out of range.
+        let (mut s, _, st) = setup(&back_line());
+        let now = s.now_ms();
+        let far = Vec2::new(20.0, 30.0);
+        s.players[5].traj =
+            crate::kinematics::PlayerKinematics::plan_trajectory(far, far, 0.0, now);
+        let mut f = TickFrame::capture(&s);
+        f.observe_ball(&s);
+        f.set_phases([Phase::InPossession, Phase::OutOfPossession]);
+        plan_runs(&mut s, &mut f);
+        assert!(!running(&s, st), "run out of passing range: no run");
     }
 
     #[test]
