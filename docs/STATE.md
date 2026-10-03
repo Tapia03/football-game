@@ -208,6 +208,14 @@ FM_FORMATIONS=433,442 cargo run --release -p fm-match --features diagnostics --e
 # (.github/workflows/deploy.yml) e publica em
 # https://<branch>.football-game-b5k.pages.dev
 ```
+**Regra do spike local (2026-10-03):** o usuário vê o jogo no worktree
+`../football-game-spike` (branch `spike-render-v2`, `npm run dev` em
+`http://localhost:5173`). Sempre que ele pedir para atualizar o spike:
+(1) `git merge fase-5` nesse worktree; (2) `npm run wasm` nele; (3)
+informar qual commit da `fase-5` está rodando. Sem isso o navegador mostra
+um motor antigo sem avisar. O deploy remoto (`spike-render-v2` no
+Cloudflare) só muda com push, que é pedido à parte.
+
 Para atualizar o spike com um motor novo: refazer `spike-render-v2` a
 partir da `fase-5` e copiar só os arquivos de render da `fase-6-v0` (ver o
 commit `d6f433a`).
