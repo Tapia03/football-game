@@ -214,3 +214,64 @@ fn runners_return_to_shape_after_a_run() {
         "shape collapses: {means:?}"
     );
 }
+
+/// Spec Fase 5, Caminho A passo 2: the defence tracks off-ball runs. Each
+/// run gets a marker when it starts; measured on one full match, at the end
+/// of the run the marker is close to the runner, and closer than it was
+/// when the run started.
+#[test]
+fn markers_track_runs() {
+    use fm_match::state::NO_MARKER;
+    use fm_match::TickFrame;
+
+    let (db, setup) = demo_match(3);
+    let mut e = MatchEngine::new(&setup, &db);
+    let run_ticks = e.state().tuning.runs.run_ticks;
+    let mut start_dist: [Option<f32>; 22] = [None; 22];
+    let (mut at_start, mut at_end): (Vec<f32>, Vec<f32>) = (Vec::new(), Vec::new());
+    let mut unmarked = 0_u32;
+    while !e.is_finished() {
+        e.tick_logic();
+        let s = e.state();
+        let f = TickFrame::capture(s);
+        for (i, p) in s.players.iter().enumerate() {
+            if p.run_until == s.tick + run_ticks {
+                // A run started this tick.
+                if p.run_marker == NO_MARKER {
+                    unmarked += 1;
+                    start_dist[i] = None;
+                } else {
+                    assert_ne!(
+                        s.players[p.run_marker as usize].side, p.side,
+                        "the marker is an opponent"
+                    );
+                    start_dist[i] = Some(f.pos(i).distance(f.pos(p.run_marker as usize)));
+                }
+            } else if p.run_until == s.tick {
+                if let Some(d0) = start_dist[i].take() {
+                    at_start.push(d0);
+                    at_end.push(f.pos(i).distance(f.pos(p.run_marker as usize)));
+                }
+            }
+        }
+    }
+    let median = |v: &mut Vec<f32>| {
+        v.sort_unstable_by(f32::total_cmp);
+        v[v.len() / 2]
+    };
+    let closer = at_start.iter().zip(&at_end).filter(|(a, b)| b < a).count();
+    let n = at_end.len();
+    let (m0, m1) = (median(&mut at_start), median(&mut at_end));
+    println!(
+        "runs tracked {n} (+{unmarked} unmarked); marker distance median {m0:.1} m at the start, {m1:.1} m at the end; closer at the end in {closer}"
+    );
+    let within = at_end.iter().filter(|d| **d <= 3.0).count();
+    println!(
+        "p25 {:.1} / p75 {:.1} m at the end; within 3 m in {within}",
+        at_end[n / 4],
+        at_end[3 * n / 4]
+    );
+    assert!(n > 100, "runs happen and are tracked");
+    assert_eq!(unmarked, 0, "every run gets a marker");
+    assert!(m1 < m0, "markers close on their runners: {m0} -> {m1}");
+}

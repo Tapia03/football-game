@@ -122,6 +122,7 @@ impl MatchEngine {
             run_target: Vec2::ZERO,
             run_until: 0,
             run_ready_tick: 0,
+            run_marker: crate::state::NO_MARKER,
             touch_ready_tick: 0,
         };
         let mut players = [placeholder; PLAYERS];
@@ -480,6 +481,7 @@ fn plan_shape(
     in_play: &mut [bool; PLAYERS],
 ) {
     let ball = frame.ball(s).xy();
+    let mut any_run = false;
     for (i, p) in s.players.iter().enumerate() {
         if !p.active() {
             continue;
@@ -500,6 +502,19 @@ fn plan_shape(
                 targets[i] = run_target;
                 in_play[i] = true;
                 urgency[i] = run_urgency;
+                any_run = true;
+            }
+        }
+    }
+    // The marker of each live run tracks its runner (after the loop, so the
+    // marker's own shape target does not overwrite it). Ball duties, set
+    // in `on_ball`, still take precedence.
+    if any_run {
+        for (i, p) in s.players.iter().enumerate() {
+            if let Some((m, at)) = crate::runs::marking(s, frame, i, p) {
+                targets[m] = at;
+                in_play[m] = true;
+                urgency[m] = s.tuning.runs.mark_urgency;
             }
         }
     }
@@ -759,5 +774,76 @@ fn move_players(
             p.traj = traj;
             p.lead = Some(lead);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::placed_state;
+
+    /// Home carrier (5) at `(50, 30)`, home striker running from `(60, 34)`
+    /// with away player 12 as its marker, standing at `marker_at`. Returns
+    /// the targets and in-play flags after `plan_shape` + `on_ball`.
+    fn track(marker_at: Vec2) -> (usize, Vec2, [Vec2; PLAYERS], [bool; PLAYERS]) {
+        let probe = placed_state(&[], 5);
+        let st = (0..11)
+            .find(|&i| probe.players[i].role == Role::Striker)
+            .expect("a striker");
+        let runner_at = Vec2::new(60.0, 34.0);
+        let mut s = placed_state(
+            &[
+                (st, runner_at),
+                (5, Vec2::new(50.0, 30.0)),
+                (12, marker_at),
+                // Two other defenders near the ball: first and second.
+                (13, Vec2::new(54.0, 29.0)),
+                (14, Vec2::new(56.0, 31.0)),
+            ],
+            5,
+        );
+        s.players[st].run_target = Vec2::new(79.5, 34.0);
+        s.players[st].run_until = s.tick + 20;
+        s.players[st].run_marker = 12;
+        s.phases = [Phase::InPossession, Phase::OutOfPossession];
+        let mut frame = TickFrame::capture(&s);
+        frame.observe_ball(&s);
+        frame.set_phases(s.phases);
+        frame.compute_anchors(&s);
+        let mut targets = [Vec2::ZERO; PLAYERS];
+        let mut urgency = [0.6_f32; PLAYERS];
+        let mut in_play = [false; PLAYERS];
+        plan_shape(&s, &frame, &mut targets, &mut urgency, &mut in_play);
+        on_ball(&mut s, &frame, &mut targets, &mut urgency, &mut in_play);
+        // Goal-side of the runner: toward the goal home attacks (x = 105).
+        let mark = runner_at + Vec2::new(s.tuning.runs.mark_dist, 0.0);
+        (st, mark, targets, in_play)
+    }
+
+    #[test]
+    fn the_marker_tracks_goal_side_of_the_runner() {
+        let (st, mark, targets, in_play) = track(Vec2::new(66.0, 40.0));
+        assert!(
+            in_play[st] && in_play[12],
+            "runner and marker are in the play"
+        );
+        assert!(
+            targets[12].distance(mark) < 0.01,
+            "marker target {:?}, expected {mark:?}",
+            targets[12]
+        );
+    }
+
+    #[test]
+    fn ball_duty_overrides_marking() {
+        // The marker is also the nearest defender to the carrier: it
+        // defends the ball, not the run.
+        let (_, mark, targets, in_play) = track(Vec2::new(53.0, 30.5));
+        assert!(in_play[12]);
+        assert!(
+            targets[12].distance(mark) > 5.0,
+            "marker left the ball for the run: {:?}",
+            targets[12]
+        );
     }
 }

@@ -24,6 +24,8 @@ fn apply(t: &mut TuningParams, key: &str, v: f32) {
         "through_balls" => t.value.through_balls = v > 0.5,
         "run_ticks" => t.runs.run_ticks = u,
         "max_runners" => t.runs.max_runners = u,
+        "mark_dist" => t.runs.mark_dist = v,
+        "mark_urgency" => t.runs.mark_urgency = v,
         "decision_cadence_ticks" => t.decision.decision_cadence_ticks = u,
         "pass_intercept_max" => t.value.pass_intercept_max = v,
         "hold_keep_pressed" => t.value.hold_keep_pressed = v,
@@ -73,6 +75,10 @@ fn main() {
     let (mut xg_sum, mut xg_shots) = (0.0f64, 0u64);
     // Off-ball runs: started, ticks with a runner, runner-ticks past the line.
     let (mut runs_started, mut run_ticks, mut runner_ticks, mut beyond) = (0u64, 0u64, 0u64, 0u64);
+    // Defensive line of the side without the ball (second-last player's
+    // distance from its own goal line) on held-ball ticks: all, and those
+    // with an opposing run live.
+    let (mut line_sum, mut line_n, mut line_run_sum, mut line_run_n) = (0.0f64, 0u64, 0.0f64, 0u64);
     let (mut rel_pass, mut rel_shot) = ([0u64; 6], [0u64; 6]);
     // How pass flights end: receiver, other teammate, opponent, out of play,
     // knocked loose (miscontrol / deflection).
@@ -207,6 +213,18 @@ fn main() {
                 if any {
                     run_ticks += 1;
                 }
+                if let fm_match::state::BallState::Held { holder } = s.ball {
+                    let side = s.players[holder as usize].side;
+                    if let Some(line) = f.offside_line(side) {
+                        let depth = f64::from((line - s.attacking(side).goal_line_x()).abs());
+                        line_sum += depth;
+                        line_n += 1;
+                        if any {
+                            line_run_sum += depth;
+                            line_run_n += 1;
+                        }
+                    }
+                }
                 prev_frame = fm_match::TickFrame::capture(s);
                 prev_held = matches!(s.ball, fm_match::state::BallState::Held { .. });
                 prev_ht = s.holder_ticks;
@@ -283,6 +301,11 @@ fn main() {
         100.0 * run_ticks as f64 / (54_000.0 * n),
         runner_ticks as f64 / (54_000.0 * n),
         100.0 * beyond as f64 / runner_ticks.max(1) as f64
+    );
+    println!(
+        "  defensive line depth {:.2} m (held ball) | {:.2} m (with a run live)",
+        line_sum / line_n.max(1) as f64,
+        line_run_sum / line_run_n.max(1) as f64
     );
     println!(
         "  possession home {:.1}% | spell {:.1} s held | xG/shot {:.3} | xG/match {:.2}",
