@@ -1546,6 +1546,28 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
     quando passa. Hipótese a confirmar pelo perfil: não é código mais
     caro, é mais jogo simulado (bola parada 7% → 4%). Pela régua, 610,2M ≈
     46,3 ms (critério de saída de (c): ≤ 48 ms).
+  - **Perfil do +2,10% (callgrind no CI, antes × depois da correção, a
+    mesma partida do bench, seed 2026): é mais jogo, não código mais
+    caro.**
+
+    | Função | Antes | Depois | Diferença |
+    |---|---|---|---|
+    | `tick_logic` (corpo inlinado) | 231,7M | 234,7M | +3,0M (+1,3%) |
+    | `best_pass` | 97,1M | 101,6M | +4,5M (+4,6%) |
+    | `intercept_point` | 59,4M | 62,1M | +2,7M (+4,6%) |
+    | `xt` | 29,9M | 31,0M | +1,1M (+3,7%) |
+    | `receive_candidates` | 19,1M | 20,1M | +1,0M (+5,3%) |
+    | `FormationAnchor::compute` | 95,66M | 95,71M | +0,06M (0,0%) |
+    | `TickFrame::capture` | 47,2M | 47,4M | +0,2M (+0,5%) |
+    | Total do programa | 598,6M | 611,2M | +12,5M |
+
+    As funções de custo fixo por tick (âncoras, captura) não se movem; o
+    aumento está todo nas funções de decisão do portador e de bola em voo.
+    Nessa partida a bola parada cai de 6% para 4%, os passes vão de 900
+    para 934 (+3,8%) e as decisões do portador de 16.648 para 17.033
+    (+2,3%). `set_restart` não aparece no perfil. Nada a otimizar na
+    correção. (O "antes" foi medido num ramo temporário com o mesmo job de
+    perfil sobre `1921910`; o ramo foi apagado.)
   - **"Commit 2" do time-box — re-medição com o bug corrigido (fechado
     junto com o commit 1; 180 partidas por orientação no `calibrate`, 30
     nas outras ferramentas):**
@@ -1568,6 +1590,44 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
     condução perde a bola em 0,23% (espaço) e 0,48% (apertado); as causas
     de falha de passe ficam nas mesmas proporções (interceptação 40%,
     receptor fora do ponto 32%).
+- **Commit 3 do time-box — por que saem ~8 botes por partida e não ~70
+  (`examples/tackle_stats.rs`, 30 partidas, 4-4-2 em casa; a outra
+  orientação dá o mesmo).** A cada tick com a bola dominada, o que a
+  decisão de bote vê (`challenge_score` / `choose_challenger`).
+  - **O que a decisão faz** (35.333 ticks de bola dominada por partida;
+    há um defensor ao alcance do bote, < 1,8 m, em 2.883):
+
+    | Situação | Todos os ticks | Com defensor ao alcance do bote |
+    |---|---|---|
+    | Ninguém a menos de `engage_range` (4,5 m) | 20,4% | 0% |
+    | Todos no alcance ainda em recuperação | 0,1% | 0,4% |
+    | **Há defensor elegível, nota abaixo do limiar** | **79,4%** | **99,6%** |
+    | Desafiante escolhido, ainda fechando | 0,1% | 0% |
+
+  - **O limiar (1,15) quase nunca é alcançado.** Melhor nota entre os
+    elegíveis ao alcance do bote: < 0,6 em 52,9%; 0,6–0,8 em 27,0%;
+    0,8–1,0 em 17,3%; 1,0–1,15 em 2,9%; acima de 1,15 em 0,0%. Média
+    **0,53**: lado do gol +0,19, portador recém-dominou +0,03, desarme
+    +0,13, decisões +0,08, agressividade +0,13, transição +0,05, área
+    própria −0,08.
+  - **Por que:** a nota máxima teórica é 1,50 (todos os atributos em 100,
+    de frente para o portador, bola recém-dominada, em transição). Um
+    defensor típico (atributos ~55) só passa de 1,15 com as três
+    condições ao mesmo tempo. O limiar foi calibrado no motor arcade
+    ("mediana das notas ao alcance 0,53", 75 botes por partida), quando
+    havia alguém ao alcance em 29% dos ticks de posse e o defensor colava
+    no portador; com a física e a contenção a 1–4 m, o alcance cai para 8%
+    dos ticks e a nota continua a mesma.
+  - **Quem é escolhido:** quando há desafiante (29 ticks por partida), é o
+    defensor mais próximo em 97% dos casos; em 1% há outro defensor já ao
+    alcance enquanto o escolhido ainda fecha. A escolha do desafiante não
+    é o problema; o defensor ao alcance não dá o bote porque a nota dele
+    não passa do limiar.
+  - Limite da medição: a ferramenta olha depois de cada tick, então o
+    tick exato do bote aparece como "em recuperação" (por isso "desafiante
+    ao alcance" dá 0 e os 8 botes por partida não aparecem na tabela).
+  - **Classificação: constante herdada de outro motor**, sobre um modelo
+    que não mudou. Não corrigido aqui (este commit só mede).
 - **Sinais registrados (não calibrar agora):**
   - **Posse do mandante:** 73% (arcade) → 56,9% (física no lance) →
     42,5% (física + engajamento). A assimetria mudou com a física, não com
