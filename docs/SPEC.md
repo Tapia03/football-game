@@ -1628,6 +1628,39 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
     ao alcance" dá 0 e os 8 botes por partida não aparecem na tabela).
   - **Classificação: constante herdada de outro motor**, sobre um modelo
     que não mudou. Não corrigido aqui (este commit só mede).
+- **Commit 4 do time-box — por que o melhor passe vale 3× menos que
+  conduzir (`examples/option_breakdown.rs`, 30 partidas, 4-4-2 em casa; a
+  outra orientação dá o mesmo).** As parcelas de cada valor, como
+  `choose_action` as calcula, nas decisões dos períodos que terminam na
+  saída forçada (11.653 decisões por partida; valores × 1000):
+
+  | Opção | Chance | xT do destino | Ganho | Custo da falha | Valor |
+  |---|---|---|---|---|---|
+  | Melhor passe | sucesso 70% | 18,8 (receptor) | 10,9 | 30% × 19,0 = 4,9 | **6,0** |
+  | Conduzir | manter 95% | 22,3 (5 m à frente) | 20,6 | 5% × 17,4 = 0,9 | **19,7** |
+  | Segurar | — | 19,1 (aqui) × erosão | — | — | 3,5 |
+
+  - **A conta do passe não tem erro.** As duas hipóteses caem: (a) o xT
+    do receptor não está subestimado — ele é igual ao do portador (18,8
+    contra 19,1); (b) a perda não é contada duas vezes — o termo de perda
+    entra uma vez (4,9).
+  - **De onde vêm os 13,7 de diferença:** ~6,9 do sucesso (70% contra
+    95% de manter), ~4,0 do custo da falha (30% contra 5% de chance de
+    pagar um xT adversário parecido), ~2,8 do destino (o ponto 5 m à
+    frente vale mais que a posição do melhor receptor; o receptor só está
+    em xT maior que o alvo da condução em 34% das decisões, e o melhor
+    passe vai para xT menor que o do portador em 57%).
+  - O sucesso de 70% é sobrevivência na linha 87% × precisão e domínio
+    81%. Com a chance de manter da condução no lugar do sucesso, o passe
+    valeria 17,0 e venceria a condução em 34% das decisões (hoje: 2%).
+  - Nos períodos em que o passe sai por valor (3.459 decisões por
+    partida): passe 6,9 (sucesso 77%), conduzir 10,2 (manter 89%,
+    apertado em 28% das decisões), e o passe vence em 27%.
+  - **Conclusão:** a decisão está coerente com a execução. No motor,
+    passar falha ~40% das vezes e conduzir perde a bola em ~0,2% por
+    passo de 5 m; a decisão até superestima o risco de conduzir. O que
+    está fora do real é a execução: a defesa não dá o bote (commit 3) e o
+    passe falha demais (dívida "execução de passes").
 - **Sinais registrados (não calibrar agora):**
   - **Posse do mandante:** 73% (arcade) → 56,9% (física no lance) →
     42,5% (física + engajamento). A assimetria mudou com a física, não com

@@ -37,5 +37,9 @@ required-features = ["diagnostics"]
 name = "forced_release"
 required-features = ["diagnostics"]
 
+[[example]]
+name = "option_breakdown"
+required-features = ["diagnostics"]
+
 [lints]
 workspace = true

@@ -52,6 +52,18 @@ pub struct OptionValues {
     pub pass_success: f32,
     pub dribble: f32,
     pub pressed: bool,
+    /// Threat where the carrier stands (before erosion).
+    pub here: f32,
+    /// Best pass: threat at the receiver, the opponents' threat there (what
+    /// a failed pass costs) and the lane-survival part of its success.
+    pub pass_gain: f32,
+    pub pass_loss: f32,
+    pub pass_survive: f32,
+    /// Best dribble step: threat at its target, the opponents' threat where
+    /// the carrier stands (what losing it costs) and the keep chance used.
+    pub dribble_gain: f32,
+    pub dribble_loss: f32,
+    pub dribble_keep: f32,
 }
 
 /// Passing skill in `[0, 1]` (keepers: distribution).
@@ -257,12 +269,32 @@ impl DecisionSystem {
         let hold = Self::keep_or_lose(state, my_pos, my_pos, end, hold_keep)
             * (1.0 - v.hold_erosion * waited).max(0.0);
         let (pass, pass_to) = Self::best_pass(state, frame, me, f32::MIN);
-        let dribble = if p.role == Role::Goalkeeper {
-            f32::MIN
+        let grid = &v.xt;
+        let (dribble, dribble_gain, dribble_loss, dribble_keep) = if p.role == Role::Goalkeeper {
+            (f32::MIN, 0.0, 0.0, 0.0)
         } else {
-            Self::dribble(state, frame, me).0
+            let (ev, target) = Self::dribble(state, frame, me);
+            let gain = value::xt(grid, target, end);
+            let loss = value::xt(grid, my_pos, end.opposite());
+            // ev = keep · gain − (1 − keep) · loss.
+            (ev, gain, loss, (ev + loss) / (gain + loss).max(1e-9))
         };
+        let (pass_gain, pass_loss, pass_survive) = pass_to.map_or((0.0, 0.0, 0.0), |to| {
+            let tp = frame.pos(to as usize);
+            (
+                value::xt(grid, tp, end),
+                value::xt(grid, tp, end.opposite()),
+                lane_survival(state, frame, p.side, my_pos, tp),
+            )
+        });
         OptionValues {
+            here: value::xt(grid, my_pos, end),
+            pass_gain,
+            pass_loss,
+            pass_survive,
+            dribble_gain,
+            dribble_loss,
+            dribble_keep,
             hold,
             shot: Self::shot_xg(state, frame, me),
             pass,
