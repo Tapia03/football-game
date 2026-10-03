@@ -378,7 +378,9 @@ impl Default for KinematicsTuning {
 pub struct RunTuning {
     /// Length of a run (ticks).
     pub run_ticks: u32,
-    /// Pause before the next run: `base − skill · off_the_ball` (ticks).
+    /// Recovery before the same player runs again: `base − skill ·
+    /// off_the_ball` (ticks). How often a side runs is decided in
+    /// `plan_runs`, not by this.
     pub cooldown_base: f32,
     pub cooldown_skill: f32,
     /// How far short of the offside line the runner aims (m).
@@ -393,6 +395,8 @@ pub struct RunTuning {
     pub touchline_margin: f32,
     /// Fraction of top speed while running.
     pub urgency: f32,
+    /// Runs a side may have live at once, whatever its formation.
+    pub max_runners: u32,
 }
 
 impl Default for RunTuning {
@@ -409,6 +413,8 @@ impl Default for RunTuning {
             line_depth: 10.0,
             touchline_margin: 3.0,
             urgency: 0.95,
+            // One run at a time: the others stay as short support.
+            max_runners: 1,
         }
     }
 }
