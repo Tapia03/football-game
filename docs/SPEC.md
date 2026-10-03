@@ -917,13 +917,17 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
   - **Jogo (180 partidas, contra o item 3):** gols 4,57 (antes 4,23, ~1,2
     EP: ruído); passes 1.616 (+5%); acerto 85,7% (+2 pontos); posse
     contínua 23,8 s. Corredor ativo em 62% dos ticks; **2.139 corridas por
-    partida** (real: dezenas; constante para (c2)). Corredor além da linha
-    em 3,4% dos ticks de corrida (o viés conhecido, sem apito).
+    partida** (real: dezenas). **A frequência é problema de modelo, não
+    constante para (c2)** (corrigido em 2026-10-03; ver "Passo 2 do
+    Caminho A, commit 1"): ela sai de "tempo de posse ÷ intervalo", sem
+    decisão de correr. Corredor além da linha em 3,4% dos ticks de corrida
+    (o viés conhecido, sem apito).
   - **Efeito grande:** a posse do mandante foi de 50,8% para **63,0%**. O
     mandante da demo joga 4-4-2 (2 corredores); o visitante, 4-3-3 (3
     corredores, com as duas pontas). Mais corredores = jogo mais direto
-    e menos posse. Plausível no futebol real, mas com intensidade a
-    revisar em (c2) junto com a frequência das corridas.
+    e menos posse. Plausível no futebol real, mas a intensidade é
+    estrutural: tratada no passo 2 do Caminho A (gatilho + teto de
+    corredores), não em (c2).
   - Testes: corre até a linha e nunca além; mira o vão aberto; não corre
     sem posse nem sem espaço; só atacantes e pontas.
   - **Retorno à forma:** quando a corrida acaba, o `plan_shape` volta a
@@ -1162,6 +1166,79 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
   - Medido (180 partidas, 4-3-3 e 4-4-2): gols 5,30, chutes 25,8 / 8,4 no
     alvo, passes 929 (acerto 56%), botes 10, faltas 3,6, bola parada 7%,
     xG por chute 0,23.
+- **Passo 2 do Caminho A, resto — dois commits medidos em separado
+  (aprovado 2026-10-03):** (1) equilíbrio corrida × apoio; (2) defesa
+  acompanha o corredor. Um commit por push; o commit 2 só começa com o CI
+  do commit 1 verde e com duas medidas de 180 partidas na mão: corredores
+  ativos por tick (média) e posse do 4-4-2 × 4-3-3 nas duas orientações.
+  A regra de +1,5% vale para cada commit.
+- **Commit 1 — equilíbrio corrida × apoio: a corrida passa a ser decidida
+  `[ALTERADO v2.1]`:**
+  - **Classificação: modelo, não constante.** Até aqui todo atacante ou
+    ponta elegível corria, e o único freio era o intervalo individual: a
+    frequência saía de "tempo de posse ÷ intervalo" (2.139 corridas por
+    partida, corredor ativo em 62% dos ticks). É o mesmo defeito do
+    `TEAM_TACKLE_GAP` nos 876 desarmes. Reduzir o intervalo esconderia o
+    defeito e manteria a assimetria entre formações (3 corredores no
+    4-3-3, 2 no 4-4-2).
+  - **Teto de corredores simultâneos por time:** `max_runners` (**1**), o
+    mesmo para qualquer formação. Enquanto houver uma corrida viva no
+    time, ninguém mais começa outra. Se a posse do 4-4-2 × 4-3-3 não
+    chegar a ~50% com 1, o teto sobe para 2.
+  - **Gatilho — o portador pode servir a corrida:** uma corrida só começa
+    se (a) o portador não está pressionado (nenhum adversário a menos de
+    `pressure_radius`) e (b) o ponto da corrida fica ao alcance de passe
+    do portador (entre `pass_min_dist` e `pass_max_dist`).
+  - **Quem corre:** dentre os elegíveis (papel de corredor, sem corrida,
+    fora do intervalo, com espaço até a linha, ao alcance do portador),
+    quem tem o **vão lateral mais aberto** (a mesma medida que já escolhe
+    a faixa da corrida); no empate, o menor índice. Sem RNG.
+  - **Quem não corre fica na âncora:** é o apoio curto que existe hoje. O
+    posicionamento ativo de apoio continua sendo o item 6.
+  - **O intervalo individual** (`60 − 40 × off_the_ball` ticks) continua,
+    só como recuperação física; não é mais ele que dita a frequência.
+  - Linha de impedimento: continua calculada só nos ticks de cadência em
+    que alguém pode usá-la (e agora só se o teto e o gatilho permitem).
+  - Golden de paridade regenerado (comportamento novo).
+  - **Medido (2026-10-03, 180 partidas por linha, `calibrate` com
+    `FM_MATCHES=180`; instruções pendentes do CI):**
+
+    | Configuração | Corridas/partida | Corredores por tick | Ticks com corredor | Posse do 4-4-2 (casa / fora) |
+    |---|---|---|---|---|
+    | Antes (`5d34253`) | 1.984 | 0,859 | 48,8% | 56,8% / 57,4% |
+    | Teto 1 (este commit) | 1.138 | 0,493 | 49,3% | 57,7% / 58,1% |
+    | Teto 2 | 1.338 | 0,584 | 42,1% | 57,0% / 57,5% |
+    | Teto 0 (sem corridas) | 0 | 0 | 0% | 54,3% / 54,3% |
+
+    Controles com teto 1: 4-4-2 × 4-4-2 = 49,9%; 4-3-3 × 4-3-3 = 49,7%.
+  - **O teto faz o que devia no custo, não na posse.** Os corredores por
+    tick caem 43% (0,86 → 0,49), mas a posse do 4-4-2 × 4-3-3 **não se
+    move** com o teto (56,8 → 57,7%), e subir para 2 também não (57,0%).
+  - **A causa da assimetria mudou com a física.** No arcade, tirar as
+    corridas levava a posse a 50–53% (tabela "Assimetria de posse"). Com a
+    física no lance, **sem corrida nenhuma o 4-4-2 ainda fica com 54,3%**
+    nas duas orientações: ~4 dos ~8 pontos vêm da formação em si, não das
+    corridas. As corridas explicam os outros ~3,5 pontos, e esses não
+    dependem de quantos correm ao mesmo tempo (teto 1, 2 ou sem teto dão
+    57–58%). Decisão pendente com o usuário.
+  - **O gatilho quase não segura:** os ticks com algum corredor ficam em
+    49% (antes 48,8%). "Portador sem pressão + alvo ao alcance de passe" é
+    verdade quase sempre; quem limita é o teto.
+  - Outros números com teto 1 (não são meta): gols 4,87, chutes 28,2 /
+    9,1 no alvo, passes 928 (acerto 58%), botes 8–9, faltas 3,2, bola
+    parada 7–8%. O 4-3-3 × 4-3-3 joga muito diferente do 4-4-2 × 4-4-2
+    (7,2 gols e 41 chutes contra 4,6 e 25; acerto 52% contra 65%).
+- **Commit 2 — defesa acompanha o corredor (desenho; só depois da medida
+  do commit 1):** no tick em que a corrida nasce, o defensor de linha mais
+  próximo do corredor vira o marcador dele; enquanto a corrida vive, o
+  alvo do marcador é um ponto do lado do gol em relação à **posição
+  atual** do corredor (não o alvo da corrida: o defensor não lê a intenção
+  do adversário) e ele entra no lance (física). Contenção, cobertura e
+  bote têm prioridade. Sem estimativa nova: o marcador perto do receptor
+  já entra na sobrevivência da linha de passe e na pressão sobre o
+  domínio (invariante 18). Riscos a medir: custo (cada marcador na física
+  custa 200–320 instruções por tick) e a linha defensiva recuando atrás
+  do corredor.
 - **Sinais registrados (não calibrar agora):**
   - **Posse do mandante:** 73% (arcade) → 56,9% (física no lance) →
     42,5% (física + engajamento). A assimetria mudou com a física, não com
