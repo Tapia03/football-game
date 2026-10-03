@@ -1401,6 +1401,45 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
     - Os passes bloqueados que sobram (40 por partida) continuam sendo
       cortados em 77%: são, na maioria, escolhas da saída forçada, que
       aceita qualquer valor.
+    - **Custo do commit 3 (CI): 597.652.818 instruções, −0,20%** sobre
+      598.838.544.
+  - **Commit 4 — medição do "receptor fora do ponto" (112 por partida
+    depois do commit 3; `pass_failures`, 30 partidas, 4-4-2 em casa; a
+    outra orientação dá o mesmo):**
+    - **Hipótese (a), raio de controle pequeno: descartada.** Em 0% dos
+      casos o receptor ficou no ponto e a bola passou fora do alcance; em
+      2% ele só esteve ao alcance entre dois ticks.
+    - **Hipótese (b), o receptor se move: confirmada.** Quando a bola
+      chega ao ponto de mira, o receptor está a mais de 3 m dele em 98%
+      dos casos e a mais de 6 m em 65%. Mecanismos (exclusivos): **70%
+      saiu do ponto e nunca chegou a 1,5 m da bola**; **28% esteve sob a
+      bola só enquanto ela estava alta demais** (> 1,8 m: é o passe pelo
+      alto — o receptor corre para um ponto da trajetória onde a bola
+      ainda está no ar); 2% entre ticks; 0% impedido por ter acabado de
+      chutar.
+    - **A causa é o receptor em movimento no chute.** O resolver mira onde
+      o receptor está no instante do chute; a estimativa da decisão
+      também. Acerto por velocidade do receptor no chute:
+
+      | Velocidade do receptor no chute | Passes por partida | Receptor domina |
+      |---|---|---|
+      | < 1 m/s | 379 | 71% |
+      | 1–3 m/s | 94 | 57% |
+      | 3–5 m/s | 285 | 53% |
+      | ≥ 5 m/s | 130 | 19% |
+
+      Dos "fora do ponto", 78% tinham o receptor a ≥ 3 m/s no chute (dos
+      passes que chegam, 35%) e 35% estavam numa corrida viva (dos que
+      chegam, 3%). Dos que saíram do ponto, metade foi na direção do
+      passador e metade para longe.
+    - **Classificação: estrutura (sincronização passe × movimento do
+      receptor), não calibração.** Não existe antecipação: nem a mira nem
+      a estimativa levam em conta para onde o receptor está indo. É a
+      mesma falta que derrubou o passe em profundidade. O mesmo sinal
+      aparece nas interceptações (63% com o receptor a ≥ 3 m/s) e no erro
+      de direção (60%).
+    - Não medido: por que metade dos receptores se afasta do passador, e
+      quanto da perda vem do giro e da frenagem da física.
 - **Sinais registrados (não calibrar agora):**
   - **Posse do mandante:** 73% (arcade) → 56,9% (física no lance) →
     42,5% (física + engajamento). A assimetria mudou com a física, não com

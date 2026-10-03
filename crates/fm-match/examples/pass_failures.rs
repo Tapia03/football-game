@@ -21,7 +21,8 @@
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
     clippy::too_many_lines,
-    clippy::many_single_char_names
+    clippy::many_single_char_names,
+    clippy::struct_excessive_bools
 )]
 use fm_core::Vec2;
 use fm_match::state::{BallState, FlightIntent};
@@ -54,6 +55,39 @@ struct Open {
     at_kick: [Vec2; 22],
     estimate: f32,
     forced: bool,
+    /// Receiver against the ball (measurement of "receiver off the spot"):
+    /// closest at a tick instant, where the engine checks (distance, ball
+    /// height, receiver still barred from touching); closest at any time
+    /// (10 ms steps) with the ball low enough; closest ever, any height.
+    near_tick: (f32, f32, bool),
+    near_low: f32,
+    near_any: f32,
+    /// When the ball was closest to the aim point: how far the receiver
+    /// was from that point, and whether he had moved toward the passer.
+    left_spot: f32,
+    toward_passer: bool,
+    /// Receiver at the kick: speed (m/s) and whether on a live off-ball run.
+    speed: f32,
+    running: bool,
+}
+
+/// Detail of the "receiver off the spot" passes (measurement of commit 4).
+#[derive(Default, Clone, Copy)]
+struct Spot {
+    n: u64,
+    /// Exclusive mechanisms, in this order: barred (kicked the ball less
+    /// than `retouch_ticks` ago), in reach at a tick but no touch, in reach
+    /// only between ticks, in reach only while the ball was too high, left
+    /// the spot, stayed and the ball went by out of reach.
+    cause: [u64; 6],
+    /// Closest receiver-ball distance at a tick [<1.5 | <2 | <3 | <5 | 5+ m].
+    near: [u64; 5],
+    /// Receiver's distance from the aim point when the ball got there
+    /// [<1 | <1.5 | <3 | <6 | 6+ m], and how many of those who left went
+    /// toward the passer.
+    left: [u64; 5],
+    left_toward: u64,
+    left_n: u64,
 }
 
 /// Detail of the passes cut out in flight (measurement B).
@@ -118,12 +152,18 @@ fn main() {
         // Ground passes by the nearest opponent's distance to the lane at
         // the kick [<0.45 | <0.9 | <1.5 | <2.5 | 2.5+ m]: all, and cut out.
         let mut by_offset = [[0u64; 2]; 5];
+        let mut spot = Spot::default();
+        // Receiver's speed at the kick [<1 | <3 | <5 | 5+ m/s] and live runs,
+        // per class.
+        let mut speed = [[0u64; 4]; 6];
+        let mut on_run = [0u64; 6];
         for seed in 0..n {
             let (db, setup) = fm_match::demo::demo_match_with(seed, home, away);
             let mut e = MatchEngine::new(&setup, &db);
             let reach = e.state().tuning.control.receiver_radius;
             let retouch = e.state().tuning.control.retouch_ticks;
             let lofted = e.state().tuning.pass.lofted_dist;
+            let max_height = e.state().tuning.control.max_height;
             let mut prev = TickFrame::capture(e.state());
             let mut prev_ht = 0;
             let forced_at = e.state().tuning.value.forced_release_ticks;
@@ -145,14 +185,6 @@ fn main() {
                 // Is the followed pass still the ball in flight?
                 let same = matches!((&open, s.ball),
                     (Some(o), BallState::Flight { flight, .. }) if flight.kick_ms == o.flight.kick_ms);
-                if let (Some(o), true) = (open.as_mut(), same) {
-                    let d = o.flight.pos_at(now).xy().distance(o.target);
-                    if d < o.miss {
-                        o.miss = d;
-                    } else if d > o.miss + 0.3 {
-                        o.past = true;
-                    }
-                }
                 if let (Some(o), false) = (open.as_ref(), same) {
                     let side = s.players[o.receiver].side;
                     // Who ended it: the holder, or whoever kicked the new
@@ -181,6 +213,8 @@ fn main() {
                         }
                     };
                     t.n[class][o.length] += 1;
+                    speed[class][bucket(o.speed, &[1.0, 3.0, 5.0])] += 1;
+                    on_run[class] += u64::from(o.running);
                     let side_of = |i: usize| s.players[i].side;
                     let lane_count = (0..22)
                         .filter(|&i| side_of(i) != side && !s.players[i].sent_off)
@@ -201,6 +235,30 @@ fn main() {
                         ok_estimate += f64::from(o.estimate);
                         ok_forced += u64::from(o.forced);
                         ok_in_lane[lane_count] += 1;
+                    }
+                    if class == 5 {
+                        spot.n += 1;
+                        let (d, z, barred) = o.near_tick;
+                        let cause = if barred && d < reach {
+                            0
+                        } else if d < reach && z < max_height {
+                            1
+                        } else if o.near_low < reach {
+                            2
+                        } else if o.near_any < reach {
+                            3
+                        } else if o.left_spot > reach {
+                            4
+                        } else {
+                            5
+                        };
+                        spot.cause[cause] += 1;
+                        spot.near[bucket(d, &[1.5, 2.0, 3.0, 5.0])] += 1;
+                        spot.left[bucket(o.left_spot, &[1.0, 1.5, 3.0, 6.0])] += 1;
+                        if o.left_spot > reach {
+                            spot.left_n += 1;
+                            spot.left_toward += u64::from(o.toward_passer);
+                        }
                     }
                     if let (2, Some(i)) = (class, toucher) {
                         let ball = o.flight.pos_at(now).xy();
@@ -260,6 +318,13 @@ fn main() {
                             at_kick,
                             estimate: fm_match::DecisionSystem::pass_success(s, &prev, passer, r),
                             forced: prev_ht + 1 >= forced_at,
+                            near_tick: (f32::MAX, 0.0, false),
+                            near_low: f32::MAX,
+                            near_any: f32::MAX,
+                            left_spot: 0.0,
+                            toward_passer: false,
+                            speed: frame.pos(r).distance(prev.pos(r)) * 10.0,
+                            running: s.players[r].run_until > s.tick,
                             flight,
                             receiver: r,
                             target,
@@ -272,6 +337,36 @@ fn main() {
                             past: false,
                         });
                         pending = None;
+                    }
+                }
+                // Follow the pass in flight: the ball against the aim point
+                // and against the receiver, at this tick and until the next.
+                if let (Some(o), BallState::Flight { flight, .. }) = (open.as_mut(), s.ball) {
+                    if flight.kick_ms == o.flight.kick_ms {
+                        let ball = flight.pos_at(now);
+                        let at = frame.pos(o.receiver);
+                        let d = ball.xy().distance(o.target);
+                        if d <= o.miss {
+                            o.miss = d;
+                            o.left_spot = at.distance(o.target);
+                            o.toward_passer = (at - o.target).dot(o.from - o.target) > 0.0;
+                        } else if d > o.miss + 0.3 {
+                            o.past = true;
+                        }
+                        let rb = at.distance(ball.xy());
+                        if rb < o.near_tick.0 {
+                            let barred = s.tick < s.players[o.receiver].touch_ready_tick;
+                            o.near_tick = (rb, ball.z, barred);
+                        }
+                        for step in 0..10 {
+                            let t = now + step * 10;
+                            let b = flight.pos_at(t);
+                            let r = s.players[o.receiver].pos(t).distance(b.xy());
+                            o.near_any = o.near_any.min(r);
+                            if b.z < max_height {
+                                o.near_low = o.near_low.min(r);
+                            }
+                        }
                     }
                 }
                 prev = frame;
@@ -382,6 +477,45 @@ fn main() {
             pct(&cuts.in_lane),
             pct(&ok_in_lane)
         );
+        let sp = spot.n.max(1) as f64;
+        println!(
+            "  -- receiver off the spot: {:.0}/match",
+            spot.n as f64 / n as f64
+        );
+        println!(
+            "  mechanism [barred after own kick | in reach at a tick, no touch | in reach only between ticks | in reach only while too high | receiver left the spot | stayed, ball out of reach]: {}",
+            pct(&spot.cause)
+        );
+        println!(
+            "  closest receiver-ball distance at a tick [<1.5 | <2 | <3 | <5 | 5+ m]: {}",
+            pct(&spot.near)
+        );
+        println!(
+            "  receiver's distance from the aim point when the ball got there [<1 | <1.5 | <3 | <6 | 6+ m]: {} ; of those who left, toward the passer {:.0}%",
+            pct(&spot.left),
+            100.0 * spot.left_toward as f64 / spot.left_n.max(1) as f64
+        );
+        let _ = sp;
+        println!("  receiver's speed at the kick [<1 | <3 | <5 | 5+ m/s] and share on a live run:");
+        for (c, label) in CLASSES.iter().enumerate() {
+            println!(
+                "    {label:<24} {} ; on a run {:.0}%",
+                pct(&speed[c]),
+                100.0 * on_run[c] as f64 / t.n[c].iter().sum::<u64>().max(1) as f64
+            );
+        }
+        let total_by_speed = (0..4)
+            .map(|b| {
+                let all: u64 = speed.iter().map(|row| row[b]).sum::<u64>().max(1);
+                format!(
+                    "{:.0}% of {:.0}/match",
+                    100.0 * speed[0][b] as f64 / all as f64,
+                    all as f64 / n as f64
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" | ");
+        println!("  passes the receiver controls, by his speed at the kick: {total_by_speed}");
         println!(
             "  ground passes cut out, by the nearest opponent's distance to the lane at the kick [<0.45 | <0.9 | <1.5 | <2.5 | 2.5+ m]: {}",
             by_offset
