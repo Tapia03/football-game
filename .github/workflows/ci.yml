@@ -71,6 +71,23 @@ jobs:
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq valgrind
           cargo bench -p fm-match --bench instructions
+      # The callgrind output of that run, kept as an artifact even when the
+      # gate passes or fails: per-function instruction counts, to tell "more
+      # game being played" from "more expensive code" when the count moves.
+      - name: callgrind profile
+        if: always()
+        run: |
+          out="${TMPDIR:-/tmp}/fm-instructions"
+          mkdir -p callgrind
+          cp "$out"/callgrind.*.out callgrind/ || true
+          callgrind_annotate callgrind/callgrind.match.out > callgrind/match.txt || true
+          callgrind_annotate callgrind/callgrind.setup.out > callgrind/setup.txt || true
+          head -60 callgrind/match.txt || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: callgrind
+          path: callgrind/
       # Informative numbers for the phase report; never fails the build on
       # timing, but does fail if a bench does not build/run (pipefail).
       # Only criterion targets: libtest harnesses reject criterion flags.
