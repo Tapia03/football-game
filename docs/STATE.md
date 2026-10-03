@@ -40,8 +40,11 @@ Caminho A**, não o passo 2 do item 5.
    cruzamento, joga como líbero). Não é o "goleiro como receptor" do
    item 9. Entra **depois do item 9 e antes do item 5 refeito**, quando a
    dinâmica de profundidade estabilizar.
-3. Item 9: construção desde a defesa. **RETOMAR AQUI** (desenho antes do
-   código, aprovado pelo usuário).
+3. Item 9: construção desde a defesa. **RETOMAR AQUI.** Ordem aprovada:
+   (5) medir por que 51% dos passes saem na saída forçada; (9.1) termo de
+   perda do passe calibrado pela execução medida; (9.2) apoio dos
+   defensores em `plan_shape`, se a medição pedir; (9.3) goleiro como
+   receptor. Relatar a % de saída forçada em todo commit.
 4. Refazer o item 5 (passe em profundidade) sobre a física nova.
 5. Itens 6–8 (apoio sem bola → drible 1×1 → tabela).
 Depois: (c2) calibração, (d) comportamentos por papel, PR `fase-5` → `main`.
@@ -85,6 +88,11 @@ iniciados.
 | (reverts) | Revert de `2915e96` e `53f017a` (defesa acompanha o corredor) |
 | `2915e96` | Defesa acompanha o corredor — **revertido** (614,9M, +2,67%) |
 | `53f017a` | SPEC do commit 2 — **revertido** |
+| `efc9cd1` | Medição: receptor fora do ponto (commit 4 do diagnóstico do passe) |
+| `ac88f94` | Bloqueio na estimativa do passe (597,7M, −0,20%) |
+| `3f55274` | Medição B: como acontece a interceptação em voo |
+| `5b39ba1` | Medição A: classificação das falhas de passe |
+| `be1d847` | SPEC/STATE: critério de (c) ≤ 48 ms, passo 2.5, diagnóstico do item 9 |
 | `692f5af` | Baseline de instruções 598.838.544; dívida 5,8M |
 | `19e7194` | Corrida decidida: gatilho + teto de corredores (598,8M) |
 | `cb05418` | SPEC: passo 2 do Caminho A, commit 1; medição de 180 partidas |
@@ -137,16 +145,24 @@ iniciados.
 - Contadores de diagnóstico (só com a feature `diagnostics`).
 
 ### Dívidas conhecidas
-- **Custo:** 598,8M instruções (598.838.544) ≈ 45,4 ms: **5,8M acima da
-  meta desejável de 45 ms (593M)**, dentro do critério de saída de (c)
+- **Custo:** 597,7M instruções (597.652.818, commit `ac88f94`) ≈ 45,3 ms:
+  **4,7M acima da meta desejável de 45 ms (593M)**, dentro do critério de saída de (c)
   (≤ 48 ms ≈ 633M, decidido em 2026-10-03). Regra por commit: +1,5%.
-- **Passe pelo alto (≥ 28 m): 9,3% de acerto** em 121 passes por partida.
-  Não investigado. Junto com o passe em profundidade (0,3%, desligado) e o
-  tracking revertido, é candidato a uma fase de "revisão da execução de
-  passes".
-- **Teste frágil:** `match_statistics_are_plausible` (≥ 3 faltas por
-  partida) usa só 6 seeds e mede **6,0**; a média de 180 partidas é
-  **3,6**. As 6 seeds não representam a média.
+- **Execução de passes — dívida estrutural para depois de (c1)** (uma
+  fase futura pega os três juntos):
+  - **Sincronização com o receptor:** o resolver e a estimativa miram onde
+    o receptor está no chute, sem antecipar o movimento. Acerto de 71% com
+    o receptor parado e 19% a ≥ 5 m/s. Nas falhas "receptor fora do ponto"
+    (30% das falhas), o receptor está a mais de 3 m do ponto de mira em
+    98% dos casos quando a bola chega, e 78% vinham a ≥ 3 m/s no chute.
+  - **Passe pelo alto (≥ 28 m):** 9% de acerto em ~120 passes por partida
+    (o receptor corre para debaixo da bola ainda alta).
+  - **Passe em profundidade:** 0,3% de acerto quando ligado; desligado.
+- **Saída forçada:** 51% dos passes saem na trava dos 5,5 s. Alarme do
+  item 9: acima de 55%, parar e reportar.
+- **Teste de faltas:** `match_statistics_are_plausible` tem piso de 2 faltas
+  por partida (era 3; relaxado em 2026-10-03). É piso de regressão, não
+  meta: o real é ~22 e o motor está em 2,8 (180 partidas).
 - **Acerto de passe 56%** (real ~80%): invariante 18 do lado do passe →
   Caminho A passo 4 ou (c2).
 - **Botes 10 / faltas 3,6** (real ~70 / 22): calibração em (c2).
@@ -215,8 +231,8 @@ Ver SPEC, Seção 0 e decisões das Fases 3–5. Os que mais pesam no dia a dia:
 ## Decisões pendentes
 - (decidido 2026-10-03) **Critério de saída de (c): ≤ 48 ms** pela régua
   (≤ ~633M instruções). A meta desejável continua 45 ms (~593M); o gate
-  de 50 ms (~660M) nunca foi violado pela régua de instruções. Hoje: 598,8M ≈
-  45,4 ms.
+  de 50 ms (~660M) nunca foi violado pela régua de instruções. Hoje: 597,7M ≈
+  45,3 ms.
 - **xT:** conferir a cópia contra `karun.in/blog/data/open_xt_12x8_v1.json`.
 
 ## Marcos

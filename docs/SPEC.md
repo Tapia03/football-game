@@ -1437,7 +1437,7 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
       a estimativa levam em conta para onde o receptor está indo. É a
       mesma falta que derrubou o passe em profundidade. O mesmo sinal
       aparece nas interceptações (63% com o receptor a ≥ 3 m/s) e no erro
-      de direção (60%).
+      de direção (55–60%).
     - Não medido: por que metade dos receptores se afasta do passador, e
       quanto da perda vem do giro e da frenagem da física.
 - **Sinais registrados (não calibrar agora):**
