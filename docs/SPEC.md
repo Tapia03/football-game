@@ -1291,6 +1291,38 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
     receptor livre é recuperada" seria ainda mais otimista que a
     execução. **Parado para decisão do usuário**: o problema está na
     execução do passe (o "acerto 56%" das dívidas), não na moeda.
+- **Diagnóstico da execução do passe (time-box: 2 commits de medição,
+  aprovado 2026-10-03; o item 9 espera).**
+  - **Medição A — por que o passe falha (`examples/pass_failures.rs`, 30
+    partidas, 4-4-2 em casa; a outra orientação dá o mesmo):** cada passe é
+    seguido do chute até o primeiro toque (ou a bola sair). 872 passes por
+    partida, **43,0% falham**.
+
+    | Classe | Por partida | De todos | Das falhas | < 10 m | 10–20 m | 20–28 m | ≥ 28 m (alto) |
+    |---|---|---|---|---|---|---|---|
+    | Receptor domina | 470 | 53,9% | — | 66,2% | 58,4% | 62,6% | 9,3% |
+    | Outro companheiro toca antes | 26 | 3,0% | — | 1,9% | 0,8% | 3,7% | 9,6% |
+    | Interceptação em voo | 174 | 19,9% | **46,3%** | 10,3% | 18,4% | 21,6% | 30,9% |
+    | Receptor fora do ponto | 113 | 13,0% | **30,2%** | 14,7% | 14,0% | 4,1% | 26,8% |
+    | Domínio errado | 49 | 5,7% | 13,2% | 6,5% | 6,3% | 6,5% | 1,2% |
+    | Erro de direção | 39 | 4,5% | 10,4% | 0,4% | 2,0% | 1,6% | 22,2% |
+    | Passes por partida | 872 | | | 124 | 370 | 257 | 121 |
+
+    Definições: o ponto de mira é onde o receptor estava no chute (é o
+    que o resolver mira). *Interceptação*: um adversário toca a bola
+    enquanto ela ainda se aproxima do ponto. *Erro de direção*: a bola
+    passa do ponto sem nunca chegar a `receiver_radius` (1,5 m) dele.
+    *Receptor fora do ponto*: a bola chega a menos de 1,5 m do ponto e
+    passa sem o receptor tocar. *Domínio errado*: o receptor toca e não
+    controla.
+  - **Nenhuma causa passa de 50%.** A maior é a interceptação em voo
+    (46%), e ela acontece longe do alvo (a bola ainda estava a 16 m do
+    ponto, na média). A segunda é o receptor fora do ponto (30%): a bola
+    passa, na média, a 0,7 m de onde ele estava.
+  - **O passe pelo alto quase nunca chega:** 9,3% de acerto em 121 passes
+    por partida (14% dos passes).
+  - Depois da falha a posse vai para o adversário em 88% (interceptação),
+    79–80% (fora do ponto, erro de direção) e 66% (domínio errado).
 - **Sinais registrados (não calibrar agora):**
   - **Posse do mandante:** 73% (arcade) → 56,9% (física no lance) →
     42,5% (física + engajamento). A assimetria mudou com a física, não com
