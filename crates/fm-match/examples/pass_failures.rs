@@ -47,6 +47,46 @@ struct Open {
     miss: f32,
     /// The ball has started moving away from the aim point.
     past: bool,
+    /// At the kick: where from, on which tick, everybody's position, the
+    /// decision's estimated success, and whether it was a forced release.
+    from: Vec2,
+    kick_tick: u32,
+    at_kick: [Vec2; 22],
+    estimate: f32,
+    forced: bool,
+}
+
+/// Detail of the passes cut out in flight (measurement B).
+#[derive(Default, Clone, Copy)]
+struct Cuts {
+    n: u64,
+    controlled: u64,
+    forced: u64,
+    /// Ticks from the kick to the touch [1 | 2 | 3-5 | 6-10 | 11+].
+    after: [u64; 5],
+    /// Share of the pass length travelled at the touch [<25 | <50 | <75 | 75+ %].
+    along: [u64; 4],
+    /// Interceptor at the kick: distance to the passer [<2.5 | <5 | <10 | 10+ m]
+    /// and to the pass lane [<1 | <2 | <4 | 4+ m].
+    to_passer: [u64; 4],
+    to_lane: [u64; 4],
+    /// How far the interceptor moved from the kick to the touch [<1 | <3 | <6 | 6+ m].
+    moved: [u64; 4],
+    /// Opponents within 2 m of the lane at the kick [0 | 1 | 2 | 3+].
+    in_lane: [u64; 4],
+    estimate_sum: f64,
+}
+
+fn bucket(v: f32, edges: &[f32]) -> usize {
+    edges.iter().position(|&x| v < x).unwrap_or(edges.len())
+}
+
+/// Distance from `p` to the segment `a → b`.
+fn to_segment(p: Vec2, a: Vec2, b: Vec2) -> f32 {
+    let d = a.distance(b).max(1e-3);
+    let dir = (b - a) / d;
+    let along = (p - a).dot(dir).clamp(0.0, d);
+    p.distance(a + dir * along)
 }
 
 #[derive(Default, Clone, Copy)]
@@ -71,6 +111,10 @@ fn main() {
         ("4-3-3 (home) v 4-4-2", Formation::F433, Formation::F442),
     ] {
         let mut t = Tally::default();
+        let mut cuts = Cuts::default();
+        // Estimated success and forced share of the passes that arrive.
+        let (mut ok_estimate, mut ok_forced, mut ok_n) = (0.0f64, 0u64, 0u64);
+        let mut ok_in_lane = [0u64; 4];
         for seed in 0..n {
             let (db, setup) = fm_match::demo::demo_match_with(seed, home, away);
             let mut e = MatchEngine::new(&setup, &db);
@@ -78,6 +122,8 @@ fn main() {
             let retouch = e.state().tuning.control.retouch_ticks;
             let lofted = e.state().tuning.pass.lofted_dist;
             let mut prev = TickFrame::capture(e.state());
+            let mut prev_ht = 0;
+            let forced_at = e.state().tuning.value.forced_release_ticks;
             let mut open: Option<Open> = None;
             // A failed pass waiting for the next possession: (class, side).
             let mut pending: Option<(usize, fm_match::Side)> = None;
@@ -132,6 +178,38 @@ fn main() {
                         }
                     };
                     t.n[class][o.length] += 1;
+                    let side_of = |i: usize| s.players[i].side;
+                    let lane_count = (0..22)
+                        .filter(|&i| side_of(i) != side && !s.players[i].sent_off)
+                        .filter(|&i| to_segment(o.at_kick[i], o.from, o.target) < 2.0)
+                        .count()
+                        .min(3);
+                    if class == 0 {
+                        ok_n += 1;
+                        ok_estimate += f64::from(o.estimate);
+                        ok_forced += u64::from(o.forced);
+                        ok_in_lane[lane_count] += 1;
+                    }
+                    if let (2, Some(i)) = (class, toucher) {
+                        let ball = o.flight.pos_at(now).xy();
+                        let length = o.from.distance(o.target).max(1e-3);
+                        cuts.n += 1;
+                        cuts.controlled += u64::from(controlled);
+                        cuts.forced += u64::from(o.forced);
+                        cuts.after
+                            [bucket((s.tick - o.kick_tick) as f32, &[1.5, 2.5, 5.5, 10.5])] += 1;
+                        cuts.along[bucket(o.from.distance(ball) / length, &[0.25, 0.5, 0.75])] += 1;
+                        cuts.to_passer[bucket(o.at_kick[i].distance(o.from), &[2.5, 5.0, 10.0])] +=
+                            1;
+                        cuts.to_lane[bucket(
+                            to_segment(o.at_kick[i], o.from, o.target),
+                            &[1.0, 2.0, 4.0],
+                        )] += 1;
+                        cuts.moved
+                            [bucket(frame.pos(i).distance(o.at_kick[i]), &[1.0, 3.0, 6.0])] += 1;
+                        cuts.in_lane[lane_count] += 1;
+                        cuts.estimate_sum += f64::from(o.estimate);
+                    }
                     t.miss_sum[class] += f64::from(o.miss);
                     t.moved_sum[class] += f64::from(frame.pos(o.receiver).distance(o.target));
                     if class >= 2 {
@@ -155,8 +233,21 @@ fn main() {
                     if flight.kick_ms == now {
                         let r = receiver as usize;
                         let target = prev.pos(r);
-                        let d = flight.pos_at(now).xy().distance(target);
+                        let from = flight.pos_at(now).xy();
+                        let d = from.distance(target);
+                        let passer = (0..22)
+                            .find(|&i| s.players[i].touch_ready_tick == s.tick + retouch)
+                            .unwrap_or(r);
+                        let mut at_kick = [Vec2::ZERO; 22];
+                        for (i, at) in at_kick.iter_mut().enumerate() {
+                            *at = prev.pos(i);
+                        }
                         open = Some(Open {
+                            from,
+                            kick_tick: s.tick,
+                            at_kick,
+                            estimate: fm_match::DecisionSystem::pass_success(s, &prev, passer, r),
+                            forced: prev_ht + 1 >= forced_at,
                             flight,
                             receiver: r,
                             target,
@@ -172,6 +263,7 @@ fn main() {
                     }
                 }
                 prev = frame;
+                prev_ht = s.holder_ticks;
             }
         }
         let total: u64 = t.n.iter().flatten().sum::<u64>().max(1);
@@ -229,5 +321,54 @@ fn main() {
                 t.moved_sum[c] / k,
             );
         }
+        let pct = |v: &[u64]| {
+            let total = v.iter().sum::<u64>().max(1) as f64;
+            v.iter()
+                .map(|&c| format!("{:.0}%", 100.0 * c as f64 / total))
+                .collect::<Vec<_>>()
+                .join(" | ")
+        };
+        let c = cuts.n.max(1) as f64;
+        println!(
+            "  -- passes cut out in flight: {:.0}/match",
+            cuts.n as f64 / n as f64
+        );
+        println!(
+            "  the interceptor controls it {:.0}% (deflects {:.0}%) | from a forced release {:.0}% (passes that arrive: {:.0}%)",
+            100.0 * cuts.controlled as f64 / c,
+            100.0 - 100.0 * cuts.controlled as f64 / c,
+            100.0 * cuts.forced as f64 / c,
+            100.0 * ok_forced as f64 / ok_n.max(1) as f64
+        );
+        println!(
+            "  decision's estimated success: {:.1}% for the passes cut out, {:.1}% for the passes that arrive",
+            100.0 * cuts.estimate_sum / c,
+            100.0 * ok_estimate / ok_n.max(1) as f64
+        );
+        println!(
+            "  ticks from kick to touch [1 | 2 | 3-5 | 6-10 | 11+]: {}",
+            pct(&cuts.after)
+        );
+        println!(
+            "  share of the pass travelled [<25 | <50 | <75 | 75+ %]: {}",
+            pct(&cuts.along)
+        );
+        println!(
+            "  interceptor at the kick, distance to the passer [<2.5 | <5 | <10 | 10+ m]: {}",
+            pct(&cuts.to_passer)
+        );
+        println!(
+            "  interceptor at the kick, distance to the lane [<1 | <2 | <4 | 4+ m]: {}",
+            pct(&cuts.to_lane)
+        );
+        println!(
+            "  interceptor moved from kick to touch [<1 | <3 | <6 | 6+ m]: {}",
+            pct(&cuts.moved)
+        );
+        println!(
+            "  opponents within 2 m of the lane at the kick [0 | 1 | 2 | 3+]: cut out {} ; arrive {}",
+            pct(&cuts.in_lane),
+            pct(&ok_in_lane)
+        );
     }
 }

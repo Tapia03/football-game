@@ -1323,6 +1323,40 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
     por partida (14% dos passes).
   - Depois da falha a posse vai para o adversário em 88% (interceptação),
     79–80% (fora do ponto, erro de direção) e 66% (domínio errado).
+  - **Medição B — como acontece a interceptação em voo (a maior causa;
+    174 por partida; mesma ferramenta, 30 partidas, 4-4-2 em casa):**
+
+    | Medida | Distribuição |
+    |---|---|
+    | Ticks do chute ao toque [1 / 2 / 3–5 / 6–10 / 11+] | 32% / 28% / 13% / 14% / 12% |
+    | Fração do passe já percorrida [< 25 / < 50 / < 75 / ≥ 75%] | 63% / 12% / 12% / 13% |
+    | Interceptador no chute: distância ao passador [< 2,5 / < 5 / < 10 / ≥ 10 m] | 41% / 31% / 16% / 12% |
+    | Interceptador no chute: distância à linha de passe [< 1 / < 2 / < 4 / ≥ 4 m] | 66% / 15% / 14% / 6% |
+    | Quanto o interceptador andou até o toque [< 1 / < 3 / < 6 / ≥ 6 m] | 56% / 23% / 12% / 10% |
+    | Adversários a < 2 m da linha no chute [0 / 1 / 2 / 3+] — cortados | 11% / 69% / 17% / 3% |
+    | Idem — passes que chegam | 59% / 38% / 2% / 0% |
+
+    - **É bloqueio, não antecipação.** 60% dos cortes acontecem em até 2
+      ticks (0,2 s) do chute e 63% no primeiro quarto do passe; em 66% o
+      interceptador já estava a menos de 1 m da linha, em 72% a menos de
+      5 m do passador, e em 56% andou menos de 1 m. O portador passa para
+      cima de um defensor parado na linha, ao lado dele.
+    - **57% dos passes cortados saem na saída forçada** (dos que chegam,
+      47%): o portador é obrigado a soltar a bola aos 5,5 s e a melhor
+      opção restante está bloqueada.
+    - **A decisão sabia do risco, mas menos do que a execução cobra:**
+      sucesso estimado 59,9% para os passes cortados (83,5% para os que
+      chegam). Na estimativa, um defensor em cima da linha corta no
+      máximo 70% (`pass_intercept_max`); na execução, qualquer adversário
+      a menos de `intercept_radius` (0,9 m) da bola toca nela, e o passe
+      acaba (domina em 59%, desvia em 41%).
+  - **Hipóteses para decisão do usuário (não investigadas além disto):**
+    (1) estrutura: a saída forçada produz passes para linhas bloqueadas;
+    (2) estimativa × execução (invariante 18): o bloqueio por um corpo na
+    linha vale ≤ 70% na decisão e ~100% na execução; (3) o defensor de
+    contenção fica, por construção, na linha portador→gol, isto é, em
+    cima dos passes para a frente. O "receptor fora do ponto" (30% das
+    falhas) e o passe pelo alto (9% de acerto) não foram detalhados.
 - **Sinais registrados (não calibrar agora):**
   - **Posse do mandante:** 73% (arcade) → 56,9% (física no lance) →
     42,5% (física + engajamento). A assimetria mudou com a física, não com
