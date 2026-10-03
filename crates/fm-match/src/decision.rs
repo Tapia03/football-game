@@ -72,6 +72,20 @@ fn ball_arrival_s(state: &MatchState, d: f32) -> f32 {
     }
 }
 
+/// Chance that an opponent standing `off` metres from the lane cuts the pass
+/// out, as the engine plays it (invariant 18): the larger of
+/// - the **block**: a body on the lane touches the ball as it goes by —
+///   certain on the lane, none at `block_reach` (measured: 83% cut within
+///   0.45 m, 43% at 0.45–0.9 m, 15% at 0.9–1.5 m);
+/// - the **run**: he gets to the lane in time (`reach` after reacting), up
+///   to `pass_intercept_max`.
+#[inline]
+fn cut_chance(v: &crate::tuning::ValueTuning, off: f32, reach: f32) -> f32 {
+    let block = (1.0 - off / v.block_reach).max(0.0);
+    let run = (v.pass_intercept_max * (1.0 - off / reach)).max(0.0);
+    block.max(run)
+}
+
 /// Chance a ball played from `from` to `target` survives every opponent of
 /// `side` along its lane (reach-in-time model, spec Fase 5 (c1) item 2).
 /// Passes longer than `lofted_dist` are played in the air (as the resolver
@@ -99,8 +113,9 @@ fn lane_survival(
         }
         let reach = v.body_reach + o.top_speed * (along / v.pass_speed - v.react_s).max(0.0);
         let off2 = (rel - dir * along).length_squared();
-        if off2 < reach * reach {
-            survive *= 1.0 - v.pass_intercept_max * (1.0 - fm_core::math::sqrt(off2) / reach);
+        let widest = reach.max(v.block_reach);
+        if off2 < widest * widest {
+            survive *= 1.0 - cut_chance(v, fm_core::math::sqrt(off2), reach);
         }
     }
     survive
@@ -299,8 +314,9 @@ impl DecisionSystem {
             // Squared distances first: the square root only for the few
             // opponents actually within reach of the lane.
             let off2 = (rel - dir * along).length_squared();
-            if off2 < reach * reach {
-                survive *= 1.0 - v.pass_intercept_max * (1.0 - fm_core::math::sqrt(off2) / reach);
+            let widest = reach.max(v.block_reach);
+            if off2 < widest * widest {
+                survive *= 1.0 - cut_chance(v, fm_core::math::sqrt(off2), reach);
             }
         }
         let accuracy =
@@ -805,6 +821,42 @@ mod tests {
         assert_ne!(
             striker_at(45.0, 5, &[marker, mate, in_lane]),
             Action::Pass { to: 9 }
+        );
+    }
+
+    /// Invariant 18 on the pass: the engine lets any opponent within reach
+    /// of the ball touch it, so a body standing on the lane next to the
+    /// passer blocks the pass; the estimate must say so.
+    #[test]
+    fn a_body_on_the_lane_blocks_the_pass() {
+        let estimate = |blocker: Vec2| {
+            let s = placed_state(
+                &[
+                    (5, Vec2::new(50.0, 34.0)),
+                    (9, Vec2::new(70.0, 34.0)),
+                    (13, blocker),
+                ],
+                5,
+            );
+            DecisionSystem::pass_success(&s, &TickFrame::capture(&s), 5, 9)
+        };
+        let open = estimate(Vec2::new(53.0, 44.0));
+        // On the lane, 3 m in front of the passer: no time to run, but
+        // none needed.
+        let on_lane = estimate(Vec2::new(53.0, 34.0));
+        // Half the block reach off the lane: about half the passes go by.
+        let leaning = estimate(Vec2::new(53.0, 34.675));
+        // Beyond the block reach: as good as open.
+        let clear = estimate(Vec2::new(53.0, 35.5));
+        assert!(open > 0.7, "open lane: {open}");
+        assert!(on_lane < 0.01, "blocked lane still estimated at {on_lane}");
+        assert!(
+            (leaning / open - 0.5).abs() < 0.05,
+            "half blocked: {leaning} of {open}"
+        );
+        assert!(
+            (clear - open).abs() < 1e-6,
+            "beyond the block: {clear} vs {open}"
         );
     }
 

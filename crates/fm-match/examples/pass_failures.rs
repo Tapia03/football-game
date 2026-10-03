@@ -115,6 +115,9 @@ fn main() {
         // Estimated success and forced share of the passes that arrive.
         let (mut ok_estimate, mut ok_forced, mut ok_n) = (0.0f64, 0u64, 0u64);
         let mut ok_in_lane = [0u64; 4];
+        // Ground passes by the nearest opponent's distance to the lane at
+        // the kick [<0.45 | <0.9 | <1.5 | <2.5 | 2.5+ m]: all, and cut out.
+        let mut by_offset = [[0u64; 2]; 5];
         for seed in 0..n {
             let (db, setup) = fm_match::demo::demo_match_with(seed, home, away);
             let mut e = MatchEngine::new(&setup, &db);
@@ -184,6 +187,15 @@ fn main() {
                         .filter(|&i| to_segment(o.at_kick[i], o.from, o.target) < 2.0)
                         .count()
                         .min(3);
+                    if o.length < 3 {
+                        let nearest = (0..22)
+                            .filter(|&i| side_of(i) != side && !s.players[i].sent_off)
+                            .map(|i| to_segment(o.at_kick[i], o.from, o.target))
+                            .fold(f32::MAX, f32::min);
+                        let b = bucket(nearest, &[0.45, 0.9, 1.5, 2.5]);
+                        by_offset[b][0] += 1;
+                        by_offset[b][1] += u64::from(class == 2);
+                    }
                     if class == 0 {
                         ok_n += 1;
                         ok_estimate += f64::from(o.estimate);
@@ -369,6 +381,18 @@ fn main() {
             "  opponents within 2 m of the lane at the kick [0 | 1 | 2 | 3+]: cut out {} ; arrive {}",
             pct(&cuts.in_lane),
             pct(&ok_in_lane)
+        );
+        println!(
+            "  ground passes cut out, by the nearest opponent's distance to the lane at the kick [<0.45 | <0.9 | <1.5 | <2.5 | 2.5+ m]: {}",
+            by_offset
+                .iter()
+                .map(|b| format!(
+                    "{:.0}% of {:.0}/match",
+                    100.0 * b[1] as f64 / b[0].max(1) as f64,
+                    b[0] as f64 / n as f64
+                ))
+                .collect::<Vec<_>>()
+                .join(" | ")
         );
     }
 }
