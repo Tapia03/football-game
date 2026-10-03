@@ -1242,6 +1242,46 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
   domínio (invariante 18). Riscos a medir: custo (cada marcador na física
   custa 200–320 instruções por tick) e a linha defensiva recuando atrás
   do corredor.
+- **Commit 2 — implementado (2026-10-03) `[ALTERADO v2.1]`:**
+  - `MatchPlayer::run_marker`: escolhido em `plan_runs` no tick em que a
+    corrida nasce — o jogador de linha adversário mais próximo da posição
+    do corredor (menor índice no empate). Sem RNG. Não é reescolhido
+    durante a corrida.
+  - `plan_shape`: enquanto a corrida vive (e a fase do time do corredor é
+    de posse), o alvo do marcador é `mark_dist` (1,5 m) do lado do gol em
+    relação à posição atual do corredor, a `mark_urgency` (0,95) da
+    velocidade máxima, no lance (física). `on_ball` roda depois e
+    sobrescreve: contenção, cobertura e bote têm prioridade.
+  - **Regra da linha (aprovada):** se a profundidade média da linha
+    defensiva derivar mais de 5 m, o marcador passa a acompanhar só de
+    lado, em outro commit. **Medido: 26,8 m → 26,0 m** (−0,8 m; com
+    corrida viva 26,5 → 25,8 m). Não disparou.
+  - **Medido (180 partidas por orientação, contra o commit 1):**
+
+    | Métrica | Commit 1 | Commit 2 | Real (aprox.) |
+    |---|---|---|---|
+    | Posse do 4-4-2 (casa / fora) | 57,7% / 58,1% | 59,7% / 59,1% | — |
+    | Linha defensiva (bola dominada) | 26,8 m | 26,0 m | — |
+    | Gols | 4,87 | 4,56 | 2,7 |
+    | Chutes (no alvo) | 28,2 (9,1) | 27,5 (8,7) | 25 (9) |
+    | Passes (acerto) | 928 (58%) | 886 (58%) | 900 (80%) |
+    | Botes / faltas | 8–9 / 3,2 | 8 / 3,1 | 70 / 22 |
+    | Corredores por tick | 0,49 | 0,48 | — |
+
+  - **O acompanhamento é parcial.** Numa partida (seed 3, teste
+    `markers_track_runs`, 1.128 corridas): a distância marcador–corredor
+    tem mediana 5,3 m no início e **4,4 m no fim** (p25 2,7 m, p75
+    7,8 m); o marcador termina a até 3 m em 29% das corridas e mais perto
+    do que começou em 60%. O alvo é 1,5 m. Causas prováveis, não
+    medidas: o marcador mais próximo do corredor também é chamado para a
+    bola (contenção/cobertura têm prioridade), e a corrida deixa de ser
+    acompanhada quando a posse muda.
+  - **A assimetria de posse piorou ~2 pontos** (4-4-2 com 59–60%): mais um
+    sinal de que ela não é das corridas em si. Continua pendente.
+  - Testes: marcador = adversário de linha mais próximo; alvo do lado do
+    gol em relação à posição atual; dever de bola sobrepõe a marcação;
+    numa partida inteira toda corrida tem marcador e a mediana da
+    distância cai. Golden de paridade regenerado.
 - **Sinais registrados (não calibrar agora):**
   - **Posse do mandante:** 73% (arcade) → 56,9% (física no lance) →
     42,5% (física + engajamento). A assimetria mudou com a física, não com
