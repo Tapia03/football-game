@@ -8,21 +8,15 @@
 //! live; the runner with the most open lane goes.
 //!
 //! Deterministic (no RNG). Runs start on the carrier's decision cadence,
-//! and the offside line is computed only on those ticks (spec: item 3
-//! debt). Between looks the runner keeps running to the same point; the
-//! line may move meanwhile — the engine does not flag offside (known bias,
-//! spec Fase 5 "Impedimento").
-//!
-//! The defence tracks the run: when it starts, the nearest opposing
-//! outfielder becomes its marker and stays goal-side of the runner's
-//! *current* position (not of the run target: defenders do not read the
-//! opponent's intent) for as long as the run is live.
+//! and the offside line is computed only on those ticks (spec: item 3 debt). Between looks the runner keeps
+//! running to the same point; the line may move meanwhile — the engine does
+//! not flag offside (known bias, spec Fase 5 "Impedimento").
 
 use fm_core::{pitch, Vec2};
 
 use crate::formation::Role;
 use crate::phase::{Phase, Possession, Side};
-use crate::state::{side_index, BallState, MatchPlayer, MatchState, NO_MARKER};
+use crate::state::{side_index, BallState, MatchState};
 use crate::tick_frame::TickFrame;
 
 /// Roles that make runs in behind.
@@ -123,12 +117,10 @@ pub fn plan_runs(state: &mut MatchState, frame: &mut TickFrame) {
         let off_the_ball = f32::from(state.players[i].attrs.mental.off_the_ball) / 100.0;
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // ≥ 0, small
         let cooldown = (rt.cooldown_base - rt.cooldown_skill * off_the_ball).max(0.0) as u32;
-        let marker = nearest_outfielder(state, frame, side.other(), frame.pos(i));
         let p = &mut state.players[i];
         p.run_target = target;
         p.run_until = tick + rt.run_ticks;
         p.run_ready_tick = p.run_until + cooldown;
-        p.run_marker = marker;
     }
 }
 
@@ -165,52 +157,6 @@ fn open_lane(
         }
     }
     best
-}
-
-/// The active outfielder of `side` nearest to `at` (lowest index on ties),
-/// or `NO_MARKER`.
-fn nearest_outfielder(state: &MatchState, frame: &TickFrame, side: Side, at: Vec2) -> u8 {
-    let start = side_index(side) * 11;
-    let mut best = (f32::MAX, NO_MARKER);
-    for j in start..start + 11 {
-        let o = &state.players[j];
-        if o.sent_off || o.role == Role::Goalkeeper {
-            continue;
-        }
-        let d = (frame.pos(j) - at).length_squared();
-        if d < best.0 {
-            #[allow(clippy::cast_possible_truncation)] // < 22
-            let j = j as u8;
-            best = (d, j);
-        }
-    }
-    best.1
-}
-
-/// If player `i` (`p`) has a live run with a marker still on the pitch: the
-/// marker and where it stands — `mark_dist` goal-side of the runner's
-/// current position.
-#[inline]
-#[must_use]
-pub fn marking(
-    state: &MatchState,
-    frame: &TickFrame,
-    i: usize,
-    p: &MatchPlayer,
-) -> Option<(usize, Vec2)> {
-    if p.run_until <= state.tick || p.run_marker == NO_MARKER || !runs_live(frame.phase(p.side)) {
-        return None;
-    }
-    let m = p.run_marker as usize;
-    if !state.players[m].active() {
-        return None;
-    }
-    let at = frame.pos(i);
-    let own_goal = state.attacking(p.side).goal_centre();
-    Some((
-        m,
-        at + (own_goal - at).normalize() * state.tuning.runs.mark_dist,
-    ))
 }
 
 /// The run target and urgency of player `i`, if it is running now.
@@ -284,12 +230,6 @@ mod tests {
         );
         assert!(p.run_target.x > 60.0, "forward");
         assert!(active_run(&s, &f, st).is_some());
-        // Tracked by the nearest opposing outfielder (14, at `(80, 40)`),
-        // goal-side of where the runner is now.
-        assert_eq!(p.run_marker, 14);
-        let (m, at) = marking(&s, &f, st, p).expect("marked");
-        assert_eq!(m, 14);
-        assert!(at.x > 60.0 && at.distance(Vec2::new(60.0, 34.0)) < s.tuning.runs.mark_dist + 0.01);
     }
 
     #[test]

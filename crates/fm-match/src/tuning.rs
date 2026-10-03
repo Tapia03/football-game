@@ -397,10 +397,6 @@ pub struct RunTuning {
     pub urgency: f32,
     /// Runs a side may have live at once, whatever its formation.
     pub max_runners: u32,
-    /// The run's marker stands this far goal-side of the runner (m), moving
-    /// at this fraction of top speed.
-    pub mark_dist: f32,
-    pub mark_urgency: f32,
 }
 
 impl Default for RunTuning {
@@ -419,9 +415,6 @@ impl Default for RunTuning {
             urgency: 0.95,
             // One run at a time: the others stay as short support.
             max_runners: 1,
-            // Touch-tight but goal-side; tracking a run is a sprint.
-            mark_dist: 1.5,
-            mark_urgency: 0.95,
         }
     }
 }

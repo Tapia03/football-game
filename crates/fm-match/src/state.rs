@@ -16,9 +16,6 @@ use crate::tuning::TuningParams;
 
 pub const PLAYERS: usize = 22;
 
-/// `MatchPlayer::run_marker` when nobody tracks the run.
-pub const NO_MARKER: u8 = u8::MAX;
-
 /// One of the 22 players, with attributes copied in at kick-off so the
 /// engine never touches the `PlayerDatabase` during play.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -47,9 +44,6 @@ pub struct MatchPlayer {
     pub run_until: u32,
     /// Tick before which the player will not start another run.
     pub run_ready_tick: u32,
-    /// The opponent tracking this player's live run (Caminho A, passo 2);
-    /// `NO_MARKER` if none.
-    pub run_marker: u8,
 }
 
 impl MatchPlayer {
