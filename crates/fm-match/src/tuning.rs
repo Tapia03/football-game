@@ -209,6 +209,8 @@ pub struct RestartTuning {
     pub penalty: u32,
     /// Fraction of top speed at which the taker walks to the spot.
     pub taker_urgency: f32,
+    /// Restart spots are kept this far inside the lines (m).
+    pub edge_margin: f32,
 }
 
 impl RestartTuning {
@@ -624,6 +626,9 @@ impl Default for RestartTuning {
             corner: 40,
             penalty: 40,
             taker_urgency: 0.9,
+            // Taker within 1 m of the spot + ball 0.5 m ahead of him +
+            // 0.5 m of slack.
+            edge_margin: 2.0,
         }
     }
 }
