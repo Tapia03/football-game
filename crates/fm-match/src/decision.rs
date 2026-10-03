@@ -39,6 +39,21 @@ pub enum Action {
 
 pub struct DecisionSystem;
 
+/// Values of the carrier's options (see `DecisionSystem::option_values`).
+#[cfg(feature = "diagnostics")]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OptionValues {
+    pub hold: f32,
+    pub shot: f32,
+    /// Best pass (`f32::MIN` and `None` with nobody in range), and its
+    /// estimated success.
+    pub pass: f32,
+    pub pass_to: Option<u8>,
+    pub pass_success: f32,
+    pub dribble: f32,
+    pub pressed: bool,
+}
+
 /// Passing skill in `[0, 1]` (keepers: distribution).
 fn passer_skill(p: &MatchPlayer) -> f32 {
     if p.role == Role::Goalkeeper {
@@ -220,6 +235,43 @@ impl DecisionSystem {
             }
         }
         best
+    }
+
+    /// The value of each of the carrier's options as `choose_action` sees
+    /// them, without choosing (diagnostics tools only; the pass search is
+    /// the full, unpruned one).
+    #[cfg(feature = "diagnostics")]
+    #[must_use]
+    pub fn option_values(state: &MatchState, frame: &TickFrame, me: usize) -> OptionValues {
+        let t = &state.tuning.decision;
+        let v = &state.tuning.value;
+        let p = &state.players[me];
+        let my_pos = frame.pos(me);
+        let end = state.attacking(p.side);
+        let pressed = state.players.iter().enumerate().any(|(j, o)| {
+            o.side != p.side && o.active() && frame.pos(j).distance(my_pos) < t.pressure_radius
+        });
+        let hold_keep = if pressed { v.hold_keep_pressed } else { 1.0 };
+        #[allow(clippy::cast_precision_loss)] // ticks on the ball ≪ 2^23
+        let waited = state.holder_ticks as f32;
+        let hold = Self::keep_or_lose(state, my_pos, my_pos, end, hold_keep)
+            * (1.0 - v.hold_erosion * waited).max(0.0);
+        let (pass, pass_to) = Self::best_pass(state, frame, me, f32::MIN);
+        let dribble = if p.role == Role::Goalkeeper {
+            f32::MIN
+        } else {
+            Self::dribble(state, frame, me).0
+        };
+        OptionValues {
+            hold,
+            shot: Self::shot_xg(state, frame, me),
+            pass,
+            pass_to,
+            pass_success: pass_to
+                .map_or(0.0, |to| Self::pass_success(state, frame, me, to as usize)),
+            dribble,
+            pressed,
+        }
     }
 
     /// Whether the carrier `me` re-evaluates its options this tick (decision

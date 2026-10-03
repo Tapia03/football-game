@@ -33,5 +33,9 @@ harness = false
 name = "calibrate"
 required-features = ["diagnostics"]
 
+[[example]]
+name = "forced_release"
+required-features = ["diagnostics"]
+
 [lints]
 workspace = true

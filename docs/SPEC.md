@@ -1440,6 +1440,38 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
       de direção (55–60%).
     - Não medido: por que metade dos receptores se afasta do passador, e
       quanto da perda vem do giro e da frenagem da física.
+- **Item 9, antes do commit 1 — por que metade dos passes sai na saída
+  forçada (commit 5, `examples/forced_release.rs`, 30 partidas, 4-4-2 em
+  casa; a outra orientação dá o mesmo):** a cada decisão do portador, o
+  valor de cada opção como `choose_action` a vê (`option_values`, só com
+  a feature `diagnostics`).
+  - 886 passes por partida; **52,5% na saída forçada** (465).
+  - **É decisão de conduzir, não falta de opção:**
+
+    | Causa do período que termina na trava | Parcela |
+    |---|---|
+    | Nenhum passe valia mais que zero em nenhuma decisão | 0,3% |
+    | Havia passe de valor positivo, mas nunca acima de segurar | 6,2% |
+    | **Um passe valia mais que segurar, mas conduzir valia mais** | **90,3%** |
+    | O passe foi a melhor opção em alguma decisão e não saiu | 3,2% |
+
+  - **Nos períodos forçados, conduzir vale mais que o melhor passe em 97%
+    das decisões.** Valor médio (× 1000): segurar 3,4, melhor passe 5,9,
+    **conduzir 19,3**. O portador carrega a bola 17,9 m em média até a
+    trava (3,2 m nos períodos em que o passe sai por valor). O melhor
+    passe vale mais que zero em 84% das decisões, com sucesso estimado de
+    71%.
+  - **Por que conduzir ganha (leitura do modelo, não medição):** o valor
+    de conduzir é `manter × xT(5 m à frente)`, com manter = 97% no espaço,
+    e **não erode** com o tempo de bola; o de segurar erode 3% por tick; o
+    do passe paga a chance de falha (29%) no ponto do receptor. Conduzir é
+    a única opção sem custo.
+  - **Onde a trava dispara:** 13% no terço defensivo, 56% no médio, 30% no
+    final; 62% por meias, 29% por atacantes, 7% por defensores, 2% pelo
+    goleiro. A construção desde a defesa quase não entra nela.
+  - **Consequência para o item 9:** o termo de perda do passe muda o valor
+    do passe, que não é o que decide nesses períodos. Tratar a condução é
+    o escopo do item 7 (drible 1×1). Decisão pendente com o usuário.
 - **Sinais registrados (não calibrar agora):**
   - **Posse do mandante:** 73% (arcade) → 56,9% (física no lance) →
     42,5% (física + engajamento). A assimetria mudou com a física, não com
