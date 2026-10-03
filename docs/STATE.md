@@ -2,21 +2,22 @@
 
 Resumo de uma tela que sobrevive a compactações de sessão. A fonte de verdade
 de arquitetura e regras é o [`docs/SPEC.md`](SPEC.md); este arquivo só diz
-*onde estamos*. Atualizado em **2026-10-03** (retomada; passo 2 do Caminho A, commit 1 feito).
+*onde estamos*. Atualizado em **2026-10-03** (passo 2 do Caminho A: commit 1 feito, commit 2 revertido; próximo: item 9).
 
 ## Fase atual — em andamento
 **Fase 5 — Role Behaviors**, branch `fase-5` (sem PR aberto). Ponto de
 retorno da pausa: `6e65012` (a tag `pre-pause-fase5-item5` ainda não
 existe no remoto; o usuário vai criá-la nesse commit). O código é o de
-`19e7194`: CI verde em todos os jobs (run #55), inclusive paridade WASM e
-bench.
+`19e7194` (o commit 2 do passo 2 foi revertido): CI verde em todos os
+jobs em `692f5af`, inclusive paridade WASM e bench.
 
 ### Onde exatamente paramos
 Há **duas numerações de "passo"** diferentes. Não confundir:
-- **Passos do Caminho A** (a ordem de (c1), abaixo). Paramos no **passo 2**
-  (defesa ajustada à física): o engajamento e a corrida decidida (gatilho +
-  teto, commit 1) estão feitos; falta a **defesa acompanhar corredores**
-  (commit 2) e o **goleiro saindo do gol**.
+- **Passos do Caminho A** (a ordem de (c1), abaixo). O **passo 2** ficou
+  incompleto de propósito: engajamento e corrida decidida (gatilho + teto)
+  feitos; "defesa acompanha o corredor" foi tentado e **revertido**
+  (abaixo); "goleiro saindo do gol" não foi iniciado. **Próximo: passo 3
+  (item 9, construção desde a defesa).**
 - **Passos do item 5** (passe em profundidade). Passo 1 (`lofted_lane`)
   ligado; passo 2 (tempo de chegada + corredor legal) implementado e
   **desligado**. O item 5 não andou desde então: ele é refeito no **passo 4
@@ -29,16 +30,34 @@ Caminho A**, não o passo 2 do item 5.
 1. Física de movimento — **feito** (`8e5e7e8` + `5d34253`): reação,
    aceleração, giro e chegada (15 m/s² / 80 ms / 15 rad/s), só para quem
    está no lance; o resto arcade na cadência 3.
-2. Defesa ajustada à física — **em andamento.** Feito: engajamento (o
+2. Defesa ajustada à física — **parcial, suspenso.** Feito: engajamento (o
    escolhido pela nota do bote, a até 4,5 m, parte para cima; o bote sai a
    1,8 m); corrida decidida (`19e7194`: gatilho + teto de 1 corredor por
-   time; corredores por tick 0,86 → 0,49). **RETOMAR AQUI:** defesa
-   acompanha o corredor (commit 2) e goleiro saindo do gol. Regra de
-   custo: +1,5% por item, de volta.
-3. Item 9: construção desde a defesa.
+   time; corredores por tick 0,86 → 0,49). **Revertido:** defesa acompanha
+   o corredor (ver "Tentativa revertida"). Revisitar depois do item 9,
+   com o estimador de custo corrigido. Pendente sem data: goleiro saindo
+   do gol.
+3. Item 9: construção desde a defesa. **RETOMAR AQUI** (desenho antes do
+   código, aprovado pelo usuário).
 4. Refazer o item 5 (passe em profundidade) sobre a física nova.
 5. Itens 6–8 (apoio sem bola → drible 1×1 → tabela).
 Depois: (c2) calibração, (d) comportamentos por papel, PR `fase-5` → `main`.
+
+### Tentativa revertida: defesa acompanha o corredor (2026-10-03)
+Commits `53f017a` (SPEC) e `2915e96` (código), revertidos. Desenho: cada
+corrida ganha um marcador (o adversário de linha mais próximo), que fica
+1,5 m do lado do gol do corredor, na física. Lições:
+1. **O estimador de custo errou 2×.** Previsto: 200–320 instruções por
+   tick com marcador na física (+1,1%). Medido no CI: **614.856.548,
+   +2,67%** sobre 598,8M (~620 instruções por tick com marcador). Causa
+   não investigada (sem perfil: o callgrind só roda no CI e a saída não é
+   guardada). Estimativas futuras levam margem maior.
+2. **Acompanhamento parcial.** Distância marcador–corredor no fim da
+   corrida: mediana **4,4 m** (alvo 1,5 m; 5,3 m no início). Só **29%** das
+   corridas terminam com o marcador a ≤ 3 m.
+3. **A posse do 4-4-2 piorou:** 57,7% → 59,7% (4-4-2 em casa).
+4. **A linha defensiva não recuou:** 26,8 m → 26,0 m (limite combinado:
+   5 m). O risco de a linha descer atrás do corredor não se confirmou.
 
 ### Itens de (c1)
 | Item | Estado |
@@ -60,6 +79,10 @@ iniciados.
 ### Commits na `fase-5` (sobre `main`, mais recente primeiro)
 | Hash | Resumo |
 |---|---|
+| (reverts) | Revert de `2915e96` e `53f017a` (defesa acompanha o corredor) |
+| `2915e96` | Defesa acompanha o corredor — **revertido** (614,9M, +2,67%) |
+| `53f017a` | SPEC do commit 2 — **revertido** |
+| `692f5af` | Baseline de instruções 598.838.544; dívida 5,8M |
 | `19e7194` | Corrida decidida: gatilho + teto de corredores (598,8M) |
 | `cb05418` | SPEC: passo 2 do Caminho A, commit 1; medição de 180 partidas |
 | `6e65012` | docs: consolida estado no fim da Fase 5 (item 5 parcial) |
@@ -98,8 +121,8 @@ iniciados.
 ### No SPEC, mas não no código
 - **Invariante 18 do lado do passe:** a estimativa de linha de passe ainda
   supõe a cinemática antiga (acerto 56%). Caminho A, passo 4, ou (c2).
-- **Defesa acompanha corredores + equilíbrio corrida × apoio** e **goleiro
-  saindo do gol**: o resto do passo 2 do Caminho A.
+- **Defesa acompanha corredores** (tentado e revertido; revisitar depois
+  do item 9) e **goleiro saindo do gol**: o resto do passo 2 do Caminho A.
 - **Item 9** (construção desde a defesa) e **itens 6–8**: só a ordem e o
   escopo.
 - **Valores realistas da física** (4,5 m/s² / 200 ms / 6 rad/s): no
