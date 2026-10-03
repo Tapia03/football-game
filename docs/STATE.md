@@ -40,11 +40,11 @@ Caminho A**, não o passo 2 do item 5.
    cruzamento, joga como líbero). Não é o "goleiro como receptor" do
    item 9. Entra **depois do item 9 e antes do item 5 refeito**, quando a
    dinâmica de profundidade estabilizar.
-3. Item 9: construção desde a defesa. **RETOMAR AQUI.** Ordem aprovada:
-   (5) medir por que 51% dos passes saem na saída forçada; (9.1) termo de
-   perda do passe calibrado pela execução medida; (9.2) apoio dos
-   defensores em `plan_shape`, se a medição pedir; (9.3) goleiro como
-   receptor. Relatar a % de saída forçada em todo commit.
+3. Item 9: construção desde a defesa. **Adiado** (com o item 7) até fechar
+   o time-box em curso: (1) reinícios corrigidos e (2) re-medidos —
+   feitos; perfil do custo no CI; **RETOMAR AQUI:** (3) por que saem ~6,5
+   botes por partida e não ~70; (4) por que o melhor passe vale 3× menos
+   que conduzir. Depois, decisão do usuário.
 4. Refazer o item 5 (passe em profundidade) sobre a física nova.
 5. Itens 6–8 (apoio sem bola → drible 1×1 → tabela).
 Depois: (c2) calibração, (d) comportamentos por papel, PR `fase-5` → `main`.
@@ -88,6 +88,10 @@ iniciados.
 | (reverts) | Revert de `2915e96` e `53f017a` (defesa acompanha o corredor) |
 | `2915e96` | Defesa acompanha o corredor — **revertido** (614,9M, +2,67%) |
 | `53f017a` | SPEC do commit 2 — **revertido** |
+| `8b59e10` | Reinícios não são mais perdidos na hora (610,2M, +2,10%, aceito) |
+| `1921910` | Medição: custo da condução na execução (e o bug dos reinícios) |
+| `d3150dc` | Medição: por que 52% dos passes saem na saída forçada |
+| `f4ebba2` | Baseline 597.652.818; piso de faltas do teste em 2 |
 | `efc9cd1` | Medição: receptor fora do ponto (commit 4 do diagnóstico do passe) |
 | `ac88f94` | Bloqueio na estimativa do passe (597,7M, −0,20%) |
 | `3f55274` | Medição B: como acontece a interceptação em voo |
@@ -145,8 +149,10 @@ iniciados.
 - Contadores de diagnóstico (só com a feature `diagnostics`).
 
 ### Dívidas conhecidas
-- **Custo:** 597,7M instruções (597.652.818, commit `ac88f94`) ≈ 45,3 ms:
-  **4,7M acima da meta desejável de 45 ms (593M)**, dentro do critério de saída de (c)
+- **Custo:** 610,2M instruções (610.183.817, commit `8b59e10`) ≈ 46,3 ms:
+  **17M acima da meta desejável de 45 ms (593M)**; folga de ~1,7 ms até o
+  critério de saída. O +2,10% da correção dos reinícios foi aceito com
+  perfil pendente (artefato `callgrind` do job de bench), dentro do critério de saída de (c)
   (≤ 48 ms ≈ 633M, decidido em 2026-10-03). Regra por commit: +1,5%.
 - **Execução de passes — dívida estrutural para depois de (c1)** (uma
   fase futura pega os três juntos):
@@ -158,6 +164,10 @@ iniciados.
   - **Passe pelo alto (≥ 28 m):** 9% de acerto em ~120 passes por partida
     (o receptor corre para debaixo da bola ainda alta).
   - **Passe em profundidade:** 0,3% de acerto quando ligado; desligado.
+- **Bola conduzida para fora em jogo corrido:** 5,9 por partida (4,2 antes
+  da correção dos reinícios): o portador sai do campo com a bola. Não
+  investigado. Se for barato, vira commit próprio; se for estrutural
+  (falta de limite da linha para o portador), vira fase.
 - **Saída forçada:** 51% dos passes saem na trava dos 5,5 s. Alarme do
   item 9: acima de 55%, parar e reportar.
 - **Teste de faltas:** `match_statistics_are_plausible` tem piso de 2 faltas
@@ -231,8 +241,8 @@ Ver SPEC, Seção 0 e decisões das Fases 3–5. Os que mais pesam no dia a dia:
 ## Decisões pendentes
 - (decidido 2026-10-03) **Critério de saída de (c): ≤ 48 ms** pela régua
   (≤ ~633M instruções). A meta desejável continua 45 ms (~593M); o gate
-  de 50 ms (~660M) nunca foi violado pela régua de instruções. Hoje: 597,7M ≈
-  45,3 ms.
+  de 50 ms (~660M) nunca foi violado pela régua de instruções. Hoje: 610,2M ≈
+  46,3 ms.
 - **xT:** conferir a cópia contra `karun.in/blog/data/open_xt_12x8_v1.json`.
 
 ## Marcos

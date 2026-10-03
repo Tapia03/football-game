@@ -1538,7 +1538,36 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
   - **Não mexido:** a bola conduzida para fora em jogo corrido (5,9 por
     partida; antes 4,2) continua existindo: é o portador saindo do campo
     com a bola, sem reinício envolvido.
-  - Golden de paridade regenerado. Instruções: a medir no CI.
+  - Golden de paridade regenerado.
+  - **Custo (CI): 610.183.817 instruções, +2,10%** sobre 597.652.818 —
+    acima do +1,5%. **Aceito pelo usuário como consequência da correção**
+    (linha de base regravada), com perfil pendente: o job de bench passa a
+    guardar a saída do callgrind como artefato (`callgrind/`), mesmo
+    quando passa. Hipótese a confirmar pelo perfil: não é código mais
+    caro, é mais jogo simulado (bola parada 7% → 4%). Pela régua, 610,2M ≈
+    46,3 ms (critério de saída de (c): ≤ 48 ms).
+  - **"Commit 2" do time-box — re-medição com o bug corrigido (fechado
+    junto com o commit 1; 180 partidas por orientação no `calibrate`, 30
+    nas outras ferramentas):**
+
+    | Métrica | Antes | Com a correção |
+    |---|---|---|
+    | Posse do 4-4-2 (casa / fora) | 59,0% / 59,2% | 58,2% / 58,6% |
+    | Passes por partida | 892 | 916 |
+    | Acerto de passe | 60% | 59–60% |
+    | Passes que falham (`pass_failures`) | 40,0% | 40,6% |
+    | Reinícios cobrados por partida | 129 | 72 |
+    | Bola parada | 7% | 4% |
+    | Gols | 4,27 | 4,38 |
+    | Faltas | 2,8 | 2,85 |
+    | Saída forçada | 51–52% | 52–53% |
+    | Botes por partida | 6,9 | 6,3–6,5 |
+
+    **As conclusões anteriores não mudam:** 90% dos períodos que terminam
+    na trava continuam sendo "escolheu conduzir"; um passo de 5 m de
+    condução perde a bola em 0,23% (espaço) e 0,48% (apertado); as causas
+    de falha de passe ficam nas mesmas proporções (interceptação 40%,
+    receptor fora do ponto 32%).
 - **Sinais registrados (não calibrar agora):**
   - **Posse do mandante:** 73% (arcade) → 56,9% (física no lance) →
     42,5% (física + engajamento). A assimetria mudou com a física, não com
