@@ -1472,6 +1472,55 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
   - **Consequência para o item 9:** o termo de perda do passe muda o valor
     do passe, que não é o que decide nesses períodos. Tratar a condução é
     o escopo do item 7 (drible 1×1). Decisão pendente com o usuário.
+- **Custo da condução — correção estrutural antes do item 9 (aprovado
+  2026-10-03; não é o item 7: sem duelo nem decisão de enfrentar).**
+  Time-box: 2 commits (A mede a execução, B implementa o custo na
+  decisão). Alarmes de B: saída forçada < 20%, gols > 6,0, passes >
+  1.300, instruções > +1,5%.
+  - **Commit A — o que a condução custa na execução
+    (`examples/carry_cost.rs`, 30 partidas, 4-4-2 em casa; a outra
+    orientação dá o mesmo).** No motor, o portador só perde a bola por
+    bote (ganho limpo, ou bola espirrada que o adversário pega) ou
+    saindo com ela do campo.
+
+    | Tick com a bola | Ticks por partida | Botes por 1.000 ticks | Perdas por 1.000 ticks | Perdas por 100 m |
+    |---|---|---|---|---|
+    | Conduzindo, espaço à frente | 21.908 | 0,28 | 0,16 | 0,04 |
+    | Conduzindo, apertado | 4.267 | 0,02 | 0,37 | 0,09 |
+    | Segurando | 8.379 | 0,09 | 0,16 | 0,20 |
+    | Sem pressão (ninguém a < 2,5 m) | 28.218 | 0,01 | 0,09 | 0,03 |
+    | Pressionado | 6.336 | 1,05 | 0,64 | 0,15 |
+    | Adversário mais próximo a < 1,8 m | 2.809 | 1,55 | 0,96 | 0,23 |
+    | 1,8–2,5 m | 3.527 | 0,64 | 0,39 | 0,10 |
+    | 2,5–4,5 m | 20.920 | 0,01 | 0,05 | 0,01 |
+    | ≥ 4,5 m | 7.298 | 0,00 | 0,19 | 0,08 |
+
+    - **Botes: 6,9 por partida** (real ~70): falta 41%, ganho limpo 31%,
+      bola espirrada 14% (11% delas ficam com o adversário), portador
+      vence 14%. Bola conduzida para fora: 4,2 por partida.
+    - **Um passo de 5 m de condução (12 ticks) perde a bola em 0,20% das
+      vezes no espaço e 0,44% apertado. A decisão supõe 3,0% e 32,9%.**
+      A decisão já é **mais pessimista** que a execução, por 15× e 75×.
+    - Comparação: segurar erode 3% do valor por tick (37% em 12 ticks); um
+      passe falha ~40% das vezes.
+    - **Conclusão: na execução a condução é praticamente de graça.** Não
+      há custo real por onde calibrar a decisão (invariante 18): o custo
+      medido é menor do que o que a decisão já cobra. A condução domina
+      porque a defesa não tira a bola do portador: com um adversário a
+      menos de 1,8 m (alcance do bote) em 2.809 ticks por partida, saem
+      4,4 botes. A raiz está na defesa (a dívida "botes 10 / real 70"),
+      não na conta do portador. **Parado antes do commit B, para decisão
+      do usuário.**
+  - **Bug encontrado na medição (fora do escopo, não corrigido):
+    reinícios perdidos na hora.** De 129 reinícios cobrados por partida,
+    **62 (48%) viram bola fora no mesmo instante** e o reinício passa
+    para o adversário (40% na outra orientação: 45 de 112). Quase todos
+    são laterais (58 por partida; mais ~4 escanteios que viram tiro de
+    meta ou lateral): o cobrador assume a bola a menos de 1 m da borda e
+    o teste de "bola fora" do portador o pega em até 15 ticks (35 por
+    partida em até 2 ticks). Causa provável, não confirmada: a posição do
+    cobrador (ou o deslocamento de 0,5 m da bola conduzida) fica do lado
+    de fora da linha.
 - **Sinais registrados (não calibrar agora):**
   - **Posse do mandante:** 73% (arcade) → 56,9% (física no lance) →
     42,5% (física + engajamento). A assimetria mudou com a física, não com
