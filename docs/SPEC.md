@@ -1521,6 +1521,24 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
     partida em até 2 ticks). Causa provável, não confirmada: a posição do
     cobrador (ou o deslocamento de 0,5 m da bola conduzida) fica do lado
     de fora da linha.
+- **Reinícios perdidos na hora — corrigido (2026-10-03) `[ALTERADO
+  v2.1]`.** Time-box novo de 4 commits: (1) esta correção; (2) re-medição;
+  (3) por que saem 6,9 botes e não ~70; (4) por que o passe vale 3× menos
+  que conduzir. Item 9 e item 7 adiados até lá.
+  - **Causa:** o ponto do lateral e do escanteio ficava em cima da linha;
+    o cobrador assume a bola a até 1 m do ponto e a bola conduzida fica
+    0,5 m à frente dele, e o teste "portador com a bola fora do campo"
+    entregava o reinício ao adversário.
+  - **Correção:** `set_restart` mantém o ponto de qualquer reinício a
+    `RestartTuning::edge_margin` (2,0 m = 1 m do cobrador + 0,5 m da bola
+    + 0,5 m de folga) para dentro das linhas.
+  - **Teste:** `restarts_are_not_lost_at_once` — 30 partidas, 2.152
+    reinícios cobrados, **0 perdidos em menos de 5 ticks** (antes: 62 por
+    partida, 48%).
+  - **Não mexido:** a bola conduzida para fora em jogo corrido (5,9 por
+    partida; antes 4,2) continua existindo: é o portador saindo do campo
+    com a bola, sem reinício envolvido.
+  - Golden de paridade regenerado. Instruções: a medir no CI.
 - **Sinais registrados (não calibrar agora):**
   - **Posse do mandante:** 73% (arcade) → 56,9% (física no lance) →
     42,5% (física + engajamento). A assimetria mudou com a física, não com
