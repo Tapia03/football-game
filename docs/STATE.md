@@ -2,18 +2,21 @@
 
 Resumo de uma tela que sobrevive a compactações de sessão. A fonte de verdade
 de arquitetura e regras é o [`docs/SPEC.md`](SPEC.md); este arquivo só diz
-*onde estamos*. Atualizado em **2026-10-02** (pausa por orçamento, fim da sessão).
+*onde estamos*. Atualizado em **2026-10-03** (retomada; passo 2 do Caminho A, commit 1 feito).
 
-## Fase atual — PAUSADA (orçamento)
+## Fase atual — em andamento
 **Fase 5 — Role Behaviors**, branch `fase-5` (sem PR aberto). Ponto de
-retorno: tag `pre-pause-fase5-item5` (este commit de STATE). O código é o
-de `5d34253`: CI verde em todos os jobs, inclusive paridade WASM e bench.
+retorno da pausa: `6e65012` (a tag `pre-pause-fase5-item5` ainda não
+existe no remoto; o usuário vai criá-la nesse commit). O código é o de
+`19e7194`: CI verde em todos os jobs (run #55), inclusive paridade WASM e
+bench.
 
 ### Onde exatamente paramos
 Há **duas numerações de "passo"** diferentes. Não confundir:
 - **Passos do Caminho A** (a ordem de (c1), abaixo). Paramos no **passo 2**
-  (defesa ajustada à física): o engajamento está feito; falta **acompanhar
-  corredores** e **goleiro saindo do gol**.
+  (defesa ajustada à física): o engajamento e a corrida decidida (gatilho +
+  teto, commit 1) estão feitos; falta a **defesa acompanhar corredores**
+  (commit 2) e o **goleiro saindo do gol**.
 - **Passos do item 5** (passe em profundidade). Passo 1 (`lofted_lane`)
   ligado; passo 2 (tempo de chegada + corredor legal) implementado e
   **desligado**. O item 5 não andou desde então: ele é refeito no **passo 4
@@ -28,9 +31,10 @@ Caminho A**, não o passo 2 do item 5.
    está no lance; o resto arcade na cadência 3.
 2. Defesa ajustada à física — **em andamento.** Feito: engajamento (o
    escolhido pela nota do bote, a até 4,5 m, parte para cima; o bote sai a
-   1,8 m). **RETOMAR AQUI:** acompanhar corredores (com o equilíbrio
-   corrida × apoio) e goleiro saindo do gol. Regra de custo: +1,5% por
-   item, de volta.
+   1,8 m); corrida decidida (`19e7194`: gatilho + teto de 1 corredor por
+   time; corredores por tick 0,86 → 0,49). **RETOMAR AQUI:** defesa
+   acompanha o corredor (commit 2) e goleiro saindo do gol. Regra de
+   custo: +1,5% por item, de volta.
 3. Item 9: construção desde a defesa.
 4. Refazer o item 5 (passe em profundidade) sobre a física nova.
 5. Itens 6–8 (apoio sem bola → drible 1×1 → tabela).
@@ -56,7 +60,9 @@ iniciados.
 ### Commits na `fase-5` (sobre `main`, mais recente primeiro)
 | Hash | Resumo |
 |---|---|
-| (este) | docs: consolida estado no fim da Fase 5 (item 5 parcial) |
+| `19e7194` | Corrida decidida: gatilho + teto de corredores (598,8M) |
+| `cb05418` | SPEC: passo 2 do Caminho A, commit 1; medição de 180 partidas |
+| `6e65012` | docs: consolida estado no fim da Fase 5 (item 5 parcial) |
 | `1b329ab` | STATE: consolidação antes da pausa |
 | `5d34253` | Física no lance + engajamento defensivo (596,3M) |
 | `9953a2d` | SPEC: física só no lance; medição 588,9M; teste de faltas falhou |
@@ -105,16 +111,22 @@ iniciados.
 - Contadores de diagnóstico (só com a feature `diagnostics`).
 
 ### Dívidas conhecidas
-- **Custo:** 596,3M instruções, **3,3M acima do teto de saída de (c)
-  (593M ≈ 45 ms)**. Devolver antes de fechar (c).
+- **Custo:** 598,8M instruções (598.838.544, run #55), **5,8M acima do
+  teto de saída de (c) (593M ≈ 45 ms)**. A dívida cresceu de 3,3M para
+  5,8M com o commit 1 do passo 2 (596,3M → 598,8M, +0,43%). Não é
+  bloqueante, mas **monitorar**: se cada item de (c1) acrescentar ~2,5M,
+  o teto estoura antes do passo 4 do Caminho A. Devolver antes de fechar
+  (c).
 - **Teste frágil:** `match_statistics_are_plausible` (≥ 3 faltas por
   partida) usa só 6 seeds e mede **6,0**; a média de 180 partidas é
   **3,6**. As 6 seeds não representam a média.
 - **Acerto de passe 56%** (real ~80%): invariante 18 do lado do passe →
   Caminho A passo 4 ou (c2).
 - **Botes 10 / faltas 3,6** (real ~70 / 22): calibração em (c2).
-- **Posse do mandante não convergida:** 73% (arcade) → 56,9% (física) →
-  42,5% (física + engajamento). Troca de lado a cada mudança de movimento.
+- **Posse 4-4-2 × 4-3-3 não convergida:** o 4-4-2 fica com 57–58% nas
+  duas orientações, com teto de corredores 1, 2 ou sem teto; sem corrida
+  nenhuma, 54,3%. Com a física, parte da assimetria é da formação em si,
+  não das corridas (SPEC, commit 1 do passo 2).
 - **Gols 5,3** por partida (real ~2,7); xG por chute 0,23 (real ~0,10).
 
 ### Branches vivas
@@ -175,7 +187,7 @@ Ver SPEC, Seção 0 e decisões das Fases 3–5. Os que mais pesam no dia a dia:
 
 ## Decisões pendentes
 - **Critério de saída de (c):** ≤ 45 ms, medido em instruções pela régua
-  (≤ ~593M). Hoje: 596,3M ≈ 45,2 ms (3,3M de dívida a devolver antes de
+  (≤ ~593M). Hoje: 598,8M ≈ 45,4 ms (5,8M de dívida a devolver antes de
   fechar (c)).
 - **xT:** conferir a cópia contra `karun.in/blog/data/open_xt_12x8_v1.json`.
 

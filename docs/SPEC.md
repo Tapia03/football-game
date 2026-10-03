@@ -1200,8 +1200,11 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
   - Linha de impedimento: continua calculada só nos ticks de cadência em
     que alguém pode usá-la (e agora só se o teto e o gatilho permitem).
   - Golden de paridade regenerado (comportamento novo).
+  - **Custo (CI, run #55): 598.838.544 instruções, +0,43% sobre
+    596,3M.** Dentro do +1,5%; a dívida ao teto de (c) (593M) vai de 3,3M
+    para 5,8M.
   - **Medido (2026-10-03, 180 partidas por linha, `calibrate` com
-    `FM_MATCHES=180`; instruções pendentes do CI):**
+    `FM_MATCHES=180`):**
 
     | Configuração | Corridas/partida | Corredores por tick | Ticks com corredor | Posse do 4-4-2 (casa / fora) |
     |---|---|---|---|---|
