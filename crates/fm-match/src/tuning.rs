@@ -209,6 +209,8 @@ pub struct RestartTuning {
     pub penalty: u32,
     /// Fraction of top speed at which the taker walks to the spot.
     pub taker_urgency: f32,
+    /// Restart spots are kept this far inside the lines (m).
+    pub edge_margin: f32,
 }
 
 impl RestartTuning {
@@ -276,6 +278,11 @@ pub struct ValueTuning {
     /// played behind them (through-ball race, s).
     pub turn_s: f32,
     pub body_reach: f32,
+    /// An opponent standing this close to the lane blocks the pass: the
+    /// chance falls linearly from 1 (on the lane) to 0 at this distance
+    /// (m). Fitted to what the engine does to passes (spec Fase 5, pass
+    /// execution diagnosis).
+    pub block_reach: f32,
     /// A lofted pass can only be cut within this distance of the kick, or
     /// of where it lands (m).
     pub lofted_takeoff: f32,
@@ -322,6 +329,9 @@ impl Default for ValueTuning {
             react_s: 0.25,
             turn_s: 0.5,
             body_reach: 0.8,
+            // 1.5 × the interceptor's touch radius (0.9 m): the ball is
+            // also met by a defender leaning into the lane.
+            block_reach: 1.35,
             lofted_takeoff: 2.0,
             lofted_landing: 5.0,
             // Average passer: ~88% on target at 30 m; elite ~94%.
@@ -616,6 +626,9 @@ impl Default for RestartTuning {
             corner: 40,
             penalty: 40,
             taker_urgency: 0.9,
+            // Taker within 1 m of the spot + ball 0.5 m ahead of him +
+            // 0.5 m of slack.
+            edge_margin: 2.0,
         }
     }
 }

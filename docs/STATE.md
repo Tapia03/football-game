@@ -35,10 +35,16 @@ Caminho A**, não o passo 2 do item 5.
    1,8 m); corrida decidida (`19e7194`: gatilho + teto de 1 corredor por
    time; corredores por tick 0,86 → 0,49). **Revertido:** defesa acompanha
    o corredor (ver "Tentativa revertida"). Revisitar depois do item 9,
-   com o estimador de custo corrigido. Pendente sem data: goleiro saindo
-   do gol.
-3. Item 9: construção desde a defesa. **RETOMAR AQUI** (desenho antes do
-   código, aprovado pelo usuário).
+   com o estimador de custo corrigido.
+2.5. **Goleiro saindo do gol** (defesa: sai para interceptar, corta
+   cruzamento, joga como líbero). Não é o "goleiro como receptor" do
+   item 9. Entra **depois do item 9 e antes do item 5 refeito**, quando a
+   dinâmica de profundidade estabilizar.
+3. Item 9: construção desde a defesa. **Adiado** (com o item 7) até fechar
+   o time-box em curso: (1) reinícios corrigidos e (2) re-medidos —
+   feitos; perfil do custo no CI; **RETOMAR AQUI:** (3) por que saem ~6,5
+   botes por partida e não ~70; (4) por que o melhor passe vale 3× menos
+   que conduzir. Depois, decisão do usuário.
 4. Refazer o item 5 (passe em profundidade) sobre a física nova.
 5. Itens 6–8 (apoio sem bola → drible 1×1 → tabela).
 Depois: (c2) calibração, (d) comportamentos por papel, PR `fase-5` → `main`.
@@ -82,6 +88,15 @@ iniciados.
 | (reverts) | Revert de `2915e96` e `53f017a` (defesa acompanha o corredor) |
 | `2915e96` | Defesa acompanha o corredor — **revertido** (614,9M, +2,67%) |
 | `53f017a` | SPEC do commit 2 — **revertido** |
+| `8b59e10` | Reinícios não são mais perdidos na hora (610,2M, +2,10%, aceito) |
+| `1921910` | Medição: custo da condução na execução (e o bug dos reinícios) |
+| `d3150dc` | Medição: por que 52% dos passes saem na saída forçada |
+| `f4ebba2` | Baseline 597.652.818; piso de faltas do teste em 2 |
+| `efc9cd1` | Medição: receptor fora do ponto (commit 4 do diagnóstico do passe) |
+| `ac88f94` | Bloqueio na estimativa do passe (597,7M, −0,20%) |
+| `3f55274` | Medição B: como acontece a interceptação em voo |
+| `5b39ba1` | Medição A: classificação das falhas de passe |
+| `be1d847` | SPEC/STATE: critério de (c) ≤ 48 ms, passo 2.5, diagnóstico do item 9 |
 | `692f5af` | Baseline de instruções 598.838.544; dívida 5,8M |
 | `19e7194` | Corrida decidida: gatilho + teto de corredores (598,8M) |
 | `cb05418` | SPEC: passo 2 do Caminho A, commit 1; medição de 180 partidas |
@@ -134,15 +149,30 @@ iniciados.
 - Contadores de diagnóstico (só com a feature `diagnostics`).
 
 ### Dívidas conhecidas
-- **Custo:** 598,8M instruções (598.838.544, run #55), **5,8M acima do
-  teto de saída de (c) (593M ≈ 45 ms)**. A dívida cresceu de 3,3M para
-  5,8M com o commit 1 do passo 2 (596,3M → 598,8M, +0,43%). Não é
-  bloqueante, mas **monitorar**: se cada item de (c1) acrescentar ~2,5M,
-  o teto estoura antes do passo 4 do Caminho A. Devolver antes de fechar
-  (c).
-- **Teste frágil:** `match_statistics_are_plausible` (≥ 3 faltas por
-  partida) usa só 6 seeds e mede **6,0**; a média de 180 partidas é
-  **3,6**. As 6 seeds não representam a média.
+- **Custo:** 610,2M instruções (610.183.817, commit `8b59e10`) ≈ 46,3 ms:
+  **17M acima da meta desejável de 45 ms (593M)**; folga de ~1,7 ms até o
+  critério de saída. O +2,10% da correção dos reinícios foi aceito com
+  perfil pendente (artefato `callgrind` do job de bench), dentro do critério de saída de (c)
+  (≤ 48 ms ≈ 633M, decidido em 2026-10-03). Regra por commit: +1,5%.
+- **Execução de passes — dívida estrutural para depois de (c1)** (uma
+  fase futura pega os três juntos):
+  - **Sincronização com o receptor:** o resolver e a estimativa miram onde
+    o receptor está no chute, sem antecipar o movimento. Acerto de 71% com
+    o receptor parado e 19% a ≥ 5 m/s. Nas falhas "receptor fora do ponto"
+    (30% das falhas), o receptor está a mais de 3 m do ponto de mira em
+    98% dos casos quando a bola chega, e 78% vinham a ≥ 3 m/s no chute.
+  - **Passe pelo alto (≥ 28 m):** 9% de acerto em ~120 passes por partida
+    (o receptor corre para debaixo da bola ainda alta).
+  - **Passe em profundidade:** 0,3% de acerto quando ligado; desligado.
+- **Bola conduzida para fora em jogo corrido:** 5,9 por partida (4,2 antes
+  da correção dos reinícios): o portador sai do campo com a bola. Não
+  investigado. Se for barato, vira commit próprio; se for estrutural
+  (falta de limite da linha para o portador), vira fase.
+- **Saída forçada:** 51% dos passes saem na trava dos 5,5 s. Alarme do
+  item 9: acima de 55%, parar e reportar.
+- **Teste de faltas:** `match_statistics_are_plausible` tem piso de 2 faltas
+  por partida (era 3; relaxado em 2026-10-03). É piso de regressão, não
+  meta: o real é ~22 e o motor está em 2,8 (180 partidas).
 - **Acerto de passe 56%** (real ~80%): invariante 18 do lado do passe →
   Caminho A passo 4 ou (c2).
 - **Botes 10 / faltas 3,6** (real ~70 / 22): calibração em (c2).
@@ -178,6 +208,14 @@ FM_FORMATIONS=433,442 cargo run --release -p fm-match --features diagnostics --e
 # (.github/workflows/deploy.yml) e publica em
 # https://<branch>.football-game-b5k.pages.dev
 ```
+**Regra do spike local (2026-10-03):** o usuário vê o jogo no worktree
+`../football-game-spike` (branch `spike-render-v2`, `npm run dev` em
+`http://localhost:5173`). Sempre que ele pedir para atualizar o spike:
+(1) `git merge fase-5` nesse worktree; (2) `npm run wasm` nele; (3)
+informar qual commit da `fase-5` está rodando. Sem isso o navegador mostra
+um motor antigo sem avisar. O deploy remoto (`spike-render-v2` no
+Cloudflare) só muda com push, que é pedido à parte.
+
 Para atualizar o spike com um motor novo: refazer `spike-render-v2` a
 partir da `fase-5` e copiar só os arquivos de render da `fase-6-v0` (ver o
 commit `d6f433a`).
@@ -209,9 +247,10 @@ Ver SPEC, Seção 0 e decisões das Fases 3–5. Os que mais pesam no dia a dia:
 - Mudança de arquitetura atualiza o SPEC no mesmo PR, antes do código.
 
 ## Decisões pendentes
-- **Critério de saída de (c):** ≤ 45 ms, medido em instruções pela régua
-  (≤ ~593M). Hoje: 598,8M ≈ 45,4 ms (5,8M de dívida a devolver antes de
-  fechar (c)).
+- (decidido 2026-10-03) **Critério de saída de (c): ≤ 48 ms** pela régua
+  (≤ ~633M instruções). A meta desejável continua 45 ms (~593M); o gate
+  de 50 ms (~660M) nunca foi violado pela régua de instruções. Hoje: 610,2M ≈
+  46,3 ms.
 - **xT:** conferir a cópia contra `karun.in/blog/data/open_xt_12x8_v1.json`.
 
 ## Marcos

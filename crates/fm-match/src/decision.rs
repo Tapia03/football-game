@@ -39,6 +39,33 @@ pub enum Action {
 
 pub struct DecisionSystem;
 
+/// Values of the carrier's options (see `DecisionSystem::option_values`).
+#[cfg(feature = "diagnostics")]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OptionValues {
+    pub hold: f32,
+    pub shot: f32,
+    /// Best pass (`f32::MIN` and `None` with nobody in range), and its
+    /// estimated success.
+    pub pass: f32,
+    pub pass_to: Option<u8>,
+    pub pass_success: f32,
+    pub dribble: f32,
+    pub pressed: bool,
+    /// Threat where the carrier stands (before erosion).
+    pub here: f32,
+    /// Best pass: threat at the receiver, the opponents' threat there (what
+    /// a failed pass costs) and the lane-survival part of its success.
+    pub pass_gain: f32,
+    pub pass_loss: f32,
+    pub pass_survive: f32,
+    /// Best dribble step: threat at its target, the opponents' threat where
+    /// the carrier stands (what losing it costs) and the keep chance used.
+    pub dribble_gain: f32,
+    pub dribble_loss: f32,
+    pub dribble_keep: f32,
+}
+
 /// Passing skill in `[0, 1]` (keepers: distribution).
 fn passer_skill(p: &MatchPlayer) -> f32 {
     if p.role == Role::Goalkeeper {
@@ -72,6 +99,20 @@ fn ball_arrival_s(state: &MatchState, d: f32) -> f32 {
     }
 }
 
+/// Chance that an opponent standing `off` metres from the lane cuts the pass
+/// out, as the engine plays it (invariant 18): the larger of
+/// - the **block**: a body on the lane touches the ball as it goes by —
+///   certain on the lane, none at `block_reach` (measured: 83% cut within
+///   0.45 m, 43% at 0.45–0.9 m, 15% at 0.9–1.5 m);
+/// - the **run**: he gets to the lane in time (`reach` after reacting), up
+///   to `pass_intercept_max`.
+#[inline]
+fn cut_chance(v: &crate::tuning::ValueTuning, off: f32, reach: f32) -> f32 {
+    let block = (1.0 - off / v.block_reach).max(0.0);
+    let run = (v.pass_intercept_max * (1.0 - off / reach)).max(0.0);
+    block.max(run)
+}
+
 /// Chance a ball played from `from` to `target` survives every opponent of
 /// `side` along its lane (reach-in-time model, spec Fase 5 (c1) item 2).
 /// Passes longer than `lofted_dist` are played in the air (as the resolver
@@ -99,8 +140,9 @@ fn lane_survival(
         }
         let reach = v.body_reach + o.top_speed * (along / v.pass_speed - v.react_s).max(0.0);
         let off2 = (rel - dir * along).length_squared();
-        if off2 < reach * reach {
-            survive *= 1.0 - v.pass_intercept_max * (1.0 - fm_core::math::sqrt(off2) / reach);
+        let widest = reach.max(v.block_reach);
+        if off2 < widest * widest {
+            survive *= 1.0 - cut_chance(v, fm_core::math::sqrt(off2), reach);
         }
     }
     survive
@@ -207,6 +249,63 @@ impl DecisionSystem {
         best
     }
 
+    /// The value of each of the carrier's options as `choose_action` sees
+    /// them, without choosing (diagnostics tools only; the pass search is
+    /// the full, unpruned one).
+    #[cfg(feature = "diagnostics")]
+    #[must_use]
+    pub fn option_values(state: &MatchState, frame: &TickFrame, me: usize) -> OptionValues {
+        let t = &state.tuning.decision;
+        let v = &state.tuning.value;
+        let p = &state.players[me];
+        let my_pos = frame.pos(me);
+        let end = state.attacking(p.side);
+        let pressed = state.players.iter().enumerate().any(|(j, o)| {
+            o.side != p.side && o.active() && frame.pos(j).distance(my_pos) < t.pressure_radius
+        });
+        let hold_keep = if pressed { v.hold_keep_pressed } else { 1.0 };
+        #[allow(clippy::cast_precision_loss)] // ticks on the ball ≪ 2^23
+        let waited = state.holder_ticks as f32;
+        let hold = Self::keep_or_lose(state, my_pos, my_pos, end, hold_keep)
+            * (1.0 - v.hold_erosion * waited).max(0.0);
+        let (pass, pass_to) = Self::best_pass(state, frame, me, f32::MIN);
+        let grid = &v.xt;
+        let (dribble, dribble_gain, dribble_loss, dribble_keep) = if p.role == Role::Goalkeeper {
+            (f32::MIN, 0.0, 0.0, 0.0)
+        } else {
+            let (ev, target) = Self::dribble(state, frame, me);
+            let gain = value::xt(grid, target, end);
+            let loss = value::xt(grid, my_pos, end.opposite());
+            // ev = keep · gain − (1 − keep) · loss.
+            (ev, gain, loss, (ev + loss) / (gain + loss).max(1e-9))
+        };
+        let (pass_gain, pass_loss, pass_survive) = pass_to.map_or((0.0, 0.0, 0.0), |to| {
+            let tp = frame.pos(to as usize);
+            (
+                value::xt(grid, tp, end),
+                value::xt(grid, tp, end.opposite()),
+                lane_survival(state, frame, p.side, my_pos, tp),
+            )
+        });
+        OptionValues {
+            here: value::xt(grid, my_pos, end),
+            pass_gain,
+            pass_loss,
+            pass_survive,
+            dribble_gain,
+            dribble_loss,
+            dribble_keep,
+            hold,
+            shot: Self::shot_xg(state, frame, me),
+            pass,
+            pass_to,
+            pass_success: pass_to
+                .map_or(0.0, |to| Self::pass_success(state, frame, me, to as usize)),
+            dribble,
+            pressed,
+        }
+    }
+
     /// Whether the carrier `me` re-evaluates its options this tick (decision
     /// cadence): on the tick it got the ball, every `decision_cadence_ticks`
     /// after that, at once when an opponent is within `pressure_radius`,
@@ -299,8 +398,9 @@ impl DecisionSystem {
             // Squared distances first: the square root only for the few
             // opponents actually within reach of the lane.
             let off2 = (rel - dir * along).length_squared();
-            if off2 < reach * reach {
-                survive *= 1.0 - v.pass_intercept_max * (1.0 - fm_core::math::sqrt(off2) / reach);
+            let widest = reach.max(v.block_reach);
+            if off2 < widest * widest {
+                survive *= 1.0 - cut_chance(v, fm_core::math::sqrt(off2), reach);
             }
         }
         let accuracy =
@@ -805,6 +905,42 @@ mod tests {
         assert_ne!(
             striker_at(45.0, 5, &[marker, mate, in_lane]),
             Action::Pass { to: 9 }
+        );
+    }
+
+    /// Invariant 18 on the pass: the engine lets any opponent within reach
+    /// of the ball touch it, so a body standing on the lane next to the
+    /// passer blocks the pass; the estimate must say so.
+    #[test]
+    fn a_body_on_the_lane_blocks_the_pass() {
+        let estimate = |blocker: Vec2| {
+            let s = placed_state(
+                &[
+                    (5, Vec2::new(50.0, 34.0)),
+                    (9, Vec2::new(70.0, 34.0)),
+                    (13, blocker),
+                ],
+                5,
+            );
+            DecisionSystem::pass_success(&s, &TickFrame::capture(&s), 5, 9)
+        };
+        let open = estimate(Vec2::new(53.0, 44.0));
+        // On the lane, 3 m in front of the passer: no time to run, but
+        // none needed.
+        let on_lane = estimate(Vec2::new(53.0, 34.0));
+        // Half the block reach off the lane: about half the passes go by.
+        let leaning = estimate(Vec2::new(53.0, 34.675));
+        // Beyond the block reach: as good as open.
+        let clear = estimate(Vec2::new(53.0, 35.5));
+        assert!(open > 0.7, "open lane: {open}");
+        assert!(on_lane < 0.01, "blocked lane still estimated at {on_lane}");
+        assert!(
+            (leaning / open - 0.5).abs() < 0.05,
+            "half blocked: {leaning} of {open}"
+        );
+        assert!(
+            (clear - open).abs() < 1e-6,
+            "beyond the block: {clear} vs {open}"
         );
     }
 

@@ -85,6 +85,14 @@ pub fn set_restart(
     let Some(taker) = taker else {
         return;
     };
+    // The ball is put back in play from inside the lines: the taker takes
+    // it within 1 m of the spot and carries it 0.5 m ahead of himself, and
+    // a carried ball beyond a line is out of play.
+    let m = state.tuning.restart.edge_margin;
+    let spot = spot.clamp(
+        Vec2::new(m, m),
+        Vec2::new(pitch::LENGTH - m, pitch::WIDTH - m),
+    );
     state.ball = BallState::Dead(Restart {
         kind,
         side,

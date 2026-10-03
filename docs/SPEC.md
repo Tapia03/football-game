@@ -1242,6 +1242,425 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
   domínio (invariante 18). Riscos a medir: custo (cada marcador na física
   custa 200–320 instruções por tick) e a linha defensiva recuando atrás
   do corredor.
+- **Critério de saída de (c): ≤ 48 ms (decisão consciente, 2026-10-03)
+  `[ALTERADO v2.1]`:** a meta de 45 ms (~593M instruções pela régua)
+  continua como alvo desejável, mas (c) fecha com **≤ 48 ms (~633M)**.
+  Não é relaxamento: a física só para quem está no lance é estrutural e
+  custa mais do que o orçamento inicial previa (+10,9% num commit só). Pela
+  régua, o gate de 50 ms (~660M) nunca foi violado. (O alarme de relógio,
+  não bloqueante, lê 38–42 ms ou 64 ms para o mesmo código conforme o
+  runner: runs de 2026-10-03.) A regra por commit não muda: +1,5%
+  sobre a linha de base; acima disso, parar e trazer o perfil antes de
+  otimizar. A meta de `tick_logic` da Seção 0 (40 ms) e o gate (50 ms)
+  não mudam.
+- **Passo 2 do Caminho A, commit 2 (defesa acompanha o corredor):
+  tentado e revertido (2026-10-03).** +2,67% de instruções (estimativa:
+  +1,1%), acompanhamento parcial (mediana 4,4 m no fim da corrida; alvo
+  1,5 m), posse do 4-4-2 57,7% → 59,7%, linha defensiva 26,8 → 26,0 m.
+  Revisitar depois do item 9. O desenho acima fica como registro.
+- **Passo 2.5 do Caminho A — goleiro saindo do gol:** defesa (sai para
+  interceptar, corta cruzamento, joga como líbero). Depois do item 9 e
+  antes de refazer o item 5. Não confundir com "goleiro como receptor"
+  (item 9, commit 3).
+- **Item 9 (construção desde a defesa) — diagnóstico antes do código
+  (2026-10-03, `examples/buildup_stats.rs`, 30 partidas por orientação):**
+  - **Quem recebe passe:** zagueiros 0,0–0,1%, laterais 1–3,5%, goleiro
+    0%, meias centrais 44–46%. Passes para trás já são 40–45% (vão para
+    os meias, não para a defesa). **44–52% dos passes saem na saída
+    forçada** (5,5 s); o portador escolhe conduzir em 75% das decisões.
+  - **Desenho aprovado (não implementado):** termo de perda do passe por
+    proximidade do adversário ao receptor, na moeda única (sem segunda
+    moeda); três commits (moeda; apoio dos defensores em `plan_shape`;
+    goleiro como receptor, sozinho).
+  - **Achado que contradiz a premissa do desenho (invariante 18 do lado
+    do passe), por distância do adversário mais próximo ao receptor no
+    chute (4-4-2 em casa; a outra orientação dá o mesmo):**
+
+    | Adversário mais próximo | Passes/partida | Receptor domina | Estimativa da decisão | Dos que falham: adversário / companheiro / bola parada |
+    |---|---|---|---|---|
+    | < 3 m | 25 | 20,8% | 39,8% | 89% / 10% / 1% |
+    | 3–6 m | 117 | 38,7% | 65,9% | 90% / 8% / 2% |
+    | 6–12 m | 426 | 55,1% | 77,5% | 80% / 8% / 12% |
+    | ≥ 12 m | 301 | 77,4% | 82,1% | 53% / 29% / 18% |
+
+    Na execução, um passe para um receptor **sem ninguém a menos de 6 m
+    só chega em 55%** das vezes, e a falha vira bola do adversário em
+    80–90% dos casos (53% mesmo com o receptor a mais de 12 m de
+    qualquer adversário). A estimativa da decisão é otimista em 20–27
+    pontos abaixo de 12 m. Um termo de perda que suponha "falha perto de
+    receptor livre é recuperada" seria ainda mais otimista que a
+    execução. **Parado para decisão do usuário**: o problema está na
+    execução do passe (o "acerto 56%" das dívidas), não na moeda.
+- **Diagnóstico da execução do passe (time-box: 2 commits de medição,
+  aprovado 2026-10-03; o item 9 espera).**
+  - **Medição A — por que o passe falha (`examples/pass_failures.rs`, 30
+    partidas, 4-4-2 em casa; a outra orientação dá o mesmo):** cada passe é
+    seguido do chute até o primeiro toque (ou a bola sair). 872 passes por
+    partida, **43,0% falham**.
+
+    | Classe | Por partida | De todos | Das falhas | < 10 m | 10–20 m | 20–28 m | ≥ 28 m (alto) |
+    |---|---|---|---|---|---|---|---|
+    | Receptor domina | 470 | 53,9% | — | 66,2% | 58,4% | 62,6% | 9,3% |
+    | Outro companheiro toca antes | 26 | 3,0% | — | 1,9% | 0,8% | 3,7% | 9,6% |
+    | Interceptação em voo | 174 | 19,9% | **46,3%** | 10,3% | 18,4% | 21,6% | 30,9% |
+    | Receptor fora do ponto | 113 | 13,0% | **30,2%** | 14,7% | 14,0% | 4,1% | 26,8% |
+    | Domínio errado | 49 | 5,7% | 13,2% | 6,5% | 6,3% | 6,5% | 1,2% |
+    | Erro de direção | 39 | 4,5% | 10,4% | 0,4% | 2,0% | 1,6% | 22,2% |
+    | Passes por partida | 872 | | | 124 | 370 | 257 | 121 |
+
+    Definições: o ponto de mira é onde o receptor estava no chute (é o
+    que o resolver mira). *Interceptação*: um adversário toca a bola
+    enquanto ela ainda se aproxima do ponto. *Erro de direção*: a bola
+    passa do ponto sem nunca chegar a `receiver_radius` (1,5 m) dele.
+    *Receptor fora do ponto*: a bola chega a menos de 1,5 m do ponto e
+    passa sem o receptor tocar. *Domínio errado*: o receptor toca e não
+    controla.
+  - **Nenhuma causa passa de 50%.** A maior é a interceptação em voo
+    (46%), e ela acontece longe do alvo (a bola ainda estava a 16 m do
+    ponto, na média). A segunda é o receptor fora do ponto (30%): a bola
+    passa, na média, a 0,7 m de onde ele estava.
+  - **O passe pelo alto quase nunca chega:** 9,3% de acerto em 121 passes
+    por partida (14% dos passes).
+  - Depois da falha a posse vai para o adversário em 88% (interceptação),
+    79–80% (fora do ponto, erro de direção) e 66% (domínio errado).
+  - **Medição B — como acontece a interceptação em voo (a maior causa;
+    174 por partida; mesma ferramenta, 30 partidas, 4-4-2 em casa):**
+
+    | Medida | Distribuição |
+    |---|---|
+    | Ticks do chute ao toque [1 / 2 / 3–5 / 6–10 / 11+] | 32% / 28% / 13% / 14% / 12% |
+    | Fração do passe já percorrida [< 25 / < 50 / < 75 / ≥ 75%] | 63% / 12% / 12% / 13% |
+    | Interceptador no chute: distância ao passador [< 2,5 / < 5 / < 10 / ≥ 10 m] | 41% / 31% / 16% / 12% |
+    | Interceptador no chute: distância à linha de passe [< 1 / < 2 / < 4 / ≥ 4 m] | 66% / 15% / 14% / 6% |
+    | Quanto o interceptador andou até o toque [< 1 / < 3 / < 6 / ≥ 6 m] | 56% / 23% / 12% / 10% |
+    | Adversários a < 2 m da linha no chute [0 / 1 / 2 / 3+] — cortados | 11% / 69% / 17% / 3% |
+    | Idem — passes que chegam | 59% / 38% / 2% / 0% |
+
+    - **É bloqueio, não antecipação.** 60% dos cortes acontecem em até 2
+      ticks (0,2 s) do chute e 63% no primeiro quarto do passe; em 66% o
+      interceptador já estava a menos de 1 m da linha, em 72% a menos de
+      5 m do passador, e em 56% andou menos de 1 m. O portador passa para
+      cima de um defensor parado na linha, ao lado dele.
+    - **57% dos passes cortados saem na saída forçada** (dos que chegam,
+      47%): o portador é obrigado a soltar a bola aos 5,5 s e a melhor
+      opção restante está bloqueada.
+    - **A decisão sabia do risco, mas menos do que a execução cobra:**
+      sucesso estimado 59,9% para os passes cortados (83,5% para os que
+      chegam). Na estimativa, um defensor em cima da linha corta no
+      máximo 70% (`pass_intercept_max`); na execução, qualquer adversário
+      a menos de `intercept_radius` (0,9 m) da bola toca nela, e o passe
+      acaba (domina em 59%, desvia em 41%).
+  - **Hipóteses para decisão do usuário (não investigadas além disto):**
+    (1) estrutura: a saída forçada produz passes para linhas bloqueadas;
+    (2) estimativa × execução (invariante 18): o bloqueio por um corpo na
+    linha vale ≤ 70% na decisão e ~100% na execução; (3) o defensor de
+    contenção fica, por construção, na linha portador→gol, isto é, em
+    cima dos passes para a frente. O "receptor fora do ponto" (30% das
+    falhas) e o passe pelo alto (9% de acerto) não foram detalhados.
+  - **Time-box estendido (2026-10-03): mais dois commits** — (3)
+    calibração do bloqueio na estimativa; (4) medição do receptor fora do
+    ponto. O passe pelo alto (9% de acerto) fica como dívida, sem
+    investigação agora.
+  - **Commit 3 — bloqueio na estimativa do passe `[ALTERADO v2.1]`
+    (invariante 18 do lado do passe):**
+    - **Execução medida** (passes rasteiros, pelo adversário mais próximo
+      da linha no chute): cortado em **83%** com alguém a < 0,45 m da
+      linha, **43%** a 0,45–0,9 m, **15%** a 0,9–1,5 m, 7% a 1,5–2,5 m,
+      5% além. Antes a estimativa dava ≤ 70% × (1 − distância/0,8 m) para
+      quem está perto do passador: ~53%, ~13% e 0% nas três primeiras
+      faixas.
+    - **Modelo:** a chance de um adversário cortar o passe passa a ser o
+      maior de dois termos: o **bloqueio** (corpo perto da linha: 1 em
+      cima dela, caindo linearmente a 0 em `block_reach` = 1,35 m, que é
+      1,5 × `intercept_radius`) e a **corrida** até a linha (o termo que
+      já existia, até `pass_intercept_max`, sem mudança). Vale para o
+      passe e para a linha do passe em profundidade.
+    - Teste: `a_body_on_the_lane_blocks_the_pass`. Golden de paridade
+      regenerado (a decisão muda).
+    - **Medido (180 partidas por orientação no `calibrate`; 30 nas
+      ferramentas de passe), contra o commit 1 do passo 2:**
+
+      | Métrica | Antes | Commit 3 | Real (aprox.) |
+      |---|---|---|---|
+      | Passes por partida | 928 | 892 | 900 |
+      | Acerto de passe | 58% | 60% | 80% |
+      | Passes que falham (`pass_failures`) | 43,0% | 40,0% | ~20% |
+      | Interceptações em voo por partida | 174 | 142 | — |
+      | Passes com adversário a < 0,45 m da linha | 82 | 40 | — |
+      | Saída forçada (passes aos 5,5 s) | 47% | 51% | — |
+      | Gols | 4,87 | 4,27 | 2,7 |
+      | Chutes (no alvo) | 28,2 (9,1) | 26,7 (8,3) | 25 (9) |
+      | Faltas | 3,2 | 2,8 | 22 |
+      | Posse do 4-4-2 (casa / fora) | 57,7% / 58,1% | 59,0% / 59,2% | — |
+
+    - **A saída forçada sobe 4 pontos** (47% → 51% no conjunto de 180
+      partidas; por time, em 30 partidas: +2,4 a +6,8). O limite combinado
+      para parar era +5. O portador deixa de passar para linhas bloqueadas
+      e, sem outra opção, chega mais vezes à trava dos 5,5 s: a trava
+      continua sendo metade dos passes.
+    - Os passes bloqueados que sobram (40 por partida) continuam sendo
+      cortados em 77%: são, na maioria, escolhas da saída forçada, que
+      aceita qualquer valor.
+    - **Custo do commit 3 (CI): 597.652.818 instruções, −0,20%** sobre
+      598.838.544.
+  - **Commit 4 — medição do "receptor fora do ponto" (112 por partida
+    depois do commit 3; `pass_failures`, 30 partidas, 4-4-2 em casa; a
+    outra orientação dá o mesmo):**
+    - **Hipótese (a), raio de controle pequeno: descartada.** Em 0% dos
+      casos o receptor ficou no ponto e a bola passou fora do alcance; em
+      2% ele só esteve ao alcance entre dois ticks.
+    - **Hipótese (b), o receptor se move: confirmada.** Quando a bola
+      chega ao ponto de mira, o receptor está a mais de 3 m dele em 98%
+      dos casos e a mais de 6 m em 65%. Mecanismos (exclusivos): **70%
+      saiu do ponto e nunca chegou a 1,5 m da bola**; **28% esteve sob a
+      bola só enquanto ela estava alta demais** (> 1,8 m: é o passe pelo
+      alto — o receptor corre para um ponto da trajetória onde a bola
+      ainda está no ar); 2% entre ticks; 0% impedido por ter acabado de
+      chutar.
+    - **A causa é o receptor em movimento no chute.** O resolver mira onde
+      o receptor está no instante do chute; a estimativa da decisão
+      também. Acerto por velocidade do receptor no chute:
+
+      | Velocidade do receptor no chute | Passes por partida | Receptor domina |
+      |---|---|---|
+      | < 1 m/s | 379 | 71% |
+      | 1–3 m/s | 94 | 57% |
+      | 3–5 m/s | 285 | 53% |
+      | ≥ 5 m/s | 130 | 19% |
+
+      Dos "fora do ponto", 78% tinham o receptor a ≥ 3 m/s no chute (dos
+      passes que chegam, 35%) e 35% estavam numa corrida viva (dos que
+      chegam, 3%). Dos que saíram do ponto, metade foi na direção do
+      passador e metade para longe.
+    - **Classificação: estrutura (sincronização passe × movimento do
+      receptor), não calibração.** Não existe antecipação: nem a mira nem
+      a estimativa levam em conta para onde o receptor está indo. É a
+      mesma falta que derrubou o passe em profundidade. O mesmo sinal
+      aparece nas interceptações (63% com o receptor a ≥ 3 m/s) e no erro
+      de direção (55–60%).
+    - Não medido: por que metade dos receptores se afasta do passador, e
+      quanto da perda vem do giro e da frenagem da física.
+- **Item 9, antes do commit 1 — por que metade dos passes sai na saída
+  forçada (commit 5, `examples/forced_release.rs`, 30 partidas, 4-4-2 em
+  casa; a outra orientação dá o mesmo):** a cada decisão do portador, o
+  valor de cada opção como `choose_action` a vê (`option_values`, só com
+  a feature `diagnostics`).
+  - 886 passes por partida; **52,5% na saída forçada** (465).
+  - **É decisão de conduzir, não falta de opção:**
+
+    | Causa do período que termina na trava | Parcela |
+    |---|---|
+    | Nenhum passe valia mais que zero em nenhuma decisão | 0,3% |
+    | Havia passe de valor positivo, mas nunca acima de segurar | 6,2% |
+    | **Um passe valia mais que segurar, mas conduzir valia mais** | **90,3%** |
+    | O passe foi a melhor opção em alguma decisão e não saiu | 3,2% |
+
+  - **Nos períodos forçados, conduzir vale mais que o melhor passe em 97%
+    das decisões.** Valor médio (× 1000): segurar 3,4, melhor passe 5,9,
+    **conduzir 19,3**. O portador carrega a bola 17,9 m em média até a
+    trava (3,2 m nos períodos em que o passe sai por valor). O melhor
+    passe vale mais que zero em 84% das decisões, com sucesso estimado de
+    71%.
+  - **Por que conduzir ganha (leitura do modelo, não medição):** o valor
+    de conduzir é `manter × xT(5 m à frente)`, com manter = 97% no espaço,
+    e **não erode** com o tempo de bola; o de segurar erode 3% por tick; o
+    do passe paga a chance de falha (29%) no ponto do receptor. Conduzir é
+    a única opção sem custo.
+  - **Onde a trava dispara:** 13% no terço defensivo, 56% no médio, 30% no
+    final; 62% por meias, 29% por atacantes, 7% por defensores, 2% pelo
+    goleiro. A construção desde a defesa quase não entra nela.
+  - **Consequência para o item 9:** o termo de perda do passe muda o valor
+    do passe, que não é o que decide nesses períodos. Tratar a condução é
+    o escopo do item 7 (drible 1×1). Decisão pendente com o usuário.
+- **Custo da condução — correção estrutural antes do item 9 (aprovado
+  2026-10-03; não é o item 7: sem duelo nem decisão de enfrentar).**
+  Time-box: 2 commits (A mede a execução, B implementa o custo na
+  decisão). Alarmes de B: saída forçada < 20%, gols > 6,0, passes >
+  1.300, instruções > +1,5%.
+  - **Commit A — o que a condução custa na execução
+    (`examples/carry_cost.rs`, 30 partidas, 4-4-2 em casa; a outra
+    orientação dá o mesmo).** No motor, o portador só perde a bola por
+    bote (ganho limpo, ou bola espirrada que o adversário pega) ou
+    saindo com ela do campo.
+
+    | Tick com a bola | Ticks por partida | Botes por 1.000 ticks | Perdas por 1.000 ticks | Perdas por 100 m |
+    |---|---|---|---|---|
+    | Conduzindo, espaço à frente | 21.908 | 0,28 | 0,16 | 0,04 |
+    | Conduzindo, apertado | 4.267 | 0,02 | 0,37 | 0,09 |
+    | Segurando | 8.379 | 0,09 | 0,16 | 0,20 |
+    | Sem pressão (ninguém a < 2,5 m) | 28.218 | 0,01 | 0,09 | 0,03 |
+    | Pressionado | 6.336 | 1,05 | 0,64 | 0,15 |
+    | Adversário mais próximo a < 1,8 m | 2.809 | 1,55 | 0,96 | 0,23 |
+    | 1,8–2,5 m | 3.527 | 0,64 | 0,39 | 0,10 |
+    | 2,5–4,5 m | 20.920 | 0,01 | 0,05 | 0,01 |
+    | ≥ 4,5 m | 7.298 | 0,00 | 0,19 | 0,08 |
+
+    - **Botes: 6,9 por partida** (real ~70): falta 41%, ganho limpo 31%,
+      bola espirrada 14% (11% delas ficam com o adversário), portador
+      vence 14%. Bola conduzida para fora: 4,2 por partida.
+    - **Um passo de 5 m de condução (12 ticks) perde a bola em 0,20% das
+      vezes no espaço e 0,44% apertado. A decisão supõe 3,0% e 32,9%.**
+      A decisão já é **mais pessimista** que a execução, por 15× e 75×.
+    - Comparação: segurar erode 3% do valor por tick (37% em 12 ticks); um
+      passe falha ~40% das vezes.
+    - **Conclusão: na execução a condução é praticamente de graça.** Não
+      há custo real por onde calibrar a decisão (invariante 18): o custo
+      medido é menor do que o que a decisão já cobra. A condução domina
+      porque a defesa não tira a bola do portador: com um adversário a
+      menos de 1,8 m (alcance do bote) em 2.809 ticks por partida, saem
+      4,4 botes. A raiz está na defesa (a dívida "botes 10 / real 70"),
+      não na conta do portador. **Parado antes do commit B, para decisão
+      do usuário.**
+  - **Bug encontrado na medição (fora do escopo, não corrigido):
+    reinícios perdidos na hora.** De 129 reinícios cobrados por partida,
+    **62 (48%) viram bola fora no mesmo instante** e o reinício passa
+    para o adversário (40% na outra orientação: 45 de 112). Quase todos
+    são laterais (58 por partida; mais ~4 escanteios que viram tiro de
+    meta ou lateral): o cobrador assume a bola a menos de 1 m da borda e
+    o teste de "bola fora" do portador o pega em até 15 ticks (35 por
+    partida em até 2 ticks). Causa provável, não confirmada: a posição do
+    cobrador (ou o deslocamento de 0,5 m da bola conduzida) fica do lado
+    de fora da linha.
+- **Reinícios perdidos na hora — corrigido (2026-10-03) `[ALTERADO
+  v2.1]`.** Time-box novo de 4 commits: (1) esta correção; (2) re-medição;
+  (3) por que saem 6,9 botes e não ~70; (4) por que o passe vale 3× menos
+  que conduzir. Item 9 e item 7 adiados até lá.
+  - **Causa:** o ponto do lateral e do escanteio ficava em cima da linha;
+    o cobrador assume a bola a até 1 m do ponto e a bola conduzida fica
+    0,5 m à frente dele, e o teste "portador com a bola fora do campo"
+    entregava o reinício ao adversário.
+  - **Correção:** `set_restart` mantém o ponto de qualquer reinício a
+    `RestartTuning::edge_margin` (2,0 m = 1 m do cobrador + 0,5 m da bola
+    + 0,5 m de folga) para dentro das linhas.
+  - **Teste:** `restarts_are_not_lost_at_once` — 30 partidas, 2.152
+    reinícios cobrados, **0 perdidos em menos de 5 ticks** (antes: 62 por
+    partida, 48%).
+  - **Não mexido:** a bola conduzida para fora em jogo corrido (5,9 por
+    partida; antes 4,2) continua existindo: é o portador saindo do campo
+    com a bola, sem reinício envolvido.
+  - Golden de paridade regenerado.
+  - **Custo (CI): 610.183.817 instruções, +2,10%** sobre 597.652.818 —
+    acima do +1,5%. **Aceito pelo usuário como consequência da correção**
+    (linha de base regravada), com perfil pendente: o job de bench passa a
+    guardar a saída do callgrind como artefato (`callgrind/`), mesmo
+    quando passa. Hipótese a confirmar pelo perfil: não é código mais
+    caro, é mais jogo simulado (bola parada 7% → 4%). Pela régua, 610,2M ≈
+    46,3 ms (critério de saída de (c): ≤ 48 ms).
+  - **Perfil do +2,10% (callgrind no CI, antes × depois da correção, a
+    mesma partida do bench, seed 2026): é mais jogo, não código mais
+    caro.**
+
+    | Função | Antes | Depois | Diferença |
+    |---|---|---|---|
+    | `tick_logic` (corpo inlinado) | 231,7M | 234,7M | +3,0M (+1,3%) |
+    | `best_pass` | 97,1M | 101,6M | +4,5M (+4,6%) |
+    | `intercept_point` | 59,4M | 62,1M | +2,7M (+4,6%) |
+    | `xt` | 29,9M | 31,0M | +1,1M (+3,7%) |
+    | `receive_candidates` | 19,1M | 20,1M | +1,0M (+5,3%) |
+    | `FormationAnchor::compute` | 95,66M | 95,71M | +0,06M (0,0%) |
+    | `TickFrame::capture` | 47,2M | 47,4M | +0,2M (+0,5%) |
+    | Total do programa | 598,6M | 611,2M | +12,5M |
+
+    As funções de custo fixo por tick (âncoras, captura) não se movem; o
+    aumento está todo nas funções de decisão do portador e de bola em voo.
+    Nessa partida a bola parada cai de 6% para 4%, os passes vão de 900
+    para 934 (+3,8%) e as decisões do portador de 16.648 para 17.033
+    (+2,3%). `set_restart` não aparece no perfil. Nada a otimizar na
+    correção. (O "antes" foi medido num ramo temporário com o mesmo job de
+    perfil sobre `1921910`; o ramo foi apagado.)
+  - **"Commit 2" do time-box — re-medição com o bug corrigido (fechado
+    junto com o commit 1; 180 partidas por orientação no `calibrate`, 30
+    nas outras ferramentas):**
+
+    | Métrica | Antes | Com a correção |
+    |---|---|---|
+    | Posse do 4-4-2 (casa / fora) | 59,0% / 59,2% | 58,2% / 58,6% |
+    | Passes por partida | 892 | 916 |
+    | Acerto de passe | 60% | 59–60% |
+    | Passes que falham (`pass_failures`) | 40,0% | 40,6% |
+    | Reinícios cobrados por partida | 129 | 72 |
+    | Bola parada | 7% | 4% |
+    | Gols | 4,27 | 4,38 |
+    | Faltas | 2,8 | 2,85 |
+    | Saída forçada | 51–52% | 52–53% |
+    | Botes por partida | 6,9 | 6,3–6,5 |
+
+    **As conclusões anteriores não mudam:** 90% dos períodos que terminam
+    na trava continuam sendo "escolheu conduzir"; um passo de 5 m de
+    condução perde a bola em 0,23% (espaço) e 0,48% (apertado); as causas
+    de falha de passe ficam nas mesmas proporções (interceptação 40%,
+    receptor fora do ponto 32%).
+- **Commit 3 do time-box — por que saem ~8 botes por partida e não ~70
+  (`examples/tackle_stats.rs`, 30 partidas, 4-4-2 em casa; a outra
+  orientação dá o mesmo).** A cada tick com a bola dominada, o que a
+  decisão de bote vê (`challenge_score` / `choose_challenger`).
+  - **O que a decisão faz** (35.333 ticks de bola dominada por partida;
+    há um defensor ao alcance do bote, < 1,8 m, em 2.883):
+
+    | Situação | Todos os ticks | Com defensor ao alcance do bote |
+    |---|---|---|
+    | Ninguém a menos de `engage_range` (4,5 m) | 20,4% | 0% |
+    | Todos no alcance ainda em recuperação | 0,1% | 0,4% |
+    | **Há defensor elegível, nota abaixo do limiar** | **79,4%** | **99,6%** |
+    | Desafiante escolhido, ainda fechando | 0,1% | 0% |
+
+  - **O limiar (1,15) quase nunca é alcançado.** Melhor nota entre os
+    elegíveis ao alcance do bote: < 0,6 em 52,9%; 0,6–0,8 em 27,0%;
+    0,8–1,0 em 17,3%; 1,0–1,15 em 2,9%; acima de 1,15 em 0,0%. Média
+    **0,53**: lado do gol +0,19, portador recém-dominou +0,03, desarme
+    +0,13, decisões +0,08, agressividade +0,13, transição +0,05, área
+    própria −0,08.
+  - **Por que:** a nota máxima teórica é 1,50 (todos os atributos em 100,
+    de frente para o portador, bola recém-dominada, em transição). Um
+    defensor típico (atributos ~55) só passa de 1,15 com as três
+    condições ao mesmo tempo. O limiar foi calibrado no motor arcade
+    ("mediana das notas ao alcance 0,53", 75 botes por partida), quando
+    havia alguém ao alcance em 29% dos ticks de posse e o defensor colava
+    no portador; com a física e a contenção a 1–4 m, o alcance cai para 8%
+    dos ticks e a nota continua a mesma.
+  - **Quem é escolhido:** quando há desafiante (29 ticks por partida), é o
+    defensor mais próximo em 97% dos casos; em 1% há outro defensor já ao
+    alcance enquanto o escolhido ainda fecha. A escolha do desafiante não
+    é o problema; o defensor ao alcance não dá o bote porque a nota dele
+    não passa do limiar.
+  - Limite da medição: a ferramenta olha depois de cada tick, então o
+    tick exato do bote aparece como "em recuperação" (por isso "desafiante
+    ao alcance" dá 0 e os 8 botes por partida não aparecem na tabela).
+  - **Classificação: constante herdada de outro motor**, sobre um modelo
+    que não mudou. Não corrigido aqui (este commit só mede).
+- **Commit 4 do time-box — por que o melhor passe vale 3× menos que
+  conduzir (`examples/option_breakdown.rs`, 30 partidas, 4-4-2 em casa; a
+  outra orientação dá o mesmo).** As parcelas de cada valor, como
+  `choose_action` as calcula, nas decisões dos períodos que terminam na
+  saída forçada (11.653 decisões por partida; valores × 1000):
+
+  | Opção | Chance | xT do destino | Ganho | Custo da falha | Valor |
+  |---|---|---|---|---|---|
+  | Melhor passe | sucesso 70% | 18,8 (receptor) | 10,9 | 30% × 19,0 = 4,9 | **6,0** |
+  | Conduzir | manter 95% | 22,3 (5 m à frente) | 20,6 | 5% × 17,4 = 0,9 | **19,7** |
+  | Segurar | — | 19,1 (aqui) × erosão | — | — | 3,5 |
+
+  - **A conta do passe não tem erro.** As duas hipóteses caem: (a) o xT
+    do receptor não está subestimado — ele é igual ao do portador (18,8
+    contra 19,1); (b) a perda não é contada duas vezes — o termo de perda
+    entra uma vez (4,9).
+  - **De onde vêm os 13,7 de diferença:** ~6,9 do sucesso (70% contra
+    95% de manter), ~4,0 do custo da falha (30% contra 5% de chance de
+    pagar um xT adversário parecido), ~2,8 do destino (o ponto 5 m à
+    frente vale mais que a posição do melhor receptor; o receptor só está
+    em xT maior que o alvo da condução em 34% das decisões, e o melhor
+    passe vai para xT menor que o do portador em 57%).
+  - O sucesso de 70% é sobrevivência na linha 87% × precisão e domínio
+    81%. Com a chance de manter da condução no lugar do sucesso, o passe
+    valeria 17,0 e venceria a condução em 34% das decisões (hoje: 2%).
+  - Nos períodos em que o passe sai por valor (3.459 decisões por
+    partida): passe 6,9 (sucesso 77%), conduzir 10,2 (manter 89%,
+    apertado em 28% das decisões), e o passe vence em 27%.
+  - **Conclusão:** a decisão está coerente com a execução. No motor,
+    passar falha ~40% das vezes e conduzir perde a bola em ~0,2% por
+    passo de 5 m; a decisão até superestima o risco de conduzir. O que
+    está fora do real é a execução: a defesa não dá o bote (commit 3) e o
+    passe falha demais (dívida "execução de passes").
 - **Sinais registrados (não calibrar agora):**
   - **Posse do mandante:** 73% (arcade) → 56,9% (física no lance) →
     42,5% (física + engajamento). A assimetria mudou com a física, não com

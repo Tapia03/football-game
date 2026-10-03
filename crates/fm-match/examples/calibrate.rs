@@ -26,6 +26,7 @@ fn apply(t: &mut TuningParams, key: &str, v: f32) {
         "max_runners" => t.runs.max_runners = u,
         "decision_cadence_ticks" => t.decision.decision_cadence_ticks = u,
         "pass_intercept_max" => t.value.pass_intercept_max = v,
+        "block_reach" => t.value.block_reach = v,
         "hold_keep_pressed" => t.value.hold_keep_pressed = v,
         "forced_release_ticks" => t.value.forced_release_ticks = u,
         "keeper_base" => t.shot.keeper_base = v,
