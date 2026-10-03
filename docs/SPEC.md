@@ -1357,6 +1357,50 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
     contenção fica, por construção, na linha portador→gol, isto é, em
     cima dos passes para a frente. O "receptor fora do ponto" (30% das
     falhas) e o passe pelo alto (9% de acerto) não foram detalhados.
+  - **Time-box estendido (2026-10-03): mais dois commits** — (3)
+    calibração do bloqueio na estimativa; (4) medição do receptor fora do
+    ponto. O passe pelo alto (9% de acerto) fica como dívida, sem
+    investigação agora.
+  - **Commit 3 — bloqueio na estimativa do passe `[ALTERADO v2.1]`
+    (invariante 18 do lado do passe):**
+    - **Execução medida** (passes rasteiros, pelo adversário mais próximo
+      da linha no chute): cortado em **83%** com alguém a < 0,45 m da
+      linha, **43%** a 0,45–0,9 m, **15%** a 0,9–1,5 m, 7% a 1,5–2,5 m,
+      5% além. Antes a estimativa dava ≤ 70% × (1 − distância/0,8 m) para
+      quem está perto do passador: ~53%, ~13% e 0% nas três primeiras
+      faixas.
+    - **Modelo:** a chance de um adversário cortar o passe passa a ser o
+      maior de dois termos: o **bloqueio** (corpo perto da linha: 1 em
+      cima dela, caindo linearmente a 0 em `block_reach` = 1,35 m, que é
+      1,5 × `intercept_radius`) e a **corrida** até a linha (o termo que
+      já existia, até `pass_intercept_max`, sem mudança). Vale para o
+      passe e para a linha do passe em profundidade.
+    - Teste: `a_body_on_the_lane_blocks_the_pass`. Golden de paridade
+      regenerado (a decisão muda).
+    - **Medido (180 partidas por orientação no `calibrate`; 30 nas
+      ferramentas de passe), contra o commit 1 do passo 2:**
+
+      | Métrica | Antes | Commit 3 | Real (aprox.) |
+      |---|---|---|---|
+      | Passes por partida | 928 | 892 | 900 |
+      | Acerto de passe | 58% | 60% | 80% |
+      | Passes que falham (`pass_failures`) | 43,0% | 40,0% | ~20% |
+      | Interceptações em voo por partida | 174 | 142 | — |
+      | Passes com adversário a < 0,45 m da linha | 82 | 40 | — |
+      | Saída forçada (passes aos 5,5 s) | 47% | 51% | — |
+      | Gols | 4,87 | 4,27 | 2,7 |
+      | Chutes (no alvo) | 28,2 (9,1) | 26,7 (8,3) | 25 (9) |
+      | Faltas | 3,2 | 2,8 | 22 |
+      | Posse do 4-4-2 (casa / fora) | 57,7% / 58,1% | 59,0% / 59,2% | — |
+
+    - **A saída forçada sobe 4 pontos** (47% → 51% no conjunto de 180
+      partidas; por time, em 30 partidas: +2,4 a +6,8). O limite combinado
+      para parar era +5. O portador deixa de passar para linhas bloqueadas
+      e, sem outra opção, chega mais vezes à trava dos 5,5 s: a trava
+      continua sendo metade dos passes.
+    - Os passes bloqueados que sobram (40 por partida) continuam sendo
+      cortados em 77%: são, na maioria, escolhas da saída forçada, que
+      aceita qualquer valor.
 - **Sinais registrados (não calibrar agora):**
   - **Posse do mandante:** 73% (arcade) → 56,9% (física no lance) →
     42,5% (física + engajamento). A assimetria mudou com a física, não com

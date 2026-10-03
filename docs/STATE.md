@@ -140,6 +140,10 @@ iniciados.
 - **Custo:** 598,8M instruções (598.838.544) ≈ 45,4 ms: **5,8M acima da
   meta desejável de 45 ms (593M)**, dentro do critério de saída de (c)
   (≤ 48 ms ≈ 633M, decidido em 2026-10-03). Regra por commit: +1,5%.
+- **Passe pelo alto (≥ 28 m): 9,3% de acerto** em 121 passes por partida.
+  Não investigado. Junto com o passe em profundidade (0,3%, desligado) e o
+  tracking revertido, é candidato a uma fase de "revisão da execução de
+  passes".
 - **Teste frágil:** `match_statistics_are_plausible` (≥ 3 faltas por
   partida) usa só 6 seeds e mede **6,0**; a média de 180 partidas é
   **3,6**. As 6 seeds não representam a média.
