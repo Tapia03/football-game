@@ -555,10 +555,11 @@ impl Default for DefendingTuning {
             contain_mid: (2.0, 3.0),
             contain_far: (3.0, 4.0),
             contain_urgency: 1.0,
-            // Calibrated against the engine with movement physics: ~73
-            // challenges and ~21 fouls a match (real ~70 / ~22). The old
-            // 1.15 came from the arcade engine and gave ~8.
-            challenge_threshold: 0.97,
+            // Calibrated against the engine with movement physics: ~71
+            // challenges and ~19 fouls a match (real ~70 / ~22). The old
+            // 1.15 came from the arcade engine and gave ~8; 0.97 was right
+            // until players could turn properly (reaction fix), then ~106.
+            challenge_threshold: 1.01,
             challenge_base: 0.0,
             w_goal_side: 0.4,
             w_fresh: 0.25,

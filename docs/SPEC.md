@@ -1705,7 +1705,113 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
     | Saída forçada | 52% | 52% | — |
     | Posse do 4-4-2 (casa / fora) | 58,2% / 58,6% | 57,7% / 58,4% | — |
 
-    Golden de paridade regenerado. Instruções: a medir no CI.
+    Golden de paridade regenerado. **Custo (CI): 602.368.082 instruções,
+    −1,28%** sobre 610.183.817; aceito, linha de base regravada.
+  - **5C — custo real da condução com o limiar novo (`carry_cost`, 30
+    partidas, 4-4-2 em casa):**
+
+    | Passo de 5 m de condução | Antes do 5B | Depois do 5B | A decisão supõe |
+    |---|---|---|---|
+    | Espaço à frente | 0,20% | 1,06% | 3,0% |
+    | Apertado (teste da decisão) | 0,44% | 0,71% | 32,8% |
+
+    Perdas por 1.000 ticks pelo adversário mais próximo: < 1,8 m 4,4;
+    1,8–2,5 m 2,4; 2,5–4,5 m 0,08; ≥ 4,5 m 0,21. O custo subiu ~5× no
+    espaço e continua abaixo do que a decisão já cobra; o teste de
+    "apertado" da decisão (um ponto 6 m à frente) não acompanha onde a
+    bola é de fato perdida (adversário a < 2,5 m). **A saída forçada
+    ficou em 52,4%** (90% "escolheu conduzir"). Corrigir a decisão pelo
+    custo real deixaria a condução mais barata na conta, não mais cara.
+- **Reescopo da saída forçada (2026-10-03): execução do passe primeiro,
+  erosão da condução depois (se preciso).** Time-box de 3 commits ("5D",
+  sincronização com o receptor); se a saída forçada não cair abaixo de
+  40%, reescopar de novo. Alarmes: acerto de passe sem subir → parar;
+  instruções > +1,5% sobre 602,4M → parar.
+  - **5D item 1 — re-medição com o motor atual (`pass_failures`, 30
+    partidas, 4-4-2 em casa):** 891 passes, **40,6% falham**: interceptação
+    em voo 40,4% das falhas, receptor fora do ponto 31,7%, domínio errado
+    14,3%, erro de direção 13,6%. Receptor domina por velocidade dele no
+    chute: < 1 m/s 70% (381 passes), 1–3 m/s 55% (93), 3–5 m/s 53% (283),
+    ≥ 5 m/s 20% (135); a ≥ 3 m/s, 42%. Igual ao medido antes do bote.
+  - **Causa encontrada (rastro tick a tick de passes para receptor a
+    > 5 m/s): não falta antecipação — a física não executa a meia-volta.**
+    O receptor já recebe como alvo o ponto onde alcança a bola
+    (`intercept_point`), mas continua correndo na direção em que ia,
+    perdendo só ~0,2 m/s por tick (~2 m/s², contra `max_accel` 15), e se
+    afasta 10 m ou mais do ponto de mira.
+    - **Bug em `PlayerKinematics::steer`:** a reação (80 ms mantendo a
+      velocidade antiga) dispara quando "o alvo mudou mais de 2 m desde o
+      plano anterior", mas a comparação usa `traj.target` — o fim do
+      trecho de cruzeiro, que com o giro limitado é a projeção do alvo
+      sobre a direção já virada, quase em cima do próprio jogador numa
+      meia-volta — e não a intenção anterior (`Lead::intent`). Numa virada
+      forte a "mudança de alvo" passa de 2 m em todo tick, a reação
+      recomeça em todo tick e a aceleração só age em 20 dos 100 ms.
+    - Afeta todo jogador no lance que precisa virar mais que o limite de
+      giro por tick (receptor, defensor de contenção, quem persegue a
+      bola), não só o receptor. É provável que explique também o
+      acompanhamento fraco da tentativa revertida de marcar corredores.
+    - **Experimento local, não commitado** (comparar com `Lead::intent`;
+      180 partidas por orientação no `calibrate`, 30 no `pass_failures`):
+
+      | Métrica | Antes | Com a correção |
+      |---|---|---|
+      | Acerto de passe | 59% | 68% |
+      | Passes que falham | 40,6% | 32,9% |
+      | Receptor fora do ponto por partida | 115 | 66 |
+      | — passes de 10–20 m | 12,7% | 1,9% |
+      | — passes de 20–28 m | 4,6% | 0,0% |
+      | — passes < 10 m | 14,0% | 12,9% |
+      | Passe pelo alto: receptor domina | 8% | 20% |
+      | Passes por partida | 895 | 956 |
+      | Botes | 74,5 | 106 |
+      | Faltas | 21,3 | 27,4 |
+      | Vermelhos | 0,17 | 0,35 |
+      | Gols | 4,88 | 4,71 |
+      | Saída forçada | 52% | 51–52% |
+      | Posse do 4-4-2 (casa / fora) | 57,7% / 58,4% | 59,9% / 60,0% |
+
+      O acerto sobe 9 pontos; a saída forçada não se move; os botes sobem
+      42% (a defesa também passa a virar), o que pede retocar o limiar do
+      bote. Parado para decisão do usuário: a correção é na física de
+      todos, não a "antecipação do receptor" que estava aprovada.
+  - **5D-2 — correção da reação em `steer` + retoque do bote
+    `[ALTERADO v2.1]` (aplicado 2026-10-03):**
+    - **Física:** a reação passa a comparar o alvo novo com a intenção
+      anterior do jogador (`Lead::intent`), não com o fim do trecho de
+      cruzeiro. Teste `a_sprinting_player_sent_back_stops_within_a_second`:
+      a 7 m/s e mandado para trás, replanejando a cada tick, o jogador
+      inverte em até 1 s e avança menos de 4 m (no código antigo ainda ia
+      a 4,8 m/s na direção original depois de 1 s).
+    - **Bote:** com os jogadores virando de verdade, o limiar 0,97 dava
+      110 botes e 27,8 faltas. Varredura (30 partidas por orientação):
+      1,00 → 81 / 21,5; 1,02 → 65 / 17,5; 1,04 → 51 / 15,1; 1,06 → 41 /
+      11,7. Com 180 partidas: 1,00 → 78,2 botes, 21,3 faltas, 0,27
+      vermelhos; **1,01 → 70,8 botes, 19,4 faltas, 0,22 vermelhos**.
+      Aplicado **1,01** (botes no alvo, menos vermelhos; faltas 2,6 abaixo
+      do real).
+    - **Medido (180 partidas por orientação; passes com 30):**
+
+      | Métrica | 5B | 5D-2 | Real |
+      |---|---|---|---|
+      | Acerto de passe | 59% | 68,5% | ~80% |
+      | Passes que falham | 40,6% | 32,1% | ~20% |
+      | Receptor fora do ponto por partida | 115 | 66 | — |
+      | Interceptações em voo por partida | 146 | 127 | — |
+      | Passe pelo alto: receptor domina | 8% | 21% | — |
+      | Passes por partida | 895 | 970 | ~900 |
+      | Botes | 74,5 | 70,8 | ~70 |
+      | Faltas | 21,3 | 19,4 | ~22 |
+      | Amarelos / vermelhos | 2,95 / 0,17 | 2,86 / 0,22 | ~4 / ~0,15 |
+      | Gols | 4,88 | 4,43 | ~2,7 |
+      | Saída forçada | 52% | 52–53% | — |
+      | Posse do 4-4-2 (casa / fora) | 57,7% / 58,4% | 59,7% / 60,7% | — |
+
+      O "receptor fora do ponto" some nos passes de 10–28 m (1,9% e
+      0,0%); sobra nos passes curtos (< 10 m: 12,6%) e no passe pelo alto
+      (22,9%). A saída forçada não se move (92% "escolheu conduzir"). A
+      assimetria de posse cresce ~2 pontos.
+    - Golden de paridade regenerado. Instruções: a medir no CI.
 - **Sinais registrados (não calibrar agora):**
   - **Posse do mandante:** 73% (arcade) → 56,9% (física no lance) →
     42,5% (física + engajamento). A assimetria mudou com a física, não com
