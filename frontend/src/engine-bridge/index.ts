@@ -96,7 +96,7 @@ export type { Frame } from './sab';
 // The canvas side (main thread): WebGL2 objects only. Every frame drawn is
 // read from the snapshot ring and handed in — no match state lives here.
 
-import { MatchCanvas } from './pkg/fm_wasm.js';
+import { MatchCanvas, reference_slot } from './pkg/fm_wasm.js';
 
 /** Sizes `canvas` to its CSS box × devicePixelRatio (sharp on HiDPI). */
 export function fitCanvas(canvas: HTMLCanvasElement): void {
@@ -113,3 +113,12 @@ export async function openCanvas(canvas: HTMLCanvasElement): Promise<MatchCanvas
 }
 
 export type { MatchCanvas };
+
+/**
+ * One ring slot as a fresh engine produces it for `seed` after `tick` ticks:
+ * a pure reference the e2e tests compare the worker's snapshot against.
+ */
+export async function referenceSlot(seed: number, tick: number): Promise<Uint32Array> {
+  await ensureInit();
+  return reference_slot(seed, tick);
+}

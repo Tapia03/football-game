@@ -3,6 +3,7 @@
     fitCanvas,
     loadEngineInfo,
     openCanvas,
+    referenceSlot,
     startMatch,
     type EngineInfo,
     type MatchCanvas,
@@ -104,6 +105,9 @@
         }
         handle = h;
         match = h;
+        // Test hook: lets the e2e tests pause the worker and read the ring.
+        (globalThis as { fmMatch?: MatchHandle }).fmMatch = h;
+        (globalThis as { fmReferenceSlot?: typeof referenceSlot }).fmReferenceSlot = referenceSlot;
         interpolator = new FrameInterpolator(h.reader);
         raf = requestAnimationFrame(tick);
       },

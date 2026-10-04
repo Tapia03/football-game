@@ -11,6 +11,13 @@ render (worker + SAB + interpolação) → 6B HUD e overlays → 6C painel
 tático (mentalidade, tempo, pressing) → 6D câmera. 6C-bis (comportamentos
 por papel) fica para depois de (d). Desenho do 6A no SPEC, Fase 6.
 
+**6A feito** (commits `faf5cdf`, `d05bcc3`, `ce1fde4`, `534e549` e o de
+testes): motor no worker, anel de snapshots no SAB (208 bytes × 16), 60
+snapshots por segundo publicados adiantados, a main lê e interpola em
+TS, malha como função WASM pura. Latência tick → desenho a 1×: média
+18,9 ms, máximo 22,7 ms. **Próximo: 6B (HUD e overlays básicos), com
+golden de pixel só no Chromium.**
+
 ## Fase anterior — Fase 5 (c1), mergeada
 **Fase 5 — Role Behaviors**, branch `fase-5`. O usuário decidiu (2026-10-04)
 fechar (c1) no motor do 5D-2 (`f17b1d9`); PR #6 mergeado em `6ae001a`.

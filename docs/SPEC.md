@@ -2121,6 +2121,27 @@ recalibrar contra a coluna "Real". As constantes estão em `AnchorTuning`,
     por segundo; (3) render na main lendo o SAB e interpolando em TS;
     (4) helpers de malha como funções WASM puras; (5) testes
     (determinismo pelo SAB, latência medida, partida roda).
+  - **6A implementado (2026-10-04):**
+    - `fm-wasm::sab` (layout, `encode`/`decode`, `tick_frames`),
+      `EngineHost` (o único `MatchEngine`, no worker), `fm-wasm::mesh`
+      (`frame_mesh`, pura) e `MatchCanvas` (só o contexto GL);
+      `engine.worker.ts`, `engine-bridge/sab.ts` (`SnapshotReader`) e
+      `render/interpolate.ts` (`FrameInterpolator`).
+    - **Latência tick → desenho, medida** (intervalo de amostra + defasagem
+      do relógio do worker no instante do desenho; não inclui o atraso de
+      apresentação do quadro): a 1×, **média 18,9 ms, máximo 22,7 ms**
+      (1.155 quadros, Chromium local, com o desenho ligado); a 10×, média
+      3,8 ms. Dentro da estimativa de 20–40 ms e do limite de 50 ms.
+    - **Determinismo pelo anel:** o snapshot que o worker publica num
+      tick é igual, bit a bit, ao de um motor novo rodado até o mesmo
+      tick (`reference_slot`, função pura).
+    - **Testes:** Rust — layout (208 bytes, 3.392 no total), volta do
+      anel, ida-e-volta bit a bit, grade de 60 Hz sem buraco, malha pura
+      e em espaço de clip. Playwright (`tests/e2e/match.spec.ts`) —
+      partida roda e a velocidade responde; cabeçalho do SAB; determinismo
+      pelo anel; latência < 50 ms a 1×. No Firefox do CI (sem WebGL) a
+      partida roda e só o desenho é dispensado.
+    - **Custo:** `tick_logic` não mudou (bench de instruções em +0,00%).
 - `MatchSnapshot` POD em `SharedArrayBuffer`, com ring buffer duplo
   (`ffi/sab.rs`).
 - `fm-wasm` expõe `init_engine(seed)`, `tick_logic()`,

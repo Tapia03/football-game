@@ -132,6 +132,18 @@ export class SnapshotReader {
     return at === 0 ? 0 : Math.max(0, wallClockMs() - at);
   }
 
+  /**
+   * The raw words of snapshot `n`, or undefined when it is not in the ring
+   * (tests compare them bit for bit with a reference).
+   */
+  rawSlot(n: number): Uint32Array | undefined {
+    const seq = this.sequence();
+    if (n < 0 || n >= seq || seq - n >= RING_SLOTS) return undefined;
+    const at = HEADER_WORDS + (n % RING_SLOTS) * SLOT_WORDS;
+    const words = new Uint32Array(this.ints.buffer, at * 4, SLOT_WORDS).slice();
+    return this.sequence() - n < RING_SLOTS ? words : undefined;
+  }
+
   /** Match time of snapshot `n` (only meaningful while it is in the ring). */
   timeOf(n: number): number {
     return this.ints[HEADER_WORDS + (n % RING_SLOTS) * SLOT_WORDS + S_T_MS] ?? 0;

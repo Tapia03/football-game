@@ -187,6 +187,20 @@ pub fn frame_mesh_vertices(
     mesh::frame_mesh(&frame, width_px, height_px).verts
 }
 
+/// One ring slot as a fresh engine produces it for demo match `seed` after
+/// `tick` logical ticks. A pure reference for tests: the snapshot the
+/// worker published for that tick must be these words, bit for bit.
+#[wasm_bindgen]
+#[must_use]
+pub fn reference_slot(seed: u32, tick: u32) -> Vec<u32> {
+    let (db, setup) = fm_match::demo::demo_match(u64::from(seed));
+    let mut engine = fm_match::MatchEngine::new(&setup, &db);
+    for _ in 0..tick {
+        engine.tick_logic();
+    }
+    sab::tick_frames(&engine)[0].to_vec()
+}
+
 /// The canvas the match is drawn on (main thread). It owns the WebGL2
 /// objects and nothing of the match: every frame is handed in.
 #[cfg(target_arch = "wasm32")]
