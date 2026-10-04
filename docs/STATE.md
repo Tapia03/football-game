@@ -44,9 +44,11 @@ Caminho A**, não o passo 2 do item 5.
    o time-box em curso: (1) reinícios corrigidos e (2) re-medidos —
    feitos; (3) botes e (4) valor do passe medidos; bote recalibrado (5B).
    5C medido: a saída forçada não reage (52%). Reescopo: execução do
-   passe primeiro ("5D"). **RETOMAR AQUI:** bug da reação em
-   `PlayerKinematics::steer` encontrado e medido em experimento (acerto
-   59% → 68%); aguardando decisão do usuário para aplicar.
+   passe primeiro ("5D"). 5D-2 aplicado: correção da reação em `steer` +
+   bote em 1,01 (acerto 59% → 68,5%). **RETOMAR AQUI:** resta um commit
+   do time-box 5D; a saída forçada segue em 52–53%. Depois, medir se a
+   correção da reação torna viável a marcação de corredores (sem refazer
+   o tracking antes disso).
 4. Refazer o item 5 (passe em profundidade) sobre a física nova.
 5. Itens 6–8 (apoio sem bola → drible 1×1 → tabela).
 Depois: (c2) calibração, (d) comportamentos por papel, PR `fase-5` → `main`.
@@ -66,6 +68,24 @@ corrida ganha um marcador (o adversário de linha mais próximo), que fica
 3. **A posse do 4-4-2 piorou:** 57,7% → 59,7% (4-4-2 em casa).
 4. **A linha defensiva não recuou:** 26,8 m → 26,0 m (limite combinado:
    5 m). O risco de a linha descer atrás do corredor não se confirmou.
+
+### Padrão de descobertas (vale para toda investigação futura)
+Quatro defeitos de física/execução apareceram em sequência, cada um
+mais fundo que o anterior, e todos primeiro como "problema de decisão ou
+de calibração":
+1. **Passe em profundidade** (0,3% de acerto): a estimativa supunha uma
+   inércia que a execução não tinha.
+2. **Marcação de corredores** (revertida): custo 2× o estimado e
+   acompanhamento parcial.
+3. **Reinícios**: 48% dos reinícios cobrados eram perdidos na hora (ponto
+   em cima da linha).
+4. **Reação em `steer`**: numa virada forte a reação recomeçava a cada
+   tick e o jogador quase não freava.
+
+Regra: quando um sintoma aparecer numa camada (decisão, calibração),
+conferir antes se a camada de baixo (execução, física) faz o que se
+supõe — medindo a execução de fora, tick a tick, antes de mexer em
+constante ou em modelo.
 
 ### Itens de (c1)
 | Item | Estado |
@@ -162,12 +182,12 @@ iniciados.
   (≤ 48 ms ≈ 633M, decidido em 2026-10-03). Regra por commit: +1,5%.
 - **Execução de passes — dívida estrutural para depois de (c1)** (uma
   fase futura pega os três juntos):
-  - **Sincronização com o receptor:** o resolver e a estimativa miram onde
-    o receptor está no chute, sem antecipar o movimento. Acerto de 71% com
-    o receptor parado e 19% a ≥ 5 m/s. Nas falhas "receptor fora do ponto"
-    (30% das falhas), o receptor está a mais de 3 m do ponto de mira em
-    98% dos casos quando a bola chega, e 78% vinham a ≥ 3 m/s no chute.
-  - **Passe pelo alto (≥ 28 m):** 9% de acerto em ~120 passes por partida
+  - **Sincronização com o receptor:** em boa parte era o bug da reação em
+    `steer` (corrigido no 5D-2: o receptor já recebia o ponto de encontro
+    com a bola, mas não conseguia virar). Sobra: "receptor fora do ponto"
+    em 12,6% dos passes curtos (< 10 m), e o resolver e a estimativa
+    continuam mirando onde o receptor está no chute.
+  - **Passe pelo alto (≥ 28 m):** 21% de acerto (era 9%) em ~120 passes por partida
     (o receptor corre para debaixo da bola ainda alta).
   - **Passe em profundidade:** 0,3% de acerto quando ligado; desligado.
 - **Bola conduzida para fora em jogo corrido:** 5,9 por partida (4,2 antes
@@ -180,15 +200,15 @@ iniciados.
 - **Teste de faltas:** `match_statistics_are_plausible` tem piso de 2 faltas
   por partida (era 3; relaxado em 2026-10-03). É piso de regressão, não
   meta: o real é ~22 e o motor está em 2,8 (180 partidas).
-- **Acerto de passe 59%** (real ~80%): invariante 18 do lado do passe →
+- **Acerto de passe 68,5%** (real ~80%): invariante 18 do lado do passe →
   Caminho A passo 4 ou (c2).
-- **Botes 74,5 / faltas 21,3** (real ~70 / 22): recalibrados em 2026-10-03
-  (`challenge_threshold` 0,97). Amarelos 2,95 (real ~4).
-- **Posse 4-4-2 × 4-3-3 não convergida:** o 4-4-2 fica com ~58% nas
+- **Botes 70,8 / faltas 19,4** (real ~70 / 22): `challenge_threshold` 1,01
+  (2026-10-03, depois da correção da reação). Amarelos 2,86 (real ~4).
+- **Posse 4-4-2 × 4-3-3 não convergida:** o 4-4-2 fica com ~60% nas
   duas orientações, com teto de corredores 1, 2 ou sem teto; sem corrida
   nenhuma, 54,3%. Com a física, parte da assimetria é da formação em si,
   não das corridas (SPEC, commit 1 do passo 2).
-- **Gols 4,9** por partida (real ~2,7); xG por chute 0,21 (real ~0,10).
+- **Gols 4,4** por partida (real ~2,7); xG por chute 0,21 (real ~0,10).
 
 ### Branches vivas
 | Branch | Papel |
@@ -280,7 +300,7 @@ Ver SPEC, Seção 0 e decisões das Fases 3–5. Os que mais pesam no dia a dia:
   adversário no pontapé inicial. A regra do kickoff não é aplicada. Alvo:
   Fase 5 (d) ou 6.
 - **Pênaltis** 0,005 por partida (real ~0,3). Alvo: Fase 6. (Os **vermelhos**
-  estão em 0,17, real ~0,15; o "0,53" antigo era de antes da física.)
+  estão em 0,22, real ~0,15; o "0,53" antigo era de antes da física.)
 - **Tempo de bola parada** 4% (real ~35%): reinícios curtos demais. Entra em
   (c2).
 - **Impedimento não apitado** (decisão): infla gols em profundidade. Viés

@@ -1775,6 +1775,43 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
       42% (a defesa também passa a virar), o que pede retocar o limiar do
       bote. Parado para decisão do usuário: a correção é na física de
       todos, não a "antecipação do receptor" que estava aprovada.
+  - **5D-2 — correção da reação em `steer` + retoque do bote
+    `[ALTERADO v2.1]` (aplicado 2026-10-03):**
+    - **Física:** a reação passa a comparar o alvo novo com a intenção
+      anterior do jogador (`Lead::intent`), não com o fim do trecho de
+      cruzeiro. Teste `a_sprinting_player_sent_back_stops_within_a_second`:
+      a 7 m/s e mandado para trás, replanejando a cada tick, o jogador
+      inverte em até 1 s e avança menos de 4 m (no código antigo ainda ia
+      a 4,8 m/s na direção original depois de 1 s).
+    - **Bote:** com os jogadores virando de verdade, o limiar 0,97 dava
+      110 botes e 27,8 faltas. Varredura (30 partidas por orientação):
+      1,00 → 81 / 21,5; 1,02 → 65 / 17,5; 1,04 → 51 / 15,1; 1,06 → 41 /
+      11,7. Com 180 partidas: 1,00 → 78,2 botes, 21,3 faltas, 0,27
+      vermelhos; **1,01 → 70,8 botes, 19,4 faltas, 0,22 vermelhos**.
+      Aplicado **1,01** (botes no alvo, menos vermelhos; faltas 2,6 abaixo
+      do real).
+    - **Medido (180 partidas por orientação; passes com 30):**
+
+      | Métrica | 5B | 5D-2 | Real |
+      |---|---|---|---|
+      | Acerto de passe | 59% | 68,5% | ~80% |
+      | Passes que falham | 40,6% | 32,1% | ~20% |
+      | Receptor fora do ponto por partida | 115 | 66 | — |
+      | Interceptações em voo por partida | 146 | 127 | — |
+      | Passe pelo alto: receptor domina | 8% | 21% | — |
+      | Passes por partida | 895 | 970 | ~900 |
+      | Botes | 74,5 | 70,8 | ~70 |
+      | Faltas | 21,3 | 19,4 | ~22 |
+      | Amarelos / vermelhos | 2,95 / 0,17 | 2,86 / 0,22 | ~4 / ~0,15 |
+      | Gols | 4,88 | 4,43 | ~2,7 |
+      | Saída forçada | 52% | 52–53% | — |
+      | Posse do 4-4-2 (casa / fora) | 57,7% / 58,4% | 59,7% / 60,7% | — |
+
+      O "receptor fora do ponto" some nos passes de 10–28 m (1,9% e
+      0,0%); sobra nos passes curtos (< 10 m: 12,6%) e no passe pelo alto
+      (22,9%). A saída forçada não se move (92% "escolheu conduzir"). A
+      assimetria de posse cresce ~2 pontos.
+    - Golden de paridade regenerado. Instruções: a medir no CI.
 - **Sinais registrados (não calibrar agora):**
   - **Posse do mandante:** 73% (arcade) → 56,9% (física no lance) →
     42,5% (física + engajamento). A assimetria mudou com a física, não com
