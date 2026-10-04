@@ -1811,7 +1811,60 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
       0,0%); sobra nos passes curtos (< 10 m: 12,6%) e no passe pelo alto
       (22,9%). A saída forçada não se move (92% "escolheu conduzir"). A
       assimetria de posse cresce ~2 pontos.
-    - Golden de paridade regenerado. Instruções: a medir no CI.
+    - Golden de paridade regenerado. **Custo (CI): 590.430.506
+      instruções, −1,98%** sobre 602.368.082 (≈ 44,8 ms pela régua:
+      abaixo da meta desejável de 45 ms). Aceito; linha de base regravada.
+    - **Acerto por velocidade do receptor no chute (antes → depois):**
+      < 1 m/s 70% → 75%; 1–3 m/s 55% → 61%; 3–5 m/s 53% → 64%; ≥ 5 m/s
+      20% → 46%.
+    - **Por que 1,01 e não 1,00:** faltas um pouco abaixo do real são
+      menos visíveis no jogo do que botes acima do real, e 1,01 dá menos
+      vermelhos (0,22 contra 0,27).
+    - **Para (c2):** vermelhos 0,22 (real ~0,15) e a assimetria de posse
+      4-4-2 × 4-3-3 (59,7% / 60,7%), que cresceu ~2 pontos aqui.
+  - **Marcação de corredores depois da correção da reação (só medição;
+    o código revertido reaplicado num worktree temporário, seed 3, uma
+    partida, 1.088 corridas):** distância marcador–corredor no fim da
+    corrida: mediana 4,4 → **3,9 m** (p75 7,8 → 5,8 m); a ≤ 3 m em 29% →
+    **35%**; mais perto no fim do que no início em 60% → 69%. Melhora
+    modesta; o alvo é 1,5 m. Não refeito.
+  - **5D-3 — passe pelo alto: causa encontrada, correção medida e NÃO
+    aplicada (teste falhou).**
+    - **Mecanismo (rastro tick a tick):** `intercept_point` escolhe o
+      primeiro ponto da trajetória que o jogador alcança a tempo, olhando
+      só o plano do campo. Num passe pelo alto esse ponto fica debaixo da
+      bola ainda no ar (3–5 m de altura, acima de `max_height` 1,8 m): o
+      receptor sai do ponto de mira, corre ~8 m na direção do passador, a
+      bola passa por cima e cai onde ele estava.
+    - **Correção (uma condição):** ignorar os pontos em que a bola está
+      acima de `max_height`.
+    - **Medido com a correção (180 partidas por orientação; passes com
+      30):**
+
+      | Métrica | 5D-2 | Com a correção | Real |
+      |---|---|---|---|
+      | Passe pelo alto: receptor domina | 21% | 57% | — |
+      | Acerto de passe | 68,5% | 74% | ~80% |
+      | Passes que falham | 32,1% | 26,2% | ~20% |
+      | Receptor fora do ponto por partida | 66 | 25 | — |
+      | Passes por partida | 970 | 1.082 | ~900 |
+      | Saída forçada | 52–53% | 44% | — |
+      | **Gols** | 4,43 | **8,5** | ~2,7 |
+      | **Chutes (no alvo)** | 26,4 (8,1) | **47,9 (15,0)** | 25 (9) |
+      | Botes / faltas | 70,8 / 19,4 | 73,0 / 20,2 | ~70 / ~22 |
+      | Posse do 4-4-2 (casa / fora) | 59,7% / 60,7% | 60,4% / 61,0% | — |
+
+    - **Teste falhou:** `match_statistics_are_plausible` — "goals/match
+      9,17" (limite 7,0; 6 seeds). Parado pela regra "teste falhou → log e
+      hipóteses, sem correção tentativa".
+    - **Hipótese:** a correção está certa na execução, e é ela que expõe
+      a falta de contraparte defensiva que o SPEC já registrava: a bola
+      longa por cima da defesa agora chega (57%), e não há apito de
+      impedimento, nem goleiro saindo do gol, nem defesa acompanhando
+      quem recebe nas costas. Os chutes quase dobram com o mesmo xG por
+      chute (0,236).
+    - A estimativa da decisão e a execução se aproximam: receptor com
+      adversário a 6–12 m domina 76,0% (estimado 75,3%).
 - **Sinais registrados (não calibrar agora):**
   - **Posse do mandante:** 73% (arcade) → 56,9% (física no lance) →
     42,5% (física + engajamento). A assimetria mudou com a física, não com

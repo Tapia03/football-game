@@ -45,10 +45,12 @@ Caminho A**, não o passo 2 do item 5.
    feitos; (3) botes e (4) valor do passe medidos; bote recalibrado (5B).
    5C medido: a saída forçada não reage (52%). Reescopo: execução do
    passe primeiro ("5D"). 5D-2 aplicado: correção da reação em `steer` +
-   bote em 1,01 (acerto 59% → 68,5%). **RETOMAR AQUI:** resta um commit
-   do time-box 5D; a saída forçada segue em 52–53%. Depois, medir se a
-   correção da reação torna viável a marcação de corredores (sem refazer
-   o tracking antes disso).
+   bote em 1,01 (acerto 59% → 68,5%). **RETOMAR AQUI:** 5D-3 (passe pelo alto):
+   causa encontrada (`intercept_point` ignora a altura da bola) e
+   correção medida, **não aplicada**: o acerto vai a 74%, mas os gols vão
+   a 8,5 e `match_statistics_are_plausible` falha. Decisão do usuário
+   pendente. Marcação de corredores re-medida (mediana 3,9 m; 35% a
+   ≤ 3 m): melhora modesta, não refeita.
 4. Refazer o item 5 (passe em profundidade) sobre a física nova.
 5. Itens 6–8 (apoio sem bola → drible 1×1 → tabela).
 Depois: (c2) calibração, (d) comportamentos por papel, PR `fase-5` → `main`.
@@ -110,6 +112,8 @@ iniciados.
 | (reverts) | Revert de `2915e96` e `53f017a` (defesa acompanha o corredor) |
 | `2915e96` | Defesa acompanha o corredor — **revertido** (614,9M, +2,67%) |
 | `53f017a` | SPEC do commit 2 — **revertido** |
+| `f17b1d9` | Reação em `steer` corrigida; bote em 1,01 (590,4M, −1,98%) |
+| `72385d0` | Baseline 602.368.082; SPEC: 5C, re-medição do passe, bug da reação |
 | `616b1f6` | Bote recalibrado: limiar 0,97 e cartões (602,4M, −1,28%) |
 | `ab66f15` | SPEC/STATE: varredura do bote e valores aplicados |
 | `b06c28e` | Medição: por que o passe vale 3× menos que conduzir |
@@ -176,9 +180,10 @@ iniciados.
 - Contadores de diagnóstico (só com a feature `diagnostics`).
 
 ### Dívidas conhecidas
-- **Custo:** 602,4M instruções (602.368.082, commit `616b1f6`) ≈ 45,7 ms:
-  **9M acima da meta desejável de 45 ms (593M)**; folga de ~2,3 ms até o
-  critério de saída. O job de bench guarda o perfil (artefato `callgrind`), dentro do critério de saída de (c)
+- **Custo:** 590,4M instruções (590.430.506, commit `f17b1d9`) ≈ 44,8 ms:
+  **dentro da meta desejável de 45 ms (593M)** — a dívida de custo
+  registrada desde a física no lance não existe mais. O job de bench
+  guarda o perfil (artefato `callgrind`), dentro do critério de saída de (c)
   (≤ 48 ms ≈ 633M, decidido em 2026-10-03). Regra por commit: +1,5%.
 - **Execução de passes — dívida estrutural para depois de (c1)** (uma
   fase futura pega os três juntos):
@@ -277,11 +282,13 @@ Ver SPEC, Seção 0 e decisões das Fases 3–5. Os que mais pesam no dia a dia:
 ## Decisões pendentes
 - (decidido 2026-10-03) **Critério de saída de (c): ≤ 48 ms** pela régua
   (≤ ~633M instruções). A meta desejável continua 45 ms (~593M); o gate
-  de 50 ms (~660M) nunca foi violado pela régua de instruções. Hoje: 602,4M ≈
-  45,7 ms.
+  de 50 ms (~660M) nunca foi violado pela régua de instruções. Hoje: 590,4M ≈
+  44,8 ms.
 - **xT:** conferir a cópia contra `karun.in/blog/data/open_xt_12x8_v1.json`.
 
 ## Marcos
+- **2026-10-03 — bug da reação em `steer` corrigido** (`f17b1d9`): acerto de
+  passe 59% → 68,5% e custo de volta abaixo de 45 ms (590,4M).
 - **2026-10-03 — a defesa tira a bola na frequência do futebol** (`616b1f6`):
   74,5 botes e 21,3 faltas por partida (real ~70 / ~22), vermelhos 0,17
   (real ~0,15), e custando menos instruções (−1,28%).
