@@ -15,8 +15,12 @@ por papel) fica para depois de (d). Desenho do 6A no SPEC, Fase 6.
 testes): motor no worker, anel de snapshots no SAB (208 bytes × 16), 60
 snapshots por segundo publicados adiantados, a main lê e interpola em
 TS, malha como função WASM pura. Latência tick → desenho a 1×: média
-18,9 ms, máximo 22,7 ms. **Próximo: 6B (HUD e overlays básicos), com
-golden de pixel só no Chromium.**
+18,9 ms, máximo 22,7 ms.
+
+**6B em três commits visuais:** **6B-1** SAB versão 2 (224 bytes por
+posição: período, cartões, posse) + HUD em DOM + `run_to` + primeiro
+golden — em andamento; 6B-2 painel de estatísticas + toggles F1/F2; 6B-3
+overlays geométricos. Desenho de cada um aprovado antes do código.
 
 ## Fase anterior — Fase 5 (c1), mergeada
 **Fase 5 — Role Behaviors**, branch `fase-5`. O usuário decidiu (2026-10-04)
@@ -285,6 +289,18 @@ própria branch `fase-6`; os spikes ficaram para trás.
   preview`, depois http://localhost:4173 (ou `npm run dev`, porta 5173).
 - O worktree `../football-game-spike` (branch `spike-render-v2`, motor do
   5D-2 com o render antigo, sem worker) não é mais atualizado.
+
+**Golden de pixel (só Chromium) — fluxo de dois pushes:** a referência
+tem de ser a imagem que o Chromium do CI produz (fontes e rasterização
+desta máquina são outras).
+1. 1º push com o teste novo: o job `test-e2e (chromium)` fica **vermelho**
+   ("snapshot doesn't exist"); o Playwright grava a imagem obtida e o job
+   a sobe no artefato `golden-chromium`.
+2. Baixar o artefato (`gh run download <run> -n golden-chromium`) e
+   commitar a imagem em `tests/golden/chromium/`.
+3. 2º push: verde.
+O mesmo vale quando uma mudança visual intencional invalida um golden:
+apagar a referência antiga, e repetir.
 
 **Setup pendente — Playwright local:** os navegadores do Playwright não
 estão instalados nesta máquina, então os testes e2e (`npx playwright

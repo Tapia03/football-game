@@ -317,7 +317,14 @@ pub trait Renderer2D {
 
 **Regras:**
 - A `DrawList` é montada por código seguro e independente de backend
-  (campo → sombras → jogadores → bola → labels → overlays → HUD).
+  (campo → sombras → jogadores → bola → labels → overlays).
+- **O HUD não é desenhado pelo renderer `[ALTERADO v2.1]`** (decisão
+  consciente, 2026-10-04; antes a lista terminava em "→ HUD"): placar,
+  cronômetro, cartões, posse e painéis de estatística são DOM (Svelte)
+  por cima e em volta do canvas. Texto em WebGL pediria um atlas de
+  fonte; em DOM o HUD é testável por texto no Playwright e acessível de
+  graça. O canvas fica com o campo, os jogadores, a bola e os overlays
+  geométricos.
 - O backend só traduz a `DrawList` em chamadas de GPU.
 - Câmera com 3 modos: `FullPitch`, `HalfPitch` (segue a bola) e
   `Tactical`.
@@ -2142,6 +2149,40 @@ recalibrar contra a coluna "Real". As constantes estão em `AnchorTuning`,
       pelo anel; latência < 50 ms a 1×. No Firefox do CI (sem WebGL) a
       partida roda e só o desenho é dispensado.
     - **Custo:** `tick_logic` não mudou (bench de instruções em +0,00%).
+- **6B em três commits visuais (aprovado 2026-10-04):** 6B-1 extensão do
+  SAB + HUD básico; 6B-2 painel lateral de estatísticas + toggles (F1
+  nomes, F2 vetores de velocidade); 6B-3 overlays geométricos (linha de
+  impedimento, linhas de formação). Desenho de cada um aprovado antes do
+  código.
+- **6B-1 — SAB versão 2 + HUD básico `[ALTERADO v2.1]`:**
+  - **Layout versão 2** (`magic = 0x464D0002`): a posição vai de 52 para
+    **56 palavras (224 bytes)**; buffer de 64 + 16 × 224 = **3.648
+    bytes**. Só acrescenta no fim; os campos do 6A não mudam de lugar.
+    - palavra 3, bits 16–23: período (0 = primeiro tempo, 1 = segundo);
+    - palavra 52: cartões, um byte cada — amarelos da casa, vermelhos da
+      casa, amarelos do visitante, vermelhos do visitante;
+    - palavras 53 e 54: ticks com a bola dominada pela casa e pelo
+      visitante, acumulados;
+    - palavra 55: reservada (zero).
+  - **De onde vêm:** `sab::Hud`, no worker, observa o motor depois de
+    cada tick (eventos novos de cartão; quem tem a bola dominada). O
+    `tick_logic` não muda. Teste: os contadores batem com a lista de
+    eventos e o estado da bola numa partida inteira (3 seeds).
+  - **HUD (DOM):** barra superior com nome dos times, cartões amarelos e
+    vermelhos de cada lado, placar, cronômetro e período; abaixo, a faixa
+    de posse com as duas porcentagens (somam 100; 50/50 antes da primeira
+    posse). Nenhuma função WASM de render nova.
+  - **`EngineHost::run_to(tick)`** (comando `runTo` do worker): roda a
+    partida até um tick exato e pausa. Necessário para o golden de pixel
+    ser reproduzível, já que a partida segue o relógio real.
+  - **Golden de pixel (só Chromium):** `tests/golden/chromium/match-hud.png`
+    — seed 7, tick 6.000 (09:59), página inteira, tolerância de 1%. A
+    referência é a imagem produzida pelo Chromium do CI (o job sobe
+    `tests/golden/<navegador>/` como artefato `golden-<navegador>`).
+  - **Testes:** Rust — layout (224 bytes, 3.648 no total, campos antigos
+    no lugar), ida-e-volta bit a bit com os campos novos, contadores do
+    HUD. Playwright — HUD contra o snapshot lido do anel (cartões, posse,
+    período), nos três navegadores; golden no Chromium.
 - `MatchSnapshot` POD em `SharedArrayBuffer`, com ring buffer duplo
   (`ffi/sab.rs`).
 - `fm-wasm` expõe `init_engine(seed)`, `tick_logic()`,
