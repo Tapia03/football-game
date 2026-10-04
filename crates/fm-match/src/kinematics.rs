@@ -234,6 +234,10 @@ impl PlayerKinematics {
         }
         // Reaction: a new intent (target moved more than the threshold)
         // keeps the old velocity for `reaction_ms`; one in progress goes on.
+        // The previous intent is where the player was sent (`Lead::intent`),
+        // not the end of the cruise leg: with limited turning that leg ends
+        // on the target's projection — next to the player on a sharp turn —
+        // and comparing against it restarted the reaction on every re-plan.
         #[allow(clippy::cast_precision_loss)] // ms intervals ≪ 2^24
         let elapsed_s = t_ms.saturating_sub(traj.t_start_ms) as f32 / 1000.0;
         let current_react = lead.map_or(0.0, |l| l.react_s);
@@ -242,7 +246,7 @@ impl PlayerKinematics {
             0.0
         } else if current_react > elapsed_s {
             current_react - elapsed_s
-        } else if traj.target.distance(target) > k.reaction_threshold {
+        } else if lead.map_or(traj.target, |l| l.intent).distance(target) > k.reaction_threshold {
             k.reaction_ms as f32 / 1000.0
         } else {
             0.0
@@ -509,5 +513,38 @@ mod tests {
             turn(),
         );
         assert!((traj.target - traj.start).normalize().x < -0.99);
+    }
+    /// A player sprinting one way and sent back the other way stops within a
+    /// second, re-planning every tick as the engine does. (The reaction used
+    /// to restart on every re-plan of a sharp turn, so he barely slowed.)
+    #[test]
+    fn a_sprinting_player_sent_back_stops_within_a_second() {
+        let k = physics();
+        let east = K::plan_trajectory(Vec2::new(50.0, 30.0), Vec2::new(90.0, 30.0), 7.0, 0);
+        let back = Vec2::new(40.0, 30.0);
+        let mut t = 1_000;
+        let from = K::pos_at(&east, t);
+        let (mut traj, mut lead) = K::steer((&east, None), from, back, 7.0, t, &k, turn());
+        let mut turned_at = None;
+        for tick in 1..=10 {
+            t += 100;
+            let pos = lead.pos(&traj, t);
+            if turned_at.is_none() && lead.vel(&traj, t).x <= 0.0 {
+                turned_at = Some(tick);
+            }
+            (traj, lead) = K::steer((&traj, Some(&lead)), pos, back, 7.0, t, &k, turn());
+        }
+        let pos = lead.pos(&traj, t);
+        let v = lead.vel(&traj, t);
+        assert!(
+            turned_at.is_some_and(|tick| tick <= 10),
+            "still running east after 1 s: {v:?}"
+        );
+        assert!(v.x < -3.0, "heading back by then: {v:?}");
+        assert!(
+            pos.x - from.x < 4.0,
+            "overshoot while turning: {} m",
+            pos.x - from.x
+        );
     }
 }
