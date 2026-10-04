@@ -43,9 +43,10 @@ Caminho A**, não o passo 2 do item 5.
 3. Item 9: construção desde a defesa. **Adiado** (com o item 7) até fechar
    o time-box em curso: (1) reinícios corrigidos e (2) re-medidos —
    feitos; (3) botes e (4) valor do passe medidos; bote recalibrado (5B).
-   **RETOMAR AQUI:** (5C) medir o custo real da condução com o limiar
-   novo (`carry_cost`); se subiu, corrigir a decisão do portador; se não,
-   parar e reportar.
+   5C medido: a saída forçada não reage (52%). Reescopo: execução do
+   passe primeiro ("5D"). **RETOMAR AQUI:** bug da reação em
+   `PlayerKinematics::steer` encontrado e medido em experimento (acerto
+   59% → 68%); aguardando decisão do usuário para aplicar.
 4. Refazer o item 5 (passe em profundidade) sobre a física nova.
 5. Itens 6–8 (apoio sem bola → drible 1×1 → tabela).
 Depois: (c2) calibração, (d) comportamentos por papel, PR `fase-5` → `main`.
@@ -89,6 +90,8 @@ iniciados.
 | (reverts) | Revert de `2915e96` e `53f017a` (defesa acompanha o corredor) |
 | `2915e96` | Defesa acompanha o corredor — **revertido** (614,9M, +2,67%) |
 | `53f017a` | SPEC do commit 2 — **revertido** |
+| `616b1f6` | Bote recalibrado: limiar 0,97 e cartões (602,4M, −1,28%) |
+| `ab66f15` | SPEC/STATE: varredura do bote e valores aplicados |
 | `b06c28e` | Medição: por que o passe vale 3× menos que conduzir |
 | `7be015d` | Medição: por que saem ~8 botes; perfil do custo dos reinícios |
 | `90f19b1` | CI guarda o perfil do callgrind; baseline 610.183.817 |
@@ -153,10 +156,9 @@ iniciados.
 - Contadores de diagnóstico (só com a feature `diagnostics`).
 
 ### Dívidas conhecidas
-- **Custo:** 610,2M instruções (610.183.817, commit `8b59e10`) ≈ 46,3 ms:
-  **17M acima da meta desejável de 45 ms (593M)**; folga de ~1,7 ms até o
-  critério de saída. O +2,10% da correção dos reinícios foi aceito com
-  perfil pendente (artefato `callgrind` do job de bench), dentro do critério de saída de (c)
+- **Custo:** 602,4M instruções (602.368.082, commit `616b1f6`) ≈ 45,7 ms:
+  **9M acima da meta desejável de 45 ms (593M)**; folga de ~2,3 ms até o
+  critério de saída. O job de bench guarda o perfil (artefato `callgrind`), dentro do critério de saída de (c)
   (≤ 48 ms ≈ 633M, decidido em 2026-10-03). Regra por commit: +1,5%.
 - **Execução de passes — dívida estrutural para depois de (c1)** (uma
   fase futura pega os três juntos):
@@ -255,11 +257,14 @@ Ver SPEC, Seção 0 e decisões das Fases 3–5. Os que mais pesam no dia a dia:
 ## Decisões pendentes
 - (decidido 2026-10-03) **Critério de saída de (c): ≤ 48 ms** pela régua
   (≤ ~633M instruções). A meta desejável continua 45 ms (~593M); o gate
-  de 50 ms (~660M) nunca foi violado pela régua de instruções. Hoje: 610,2M ≈
-  46,3 ms.
+  de 50 ms (~660M) nunca foi violado pela régua de instruções. Hoje: 602,4M ≈
+  45,7 ms.
 - **xT:** conferir a cópia contra `karun.in/blog/data/open_xt_12x8_v1.json`.
 
 ## Marcos
+- **2026-10-03 — a defesa tira a bola na frequência do futebol** (`616b1f6`):
+  74,5 botes e 21,3 faltas por partida (real ~70 / ~22), vermelhos 0,17
+  (real ~0,15), e custando menos instruções (−1,28%).
 - **2026-10-02 — pipeline ponta a ponta confirmado:** WASM → WebGL2 (glow) →
   Cloudflare Pages. O spike renderiza no navegador (campo, 22 jogadores,
   bola, "OK (5754 vértices)").
