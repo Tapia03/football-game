@@ -92,3 +92,24 @@ export function startMatch(seed: number, speed: number): Promise<MatchHandle> {
 
 export { SnapshotReader };
 export type { Frame } from './sab';
+
+// The canvas side (main thread): WebGL2 objects only. Every frame drawn is
+// read from the snapshot ring and handed in — no match state lives here.
+
+import { MatchCanvas } from './pkg/fm_wasm.js';
+
+/** Sizes `canvas` to its CSS box × devicePixelRatio (sharp on HiDPI). */
+export function fitCanvas(canvas: HTMLCanvasElement): void {
+  const dpr = globalThis.devicePixelRatio || 1;
+  canvas.width = Math.max(1, Math.round(canvas.clientWidth * dpr));
+  canvas.height = Math.max(1, Math.round(canvas.clientHeight * dpr));
+}
+
+/** Binds the mesh renderer to `canvas` (throws when WebGL2 is unavailable). */
+export async function openCanvas(canvas: HTMLCanvasElement): Promise<MatchCanvas> {
+  await ensureInit();
+  fitCanvas(canvas);
+  return new MatchCanvas(canvas.id);
+}
+
+export type { MatchCanvas };

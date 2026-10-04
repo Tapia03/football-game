@@ -123,9 +123,13 @@ export class SnapshotReader {
     return Atomics.load(this.ints, H_NOW);
   }
 
-  /** Real milliseconds since the worker last advanced the match. */
+  /**
+   * Real milliseconds since the worker last advanced the match (0 before
+   * its first step; never negative, whatever the two clocks' granularity).
+   */
   stalenessMs(): number {
-    return (wallClockMs() - Atomics.load(this.ints, H_STEP_WALL)) & 0x7fff_ffff;
+    const at = Atomics.load(this.ints, H_STEP_WALL);
+    return at === 0 ? 0 : Math.max(0, wallClockMs() - at);
   }
 
   /** Match time of snapshot `n` (only meaningful while it is in the ring). */

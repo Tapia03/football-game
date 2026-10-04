@@ -3,6 +3,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod mesh;
 pub mod sab;
 
 use wasm_bindgen::prelude::wasm_bindgen;
@@ -164,6 +165,67 @@ impl EngineHost {
         self.seq = self.seq.wrapping_add(1);
         #[allow(clippy::cast_possible_wrap)] // a counter: wrapping is fine
         let _ = js_sys::Atomics::store(&self.ints, sab::H_SEQ, self.seq as i32);
+    }
+}
+
+/// Triangle list of one frame (`[x, y, r, g, b, a]` per vertex, clip
+/// space) for a `width_px` × `height_px` canvas. Pure: the main thread
+/// passes what it read from the snapshot ring and interpolated — `xy` is
+/// x0, y0, x1, y1, … for the 22 players.
+#[wasm_bindgen]
+#[must_use]
+pub fn frame_mesh_vertices(
+    xy: &[f32],
+    ball_x: f32,
+    ball_y: f32,
+    ball_z: f32,
+    sent_off: u32,
+    width_px: u32,
+    height_px: u32,
+) -> Vec<f32> {
+    let frame = mesh::frame_from_parts(xy, [ball_x, ball_y, ball_z], sent_off);
+    mesh::frame_mesh(&frame, width_px, height_px).verts
+}
+
+/// The canvas the match is drawn on (main thread). It owns the WebGL2
+/// objects and nothing of the match: every frame is handed in.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub struct MatchCanvas {
+    renderer: fm_render::ffi::glow_backend::GlowMeshRenderer,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+impl MatchCanvas {
+    /// Binds to the canvas `canvas_id`.
+    ///
+    /// # Errors
+    /// When the canvas or WebGL2 is unavailable.
+    #[wasm_bindgen(constructor)]
+    pub fn new(canvas_id: &str) -> Result<MatchCanvas, String> {
+        Ok(Self {
+            renderer: fm_render::ffi::glow_backend::GlowMeshRenderer::new(canvas_id)?,
+        })
+    }
+
+    /// Draws one frame (see `frame_mesh_vertices`). Returns the vertex count.
+    ///
+    /// # Errors
+    /// When drawing fails.
+    pub fn draw(
+        &self,
+        xy: &[f32],
+        ball_x: f32,
+        ball_y: f32,
+        ball_z: f32,
+        sent_off: u32,
+    ) -> Result<u32, String> {
+        let (w, h) = self.renderer.size();
+        let frame = mesh::frame_from_parts(xy, [ball_x, ball_y, ball_z], sent_off);
+        let mesh = mesh::frame_mesh(&frame, w, h);
+        self.renderer.draw(mesh::BACKGROUND, &mesh.verts)?;
+        u32::try_from(mesh.vertex_count()).map_err(|_| "mesh too large".into())
     }
 }
 

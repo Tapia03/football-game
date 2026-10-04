@@ -1,5 +1,13 @@
 <script lang="ts">
-  import { loadEngineInfo, startMatch, type EngineInfo, type MatchHandle } from '../engine-bridge';
+  import {
+    fitCanvas,
+    loadEngineInfo,
+    openCanvas,
+    startMatch,
+    type EngineInfo,
+    type MatchCanvas,
+    type MatchHandle,
+  } from '../engine-bridge';
   import {
     SAMPLE_INTERVAL_MS,
     STATE_FINISHED,
@@ -25,6 +33,9 @@
   let score = $state('0 × 0');
   let status = $state('carregando…');
   let match: MatchHandle | undefined = $state();
+  let canvasEl: HTMLCanvasElement | undefined = $state();
+  /** 'ok' once a frame was drawn; the error when WebGL2 is unavailable. */
+  let render = $state('…');
 
   function formatClock(ms: number): string {
     const s = Math.floor(ms / 1000);
@@ -42,12 +53,39 @@
     // interval behind the worker's clock, plus however stale that clock is.
     const latency = { frames: 0, sumMs: 0, maxMs: 0 };
     (globalThis as { fmLatency?: typeof latency }).fmLatency = latency;
+    // The canvas holds WebGL2 objects only; the match is not here. Without
+    // WebGL2 the match still runs and the page says why nothing is drawn.
+    const el = canvasEl;
+    let canvas: MatchCanvas | undefined;
+    const onResize = (): void => {
+      if (el !== undefined) fitCanvas(el);
+    };
+    if (el !== undefined) {
+      openCanvas(el).then(
+        (c) => {
+          canvas = c;
+        },
+        (err: unknown) => {
+          render = `FALHOU: ${err instanceof Error ? err.message : String(err)}`;
+        },
+      );
+      addEventListener('resize', onResize);
+    }
     const tick = (): void => {
       if (handle === undefined || interpolator === undefined) return;
       const s = handle.reader.state();
       if (interpolator.at(interpolator.renderTimeMs(), frame)) {
         clock = formatClock(frame.tMs);
         score = `${frame.homeGoals} × ${frame.awayGoals}`;
+        if (canvas !== undefined) {
+          try {
+            canvas.draw(frame.xy, frame.ballX, frame.ballY, frame.ballZ, frame.sentOff);
+            render = 'ok';
+          } catch (err: unknown) {
+            render = `FALHOU: ${err instanceof Error ? err.message : String(err)}`;
+            canvas = undefined;
+          }
+        }
         if (s === STATE_RUNNING) {
           const ms = SAMPLE_INTERVAL_MS / speed + handle.reader.stalenessMs();
           latency.frames += 1;
@@ -76,6 +114,7 @@
     return () => {
       stopped = true;
       cancelAnimationFrame(raf);
+      removeEventListener('resize', onResize);
       handle?.stop();
     };
   });
@@ -102,8 +141,12 @@
     <span class="score" data-testid="match-score">{score}</span>
     <span class="clock" data-testid="match-clock">{clock}</span>
   </header>
+  <canvas id="match-canvas" bind:this={canvasEl}></canvas>
   <footer>
-    <span data-testid="match-status">{status}</span>
+    <span>
+      <span data-testid="match-status">{status}</span>
+      · render <span data-testid="match-render">{render}</span>
+    </span>
     <span class="speeds">
       {#each speeds as s (s)}
         <button class:active={speed === s} onclick={() => setSpeed(s)}>{s}×</button>
@@ -139,9 +182,17 @@
 
 <style>
   .match {
-    max-width: 48rem;
+    /* The pitch plus its margin is 113 × 76 m: as wide as fits with the
+       score bar and the controls still inside the viewport. */
+    width: min(100% - 2rem, calc((100vh - 8rem) * 113 / 76));
     margin: 0 auto;
     padding: 1rem;
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    aspect-ratio: 113 / 76;
+    margin-top: 0.5rem;
   }
   .match header,
   .match footer {
