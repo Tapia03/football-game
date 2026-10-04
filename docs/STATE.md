@@ -2,13 +2,18 @@
 
 Resumo de uma tela que sobrevive a compactações de sessão. A fonte de verdade
 de arquitetura e regras é o [`docs/SPEC.md`](SPEC.md); este arquivo só diz
-*onde estamos*. Atualizado em **2026-10-04** (fechamento de (c1) da Fase 5; PR `fase-5` → `main` aberto, aguardando merge).
+*onde estamos*. Atualizado em **2026-10-04** (Fase 5 (c1) mergeada; Fase 6 em andamento, parte 6A).
 
-## Fase atual — Fase 5 (c1) FECHADA, PR aberto
+## Fase atual — Fase 6 (render), parte 6A
+**Fase 6 — Snapshot + Renderer2D + Canvas**, branch `fase-6` (criada de
+`main` em `6ae001a`, depois do merge do PR #6). Partes: **6A** infra de
+render (worker + SAB + interpolação) → 6B HUD e overlays → 6C painel
+tático (mentalidade, tempo, pressing) → 6D câmera. 6C-bis (comportamentos
+por papel) fica para depois de (d). Desenho do 6A no SPEC, Fase 6.
+
+## Fase anterior — Fase 5 (c1), mergeada
 **Fase 5 — Role Behaviors**, branch `fase-5`. O usuário decidiu (2026-10-04)
-fechar (c1) no motor do 5D-2 (`f17b1d9`) e abrir o PR `fase-5` → `main`.
-**Depois do merge: Fase 6 (render completo).** Antes de começar a Fase 6,
-verificar que o PR foi mergeado (SPEC, Seção 0, item 5).
+fechar (c1) no motor do 5D-2 (`f17b1d9`); PR #6 mergeado em `6ae001a`.
 
 ### O que a fase entrega (motor de `f17b1d9`, 180 partidas por orientação)
 | Métrica por partida | Fase 5 (c1) | Real (aprox.) |
@@ -284,7 +289,8 @@ commit `d6f433a`).
 | Tapia03/football-game#2 | Fase 2 | mergeado |
 | Tapia03/football-game#4 | Fase 3 + SPEC v2.1 + glow | mergeado |
 | Tapia03/football-game#5 | Fase 4 | mergeado |
-| — | Fase 5 (`fase-5`) | aberto em 2026-10-04 ((c1) fechada); aguardando merge |
+| Tapia03/football-game#6 | Fase 5 (c1) | mergeado (`6ae001a`) |
+| — | Fase 6 (`fase-6`) | abre quando a fase fechar com CI verde |
 
 Branch `spike-render`: nunca mergeia (spike visual do render).
 

@@ -2066,6 +2066,58 @@ recalibrar contra a coluna "Real". As constantes estão em `AnchorTuning`,
   - Tight Marking: a distância média cai 2 m.
 
 ## FASE 6 — Snapshot + Renderer2D (glow/WebGL2) + Canvas `[ALTERADO v2.1]`
+- **Plano da Fase 6 em quatro partes (aprovado 2026-10-04)
+  `[ALTERADO v2.1]`:** 6A infra de render (worker + SAB + interpolação);
+  6B HUD e overlays básicos; 6C painel tático em tempo real (mentalidade,
+  tempo, pressing; critérios 3 e 5 dos aceites); 6D câmera. Os
+  comportamentos por papel (Overlap Left, Counter Attack, Tight Marking,
+  Offside Trap), as setas de instrução e o critério 4 ficam no **6C-bis,
+  depois de (d)**: não existem no motor e não entram como meia
+  implementação. Um push por commit; instruções > +1,5% ou bench
+  quebrado: parar.
+- **6A — desenho aprovado `[ALTERADO v2.1]`:**
+  - **Um estado de partida só, no worker.** `engine.worker.ts` instancia
+    o WASM com o `MatchEngine`, mantém o relógio da partida (tempo real ×
+    velocidade), roda `tick_logic` e publica snapshots no
+    `SharedArrayBuffer`. A main thread **não tem motor**: lê o SAB por
+    `Int32Array`/`Float32Array`, interpola em TypeScript e chama funções
+    WASM **puras** (montagem de malha, depois overlays) que recebem o
+    snapshot por parâmetro, mais o backend glow, que só guarda o contexto
+    GL. Reconsiderar só se um overlay do 6B precisar de estado do motor.
+  - **Sem threads no WASM.** O Rust não endereça o SAB como memória:
+    codifica o snapshot num buffer próprio e copia para uma visão
+    tipada criada sobre o SAB (API segura do `js-sys`). Não exige build
+    com atomics nem `unsafe` novo; `fm-render/src/ffi/sab.rs` continua
+    vazio.
+  - **Controle** (iniciar, pausar, velocidade, seed): `postMessage` da
+    main para o worker. O SAB só leva snapshots.
+  - **Layout do SAB** (little-endian; versão no cabeçalho):
+    - Cabeçalho, 64 bytes (16 × i32): `[0]` magic + versão, `[1]`
+      contador de escrita (atômico), `[2]` posições do anel (16), `[3]`
+      bytes por posição (208), `[4]` estado (rodando, pausado, fim),
+      `[5]` velocidade × 1000, `[6]` seed, `[7..16]` reservado.
+    - Posição, 208 bytes: i32 `tick`; i32 `t_ms`; i32 placar (um byte
+      por time); i32 fases dos dois times; i32 máscara de 22 bits dos
+      expulsos; f32 × 3 bola (x, y, z); f32 × 44 jogadores (x, y), na
+      ordem do motor. Lado e número saem do índice.
+    - Total: 64 + 16 × 208 = 3.392 bytes.
+  - **Anel sem locks, um escritor e um leitor:** o escritor grava a
+    posição `seq % 16` e só depois publica `seq + 1` com `Atomics.store`.
+    O leitor lê o contador, copia as posições de que precisa e confere o
+    contador de novo; se o escritor avançou 15 ou mais posições no meio,
+    repete.
+  - **60 snapshots por segundo, publicados adiantados:** logo depois de
+    cada `tick_logic` o worker grava os 6 instantes do LOD `Full` (0,
+    17, 33, 50, 67, 83 ms) do intervalo seguinte — as trajetórias são
+    funções puras do tempo dentro do tick. A main desenha um intervalo de
+    amostra atrás e interpola linearmente entre dois snapshots vizinhos.
+    Latência estimada tick → pixel: ~20–40 ms a 1×; medir no 6A e
+    revisar se passar de 50 ms. A alternativa de 10 snapshots por segundo
+    (100–120 ms) foi rejeitada.
+  - **Ordem dos commits:** (1) motor no worker + SAB; (2) grade de 60
+    por segundo; (3) render na main lendo o SAB e interpolando em TS;
+    (4) helpers de malha como funções WASM puras; (5) testes
+    (determinismo pelo SAB, latência medida, partida roda).
 - `MatchSnapshot` POD em `SharedArrayBuffer`, com ring buffer duplo
   (`ffi/sab.rs`).
 - `fm-wasm` expõe `init_engine(seed)`, `tick_logic()`,
@@ -2077,13 +2129,13 @@ recalibrar contra a coluna "Real". As constantes estão em `AnchorTuning`,
   - shapes procedurais com instancing.
 - A interpolação `prev`/`curr` fica na camada segura.
 - Reavaliar o `wasm-opt` (tamanho do binário).
-- **Estratégia de golden `[ALTERADO v2.1]`:**
-  - Comparação de pixel **só no Chromium**: o SwiftShader do CI é
-    renderizador por software determinístico.
-  - **Firefox e WebKit** rodam os mesmos testes de render **sem comparação
-    de pixel**, só para garantir que não quebram. O WebKit do CI informa
-    "Apple GPU", mas é máscara de privacidade: no Linux é software, e não se
-    sabe se é estável entre runs.
+- **Estratégia de golden `[ALTERADO v2.1]` (confirmada em 2026-10-04):**
+  - **Chromium: golden de pixel completo**, a partir do 6B. O SwiftShader
+    do CI é renderizador por software determinístico.
+  - **Firefox e WebKit: rodam os mesmos testes sem comparar pixel**; o
+    teste falha se a página quebrar ou o render der erro. O WebKit do CI
+    informa "Apple GPU", mas é máscara de privacidade: no Linux é
+    software, e não se sabe se é estável entre runs.
   - **Firefox no CI não tem WebGL** (ver 0.1): os testes de render são
     pulados nele, e a cobertura do Firefox fica na validação manual.
   - Isso substitui o item 8 da Seção 0 para screenshots de render.
