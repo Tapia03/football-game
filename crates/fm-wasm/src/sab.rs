@@ -7,6 +7,7 @@
 //! header, 16 × i32:  [0] magic+version  [1] write sequence (atomic)
 //!                    [2] ring slots     [3] bytes per slot
 //!                    [4] state          [5] speed × 1000   [6] seed
+//!                    [7] match clock of the worker (ms)
 //! slot, 52 words:    [0] tick  [1] t_ms  [2] score (home | away << 8)
 //!                    [3] phases (home | away << 8)
 //!                    [4] sent-off mask (bit i = player i)
@@ -18,7 +19,7 @@
 //! it into a typed-array view of the buffer. Nothing here touches memory.
 
 use fm_core::{Vec2, Vec3};
-use fm_match::{MatchSnapshot, Phase};
+use fm_match::{LodLevel, MatchEngine, MatchSnapshot, Phase};
 
 /// `"FM"` and the layout version (bump on any layout change).
 pub const MAGIC: u32 = 0x464D_0001;
@@ -38,6 +39,9 @@ pub const H_SLOT_BYTES: u32 = 3;
 pub const H_STATE: u32 = 4;
 pub const H_SPEED: u32 = 5;
 pub const H_SEED: u32 = 6;
+/// The worker's match clock (ms since kick-off), updated on every step:
+/// the main thread renders one sample interval behind it.
+pub const H_NOW: u32 = 7;
 
 pub const STATE_RUNNING: i32 = 1;
 pub const STATE_PAUSED: i32 = 2;
@@ -89,6 +93,25 @@ pub fn encode(s: &MatchSnapshot) -> [u32; SLOT_WORDS] {
     w
 }
 
+/// Snapshots published per logical tick: the 60 Hz grid of LOD `Full`.
+pub const SAMPLES_PER_TICK: usize = 6;
+
+/// The snapshots of the tick the engine has just run, ahead of time: the
+/// six instants of LOD `Full` inside the coming 100 ms (0, 17, 33, 50, 67,
+/// 83 ms). Trajectories are pure functions of time inside a tick, so the
+/// whole interval is known as soon as the tick has run.
+#[must_use]
+pub fn tick_frames(engine: &MatchEngine) -> [[u32; SLOT_WORDS]; SAMPLES_PER_TICK] {
+    let now = engine.state().now_ms();
+    let mut out = [[0_u32; SLOT_WORDS]; SAMPLES_PER_TICK];
+    for (slot, off) in out.iter_mut().zip(LodLevel::Full.sample_offsets_ms()) {
+        if let Some(snap) = engine.sample(LodLevel::Full, now + off) {
+            *slot = encode(&snap);
+        }
+    }
+    out
+}
+
 /// What a reader gets back from a slot.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Frame {
@@ -132,7 +155,6 @@ pub fn decode(w: &[u32; SLOT_WORDS]) -> Frame {
 mod tests {
     use super::*;
     use fm_match::demo::demo_match;
-    use fm_match::{LodLevel, MatchEngine};
 
     #[test]
     fn layout_sizes_are_the_ones_in_the_spec() {
@@ -176,5 +198,43 @@ mod tests {
             [u32::from(f.phases[0]), u32::from(f.phases[1])],
             [phase_code(snap.phases[0]), phase_code(snap.phases[1])]
         );
+    }
+    /// Each tick publishes six snapshots 16–17 ms apart, and the grid has no
+    /// gap across ticks (83 ms → the next tick's 0 ms is 17 ms later).
+    #[test]
+    fn a_tick_publishes_the_sixty_hertz_grid() {
+        assert_eq!(
+            LodLevel::Full.sample_offsets_ms().len(),
+            SAMPLES_PER_TICK,
+            "one slot per Full offset"
+        );
+        let (db, setup) = demo_match(7);
+        let mut e = MatchEngine::new(&setup, &db);
+        let mut stamps = Vec::new();
+        let mut moved = false;
+        for _ in 0..50 {
+            e.tick_logic();
+            let frames = tick_frames(&e).map(|w| decode(&w));
+            // The first sample is the tick itself, bit for bit.
+            let at_tick = e
+                .sample(LodLevel::Reduced, e.state().now_ms())
+                .expect("snapshot");
+            assert_eq!(encode(&at_tick), encode_frame_check(&frames[0], &at_tick));
+            moved |= frames[0].players != frames[5].players;
+            stamps.extend(frames.iter().map(|f| f.t_ms));
+        }
+        assert!(moved, "players move between the sub-samples");
+        for pair in stamps.windows(2) {
+            let step = pair[1] - pair[0];
+            assert!((16..=17).contains(&step), "grid step {step} ms");
+        }
+    }
+
+    /// `encode(snap)` if `frame` is the decoded `snap` (keeps the assert
+    /// above a bit-for-bit comparison).
+    fn encode_frame_check(frame: &Frame, snap: &MatchSnapshot) -> [u32; SLOT_WORDS] {
+        let w = encode(snap);
+        assert_eq!(decode(&w), *frame);
+        w
     }
 }

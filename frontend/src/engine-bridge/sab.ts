@@ -16,6 +16,12 @@ export const H_SLOT_BYTES = 3;
 export const H_STATE = 4;
 export const H_SPEED = 5;
 export const H_SEED = 6;
+/** The worker's match clock (ms since kick-off). */
+export const H_NOW = 7;
+
+/** Snapshots per logical tick (the 60 Hz grid) and their spacing. */
+export const SAMPLES_PER_TICK = 6;
+export const SAMPLE_INTERVAL_MS = 100 / SAMPLES_PER_TICK;
 
 export const STATE_RUNNING = 1;
 export const STATE_PAUSED = 2;
@@ -100,6 +106,11 @@ export class SnapshotReader {
 
   state(): number {
     return Atomics.load(this.ints, H_STATE);
+  }
+
+  /** The worker's match clock (ms since kick-off). */
+  clockMs(): number {
+    return Atomics.load(this.ints, H_NOW);
   }
 
   header(index: number): number {

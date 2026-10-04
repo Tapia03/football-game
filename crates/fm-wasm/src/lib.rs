@@ -104,7 +104,8 @@ impl EngineHost {
     }
 
     /// Advances match time by `match_ms` milliseconds, running every
-    /// logical tick it covers and publishing each one.
+    /// logical tick it covers and publishing each one's 60 Hz samples, then
+    /// publishes the match clock.
     pub fn advance(&mut self, match_ms: f64) {
         if self.engine.is_finished() || match_ms <= 0.0 {
             return;
@@ -120,6 +121,8 @@ impl EngineHost {
             self.match_ms = f64::from(self.engine.state().now_ms());
             let _ = js_sys::Atomics::store(&self.ints, sab::H_STATE, sab::STATE_FINISHED);
         }
+        #[allow(clippy::cast_possible_truncation)] // < 2^31 ms: a match is 5.4e6 ms
+        let _ = js_sys::Atomics::store(&self.ints, sab::H_NOW, self.match_ms as i32);
     }
 
     #[must_use]
@@ -142,23 +145,22 @@ impl EngineHost {
 
 #[cfg(target_arch = "wasm32")]
 impl EngineHost {
-    /// Publishes the snapshot(s) of the tick just run.
+    /// Publishes the snapshots of the tick just run: its whole 100 ms at
+    /// 60 Hz, ahead of time (see `sab::tick_frames`).
     fn publish_tick(&mut self) {
-        let now = self.engine.state().now_ms();
-        if let Some(snap) = self.engine.sample(fm_match::LodLevel::Reduced, now) {
-            self.publish(&snap);
+        for words in sab::tick_frames(&self.engine) {
+            self.publish(&words);
         }
     }
 
     /// Writes one snapshot into the next ring slot, then makes it visible
     /// by storing the new sequence: a reader never sees a half-written
     /// slot as the latest one.
-    fn publish(&mut self, snap: &fm_match::MatchSnapshot) {
-        let words = sab::encode(snap);
+    fn publish(&mut self, words: &[u32; sab::SLOT_WORDS]) {
         let at = sab::slot_offset(self.seq);
         self.words
             .subarray(at, at + sab::SLOT_WORDS_U32)
-            .copy_from(&words);
+            .copy_from(words);
         self.seq = self.seq.wrapping_add(1);
         #[allow(clippy::cast_possible_wrap)] // a counter: wrapping is fine
         let _ = js_sys::Atomics::store(&self.ints, sab::H_SEQ, self.seq as i32);
