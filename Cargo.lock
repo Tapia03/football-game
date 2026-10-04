@@ -243,6 +243,7 @@ dependencies = [
  "fm-entities",
  "fm-match",
  "fm-render",
+ "js-sys",
  "wasm-bindgen",
  "wasm-bindgen-test",
 ]

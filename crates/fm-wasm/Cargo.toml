@@ -12,11 +12,15 @@ crate-type = ["cdylib", "rlib"]
 fm-core.workspace = true
 wasm-bindgen.workspace = true
 fm-render.workspace = true
+# Fase 6: the engine worker runs the match and publishes its snapshots.
+fm-match.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys.workspace = true
 
 [dev-dependencies]
 wasm-bindgen-test.workspace = true
 fm-entities.workspace = true
-fm-match.workspace = true
 
 [lints]
 workspace = true

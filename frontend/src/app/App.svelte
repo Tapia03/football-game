@@ -1,50 +1,160 @@
 <script lang="ts">
-  import { loadEngineInfo, type EngineInfo } from '../engine-bridge';
+  import { loadEngineInfo, startMatch, type EngineInfo, type MatchHandle } from '../engine-bridge';
+  import { STATE_FINISHED, STATE_PAUSED, newFrame } from '../engine-bridge/sab';
 
   type State =
     | { readonly kind: 'loading' }
     | { readonly kind: 'ready'; readonly info: EngineInfo }
     | { readonly kind: 'error'; readonly message: string };
 
-  let state: State = $state({ kind: 'loading' });
+  let boot: State = $state({ kind: 'loading' });
+
+  // Fase 6 (6A): the match runs in the engine worker; the page only reads
+  // the snapshot ring.
+  const seed = Number(new URLSearchParams(location.search).get('seed') ?? '7') || 7;
+  const speeds = [1, 10, 30, 60] as const;
+  let speed: number = $state(10);
+  let clock = $state('00:00');
+  let score = $state('0 × 0');
+  let status = $state('carregando…');
+  let match: MatchHandle | undefined = $state();
+
+  function formatClock(ms: number): string {
+    const s = Math.floor(ms / 1000);
+    const pad = (v: number): string => String(v).padStart(2, '0');
+    return `${pad(Math.floor(s / 60))}:${pad(s % 60)}`;
+  }
+
+  $effect(() => {
+    let raf = 0;
+    let handle: MatchHandle | undefined;
+    let stopped = false;
+    const frame = newFrame();
+    const tick = (): void => {
+      if (handle === undefined) return;
+      if (handle.reader.latest(frame)) {
+        clock = formatClock(frame.tMs);
+        score = `${frame.homeGoals} × ${frame.awayGoals}`;
+      }
+      const s = handle.reader.state();
+      status = s === STATE_FINISHED ? 'fim de jogo' : s === STATE_PAUSED ? 'pausado' : 'ao vivo';
+      raf = requestAnimationFrame(tick);
+    };
+    startMatch(seed, 10).then(
+      (h) => {
+        if (stopped) {
+          h.stop();
+          return;
+        }
+        handle = h;
+        match = h;
+        raf = requestAnimationFrame(tick);
+      },
+      (err: unknown) => {
+        status = `FALHOU: ${err instanceof Error ? err.message : String(err)}`;
+      },
+    );
+    return () => {
+      stopped = true;
+      cancelAnimationFrame(raf);
+      handle?.stop();
+    };
+  });
+
+  function setSpeed(value: number): void {
+    speed = value;
+    match?.setSpeed(value);
+  }
 
   $effect(() => {
     loadEngineInfo().then(
       (info) => {
-        state = { kind: 'ready', info };
+        boot = { kind: 'ready', info };
       },
       (err: unknown) => {
-        state = { kind: 'error', message: err instanceof Error ? err.message : String(err) };
+        boot = { kind: 'error', message: err instanceof Error ? err.message : String(err) };
       },
     );
   });
 </script>
 
+<section class="match" data-testid="match">
+  <header>
+    <span class="score" data-testid="match-score">{score}</span>
+    <span class="clock" data-testid="match-clock">{clock}</span>
+  </header>
+  <footer>
+    <span data-testid="match-status">{status}</span>
+    <span class="speeds">
+      {#each speeds as s (s)}
+        <button class:active={speed === s} onclick={() => setSpeed(s)}>{s}×</button>
+      {/each}
+    </span>
+    <span class="seed">seed {seed}</span>
+  </footer>
+</section>
+
 <main>
-  {#if state.kind === 'loading'}
+  {#if boot.kind === 'loading'}
     <p data-testid="status">Carregando engine…</p>
-  {:else if state.kind === 'error'}
-    <p data-testid="status" class="err">Falha ao carregar WASM: {state.message}</p>
+  {:else if boot.kind === 'error'}
+    <p data-testid="status" class="err">Falha ao carregar WASM: {boot.message}</p>
   {:else}
-    <h1 data-testid="hello">{state.info.greeting}</h1>
+    <h1 data-testid="hello">{boot.info.greeting}</h1>
     <dl>
       <dt>libm parity (golden nativo vs WASM)</dt>
-      <dd data-testid="libm-parity" class={state.info.libmMismatches === 0 ? 'ok' : 'err'}>
-        {state.info.libmMismatches === 0 ? 'OK' : `${state.info.libmMismatches} divergências`}
+      <dd data-testid="libm-parity" class={boot.info.libmMismatches === 0 ? 'ok' : 'err'}>
+        {boot.info.libmMismatches === 0 ? 'OK' : `${boot.info.libmMismatches} divergências`}
       </dd>
       <dt>crossOriginIsolated (SharedArrayBuffer)</dt>
-      <dd data-testid="coi" class={state.info.crossOriginIsolated ? 'ok' : 'err'}>
-        {state.info.crossOriginIsolated ? 'true' : 'false'}
+      <dd data-testid="coi" class={boot.info.crossOriginIsolated ? 'ok' : 'err'}>
+        {boot.info.crossOriginIsolated ? 'true' : 'false'}
       </dd>
       <dt>WebGL2 (glow, shader)</dt>
-      <dd data-testid="webgl2" class={state.info.webgl2.ok ? 'ok' : 'err'}>
-        {state.info.webgl2.ok ? 'OK' : `FALHOU: ${state.info.webgl2.detail}`}
+      <dd data-testid="webgl2" class={boot.info.webgl2.ok ? 'ok' : 'err'}>
+        {boot.info.webgl2.ok ? 'OK' : `FALHOU: ${boot.info.webgl2.detail}`}
       </dd>
     </dl>
   {/if}
 </main>
 
 <style>
+  .match {
+    max-width: 48rem;
+    margin: 0 auto;
+    padding: 1rem;
+  }
+  .match header,
+  .match footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+  }
+  .score,
+  .clock {
+    font-size: 1.5rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+  .match footer {
+    color: var(--muted);
+    font-size: 0.875rem;
+    margin-top: 0.5rem;
+  }
+  .speeds button {
+    background: transparent;
+    color: inherit;
+    border: 1px solid var(--muted);
+    border-radius: 4px;
+    padding: 0.125rem 0.5rem;
+    margin: 0 0.125rem;
+    cursor: pointer;
+  }
+  .speeds button.active {
+    background: var(--muted);
+    color: var(--bg);
+  }
   main {
     max-width: 48rem;
     margin: 0 auto;

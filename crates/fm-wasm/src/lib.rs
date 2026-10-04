@@ -3,6 +3,8 @@
 
 #![forbid(unsafe_code)]
 
+pub mod sab;
+
 use wasm_bindgen::prelude::wasm_bindgen;
 
 /// Greeting shown by the bootstrap page; pi comes from libm inside WASM.
@@ -44,6 +46,123 @@ pub fn webgl2_smoke() -> Result<Vec<u8>, String> {
 #[must_use]
 pub fn webgl2_smoke_expected() -> Vec<u8> {
     fm_render::ffi::glow_backend::SMOKE_EXPECTED_RGBA.to_vec()
+}
+
+/// The match, living in the engine worker (spec Fase 6, 6A): the only
+/// `MatchEngine` of the page. It advances with match time and publishes
+/// its snapshots in the `SharedArrayBuffer` ring (`sab`); the main thread
+/// only reads that buffer.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub struct EngineHost {
+    engine: fm_match::MatchEngine,
+    match_ms: f64,
+    /// Snapshots written so far (the ring's write sequence).
+    seq: u32,
+    ints: js_sys::Int32Array,
+    words: js_sys::Uint32Array,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+impl EngineHost {
+    /// Demo match `seed`, publishing into `buffer` (at least
+    /// `sab::BUFFER_BYTES` long). Writes the header and the kick-off
+    /// snapshot.
+    ///
+    /// # Errors
+    /// When the buffer is too small for the ring.
+    #[wasm_bindgen(constructor)]
+    pub fn new(seed: u32, buffer: &js_sys::SharedArrayBuffer) -> Result<EngineHost, String> {
+        if buffer.byte_length() < sab::BUFFER_BYTES {
+            return Err(format!(
+                "snapshot buffer has {} bytes, needs {}",
+                buffer.byte_length(),
+                sab::BUFFER_BYTES
+            ));
+        }
+        let (db, setup) = fm_match::demo::demo_match(u64::from(seed));
+        let mut host = Self {
+            engine: fm_match::MatchEngine::new(&setup, &db),
+            match_ms: 0.0,
+            seq: 0,
+            ints: js_sys::Int32Array::new(buffer),
+            words: js_sys::Uint32Array::new(buffer),
+        };
+        let header = [
+            (sab::H_MAGIC, sab::MAGIC),
+            (sab::H_SEQ, 0),
+            (sab::H_SLOTS, sab::RING_SLOTS),
+            (sab::H_SLOT_BYTES, sab::SLOT_BYTES),
+            (sab::H_SEED, seed),
+        ];
+        for (i, v) in header {
+            host.words.set_index(i, v);
+        }
+        host.publish_tick();
+        Ok(host)
+    }
+
+    /// Advances match time by `match_ms` milliseconds, running every
+    /// logical tick it covers and publishing each one.
+    pub fn advance(&mut self, match_ms: f64) {
+        if self.engine.is_finished() || match_ms <= 0.0 {
+            return;
+        }
+        self.match_ms += match_ms;
+        while !self.engine.is_finished()
+            && f64::from(self.engine.state().now_ms() + fm_match::LOGICAL_DT_MS) <= self.match_ms
+        {
+            self.engine.tick_logic();
+            self.publish_tick();
+        }
+        if self.engine.is_finished() {
+            self.match_ms = f64::from(self.engine.state().now_ms());
+            let _ = js_sys::Atomics::store(&self.ints, sab::H_STATE, sab::STATE_FINISHED);
+        }
+    }
+
+    #[must_use]
+    pub fn finished(&self) -> bool {
+        self.engine.is_finished()
+    }
+
+    /// Logical time of the match (ms since kick-off).
+    #[must_use]
+    pub fn clock_ms(&self) -> u32 {
+        self.engine.state().now_ms()
+    }
+
+    /// Snapshots published so far.
+    #[must_use]
+    pub fn sequence(&self) -> u32 {
+        self.seq
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl EngineHost {
+    /// Publishes the snapshot(s) of the tick just run.
+    fn publish_tick(&mut self) {
+        let now = self.engine.state().now_ms();
+        if let Some(snap) = self.engine.sample(fm_match::LodLevel::Reduced, now) {
+            self.publish(&snap);
+        }
+    }
+
+    /// Writes one snapshot into the next ring slot, then makes it visible
+    /// by storing the new sequence: a reader never sees a half-written
+    /// slot as the latest one.
+    fn publish(&mut self, snap: &fm_match::MatchSnapshot) {
+        let words = sab::encode(snap);
+        let at = sab::slot_offset(self.seq);
+        self.words
+            .subarray(at, at + sab::SLOT_WORDS_U32)
+            .copy_from(&words);
+        self.seq = self.seq.wrapping_add(1);
+        #[allow(clippy::cast_possible_wrap)] // a counter: wrapping is fine
+        let _ = js_sys::Atomics::store(&self.ints, sab::H_SEQ, self.seq as i32);
+    }
 }
 
 #[cfg(test)]

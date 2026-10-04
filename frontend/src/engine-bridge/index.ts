@@ -47,3 +47,48 @@ export async function loadEngineInfo(): Promise<EngineInfo> {
     webgl2: probeWebGl2(),
   };
 }
+
+// ---------------------------------------------------------------------------
+// Fase 6 (6A): the match runs in the engine worker and publishes snapshots
+// into a SharedArrayBuffer; this side only sends commands and reads.
+
+import type { EngineCommand, EngineEvent } from '../workers/engine.worker';
+import { SnapshotReader, newSnapshotBuffer } from './sab';
+
+export type MatchHandle = {
+  readonly reader: SnapshotReader;
+  setSpeed(speed: number): void;
+  pause(): void;
+  resume(): void;
+  stop(): void;
+};
+
+/**
+ * Starts demo match `seed` in a fresh engine worker at `speed` × real time.
+ * Resolves once the worker has written the header and the first snapshot.
+ */
+export function startMatch(seed: number, speed: number): Promise<MatchHandle> {
+  const buffer = newSnapshotBuffer();
+  const worker = new Worker(new URL('../workers/engine.worker.ts', import.meta.url), {
+    type: 'module',
+  });
+  const send = (command: EngineCommand): void => worker.postMessage(command);
+  const handle: MatchHandle = {
+    reader: new SnapshotReader(buffer),
+    setSpeed: (value) => send({ type: 'speed', speed: value }),
+    pause: () => send({ type: 'pause' }),
+    resume: () => send({ type: 'resume' }),
+    stop: () => worker.terminate(),
+  };
+  return new Promise((resolve, reject) => {
+    worker.addEventListener('message', (e: MessageEvent<EngineEvent>) => {
+      if (e.data.type === 'ready') resolve(handle);
+      else reject(new Error(e.data.message));
+    });
+    worker.addEventListener('error', (e) => reject(new Error(e.message)));
+    send({ type: 'start', seed, speed, buffer });
+  });
+}
+
+export { SnapshotReader };
+export type { Frame } from './sab';
