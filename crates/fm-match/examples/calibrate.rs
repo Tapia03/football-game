@@ -45,6 +45,10 @@ fn apply(t: &mut TuningParams, key: &str, v: f32) {
         "challenge_threshold" => t.defending.challenge_threshold = v,
         "w_fresh" => t.defending.w_fresh = v,
         "foul_base" => t.discipline.foul_base = v,
+        "booked_factor" => t.discipline.booked_factor = v,
+        "red_direct" => t.discipline.red_direct = v,
+        "yellow_base" => t.discipline.yellow_base = v,
+        "yellow_aggression" => t.discipline.yellow_aggression = v,
         "on_target_base" => t.shot.on_target_base = v,
         "intercept_radius" => t.control.intercept_radius = v,
         "control_base" => t.control.base = v,
@@ -66,6 +70,8 @@ fn main() {
     let (mut goals, mut shots, mut on, mut passes, mut ok, mut tackles, mut fouls) =
         (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
     let mut dead = 0.0;
+    // Discipline: yellow and red cards, penalties awarded.
+    let (mut yellows, mut reds, mut penalties) = (0.0, 0.0, 0.0);
     let mut decisions = 0.0;
     let mut throughs = 0.0;
     let (mut through_ok, mut passes_all, mut passes_ok_all) = (0.0, 0.0, 0.0);
@@ -228,6 +234,17 @@ fn main() {
                     }
                 }
                 EventKind::Foul { .. } => fouls += 1.0,
+                EventKind::Card { card, .. } => {
+                    if card == fm_match::CardKind::Red {
+                        reds += 1.0;
+                    } else {
+                        yellows += 1.0;
+                    }
+                }
+                EventKind::Restart {
+                    kind: fm_match::RestartKind::Penalty,
+                    ..
+                } => penalties += 1.0,
                 _ => {}
             }
         }
@@ -243,7 +260,7 @@ fn main() {
     }
     let n = f64::from(n);
     println!(
-        "goals {:.2} | shots {:.1} ({:.1}) | passes {:.0} ({:.0}%) | tackles {:.0} | fouls {:.1} | dead {:.0}%",
+        "goals {:.2} | shots {:.1} ({:.1}) | passes {:.0} ({:.0}%) | tackles {:.1} | fouls {:.1} | dead {:.0}%",
         goals / n,
         shots / n,
         on / n,
@@ -252,6 +269,13 @@ fn main() {
         tackles / n,
         fouls / n,
         100.0 * dead / n
+    );
+    println!(
+        "  discipline: fouls per tackle {:.0}% | yellows {:.2} | reds {:.2} | penalties {:.2}",
+        100.0 * fouls / f64::max(tackles, 1.0),
+        yellows / n,
+        reds / n,
+        penalties / n
     );
     let fmt = |h: &[u64; 6]| {
         let t: u64 = h.iter().sum::<u64>().max(1);
