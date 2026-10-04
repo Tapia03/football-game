@@ -1865,6 +1865,26 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
       chute (0,236).
     - A estimativa da decisão e a execução se aproximam: receptor com
       adversário a 6–12 m domina 76,0% (estimado 75,3%).
+- **Fechamento de (c1) da Fase 5 (decisão do usuário, 2026-10-04)
+  `[ALTERADO v2.1]`:**
+  - O motor de (c1) é o do 5D-2 (`f17b1d9`): acerto de passe 68,5%, 70,8
+    botes e 19,4 faltas por partida, 590,4M instruções (≈ 44,8 ms).
+  - **5D-3 não fecha dentro de (c1).** A correção do passe pelo alto
+    (altura da bola em `intercept_point`) está certa, mas sem contraparte
+    defensiva leva os gols a 8,5 por partida. Fica como patch pronto
+    (`docs/patches/intercept-point-height.patch`), não aplicado. Relaxar
+    o teste para aplicá-la foi rejeitado: 8,5 gols é visivelmente irreal.
+  - **Fase futura "Bola longa + contraparte defensiva"** (sem prazo):
+    pré-requisito é aplicar o patch; escopo é goleiro saindo do gol,
+    impedimento apitado com tiro livre, e marcação de corredores
+    redesenhada; sucesso é gols ≤ 3,5 por partida com o patch aplicado.
+  - **Não entregues nesta fase:** (c2) calibração, (d) comportamentos por
+    papel e os testes da Fase 5 listados abaixo (Overlap, Pressing,
+    Counter Attack, Tight Marking), os itens 6–9 de (c1) e o passe em
+    profundidade (desligado). A saída forçada (52–53%) vira frente da
+    Fase 6 ou de fase própria. Para (c2): vermelhos 0,22 e a assimetria
+    de posse 4-4-2 × 4-3-3 (~60%, estrutural, do `plan_shape`).
+  - PR `fase-5` → `main`; depois do merge, Fase 6 (render completo).
 - **Sinais registrados (não calibrar agora):**
   - **Posse do mandante:** 73% (arcade) → 56,9% (física no lance) →
     42,5% (física + engajamento). A assimetria mudou com a física, não com

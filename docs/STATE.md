@@ -2,58 +2,81 @@
 
 Resumo de uma tela que sobrevive a compactações de sessão. A fonte de verdade
 de arquitetura e regras é o [`docs/SPEC.md`](SPEC.md); este arquivo só diz
-*onde estamos*. Atualizado em **2026-10-03** (passo 2 do Caminho A: commit 1 feito, commit 2 revertido; próximo: item 9).
+*onde estamos*. Atualizado em **2026-10-04** (fechamento de (c1) da Fase 5; PR `fase-5` → `main` aberto, aguardando merge).
 
-## Fase atual — em andamento
-**Fase 5 — Role Behaviors**, branch `fase-5` (sem PR aberto). Ponto de
-retorno da pausa: `6e65012` (a tag `pre-pause-fase5-item5` ainda não
-existe no remoto; o usuário vai criá-la nesse commit). O código é o de
-`19e7194` (o commit 2 do passo 2 foi revertido): CI verde em todos os
-jobs em `692f5af`, inclusive paridade WASM e bench.
+## Fase atual — Fase 5 (c1) FECHADA, PR aberto
+**Fase 5 — Role Behaviors**, branch `fase-5`. O usuário decidiu (2026-10-04)
+fechar (c1) no motor do 5D-2 (`f17b1d9`) e abrir o PR `fase-5` → `main`.
+**Depois do merge: Fase 6 (render completo).** Antes de começar a Fase 6,
+verificar que o PR foi mergeado (SPEC, Seção 0, item 5).
 
-### Onde exatamente paramos
-Há **duas numerações de "passo"** diferentes. Não confundir:
-- **Passos do Caminho A** (a ordem de (c1), abaixo). O **passo 2** ficou
-  incompleto de propósito: engajamento e corrida decidida (gatilho + teto)
-  feitos; "defesa acompanha o corredor" foi tentado e **revertido**
-  (abaixo); "goleiro saindo do gol" não foi iniciado. **Próximo: passo 3
-  (item 9, construção desde a defesa).**
-- **Passos do item 5** (passe em profundidade). Passo 1 (`lofted_lane`)
-  ligado; passo 2 (tempo de chegada + corredor legal) implementado e
-  **desligado**. O item 5 não andou desde então: ele é refeito no **passo 4
-  do Caminho A**, sobre a física nova.
+### O que a fase entrega (motor de `f17b1d9`, 180 partidas por orientação)
+| Métrica por partida | Fase 5 (c1) | Real (aprox.) |
+|---|---|---|
+| Passes (acerto) | 970 (68,5%) | 900 (80%) |
+| Botes / faltas | 70,8 / 19,4 | 70 / 22 |
+| Amarelos / vermelhos | 2,86 / 0,22 | 4 / 0,15 |
+| Pênaltis | 0,005 | 0,3 |
+| Chutes (no alvo) | 26,4 (8,1) | 25 (9) |
+| Gols | 4,43 | 2,7 |
+| Saída forçada (passes na trava dos 5,5 s) | 52–53% | — |
+| Bola parada | 3% | ~35% |
+| Posse do 4-4-2 contra 4-3-3 (casa / fora) | 59,7% / 60,7% | — |
+| Custo de `tick_logic` | 590,4M instruções ≈ 44,8 ms | meta 45 ms |
 
-A física no lance e o engajamento (`5d34253`) são os **passos 1–2 do
-Caminho A**, não o passo 2 do item 5.
+- Física coerente: reação, aceleração, giro e chegada só para quem está
+  no lance; reação em `steer` corrigida; reinícios dentro das linhas.
+- Defesa que tira a bola na frequência do futebol (limiar do bote 1,01).
+- Estimativa do passe alinhada à execução no bloqueio da linha.
+- Ferramentas de medição em `crates/fm-match/examples/` (`calibrate`,
+  `pass_failures`, `buildup_stats`, `forced_release`, `option_breakdown`,
+  `carry_cost`, `tackle_stats`).
 
-### Caminho A (ordem aprovada)
-1. Física de movimento — **feito** (`8e5e7e8` + `5d34253`): reação,
-   aceleração, giro e chegada (15 m/s² / 80 ms / 15 rad/s), só para quem
-   está no lance; o resto arcade na cadência 3.
-2. Defesa ajustada à física — **parcial, suspenso.** Feito: engajamento (o
-   escolhido pela nota do bote, a até 4,5 m, parte para cima; o bote sai a
-   1,8 m); corrida decidida (`19e7194`: gatilho + teto de 1 corredor por
-   time; corredores por tick 0,86 → 0,49). **Revertido:** defesa acompanha
-   o corredor (ver "Tentativa revertida"). Revisitar depois do item 9,
-   com o estimador de custo corrigido.
-2.5. **Goleiro saindo do gol** (defesa: sai para interceptar, corta
-   cruzamento, joga como líbero). Não é o "goleiro como receptor" do
-   item 9. Entra **depois do item 9 e antes do item 5 refeito**, quando a
-   dinâmica de profundidade estabilizar.
-3. Item 9: construção desde a defesa. **Adiado** (com o item 7) até fechar
-   o time-box em curso: (1) reinícios corrigidos e (2) re-medidos —
-   feitos; (3) botes e (4) valor do passe medidos; bote recalibrado (5B).
-   5C medido: a saída forçada não reage (52%). Reescopo: execução do
-   passe primeiro ("5D"). 5D-2 aplicado: correção da reação em `steer` +
-   bote em 1,01 (acerto 59% → 68,5%). **RETOMAR AQUI:** 5D-3 (passe pelo alto):
-   causa encontrada (`intercept_point` ignora a altura da bola) e
-   correção medida, **não aplicada**: o acerto vai a 74%, mas os gols vão
-   a 8,5 e `match_statistics_are_plausible` falha. Decisão do usuário
-   pendente. Marcação de corredores re-medida (mediana 3,9 m; 35% a
-   ≤ 3 m): melhora modesta, não refeita.
-4. Refazer o item 5 (passe em profundidade) sobre a física nova.
-5. Itens 6–8 (apoio sem bola → drible 1×1 → tabela).
-Depois: (c2) calibração, (d) comportamentos por papel, PR `fase-5` → `main`.
+### Fora do que foi entregue (decisão do usuário)
+- **(c2) calibração** e **(d) comportamentos por papel** (com os testes de
+  Overlap, Pressing, Counter Attack e Tight Marking do SPEC): não
+  iniciados. Itens 6–9 de (c1) e o item 5 (passe em profundidade,
+  desligado): não feitos.
+- **Para (c2):** vermelhos 0,22; assimetria de posse 4-4-2 × 4-3-3 (~60%,
+  estrutural, do `plan_shape`); gols 4,4; bola parada 3%.
+
+### Patch pronto, não aplicado: altura da bola em `intercept_point`
+- **Arquivo:** `docs/patches/intercept-point-height.patch` (aplica sobre
+  `f17b1d9`: `git apply docs/patches/intercept-point-height.patch`).
+- **O que é:** uma condição em `fn intercept_point`
+  (`crates/fm-match/src/engine.rs`, linha 663 em `f17b1d9`): pular os
+  pontos da trajetória em que a bola está acima de
+  `ControlTuning::max_height` (1,8 m). Para isso o `FlightPath` passa a
+  guardar `Vec3` e a função recebe `reach_h`.
+- **Por que existe:** no passe pelo alto o receptor corria para debaixo da
+  bola ainda no ar e ela caía onde ele estava (acerto 21%).
+- **Efeito medido:** passe pelo alto 21% → 57%; acerto geral 68,5% → 74%;
+  saída forçada 52% → 44%; passes 1.082; **gols 8,5 por partida** e
+  chutes 47,9; `match_statistics_are_plausible` falha (9,17 > 7,0).
+- **Por que não foi aplicado:** falta a contraparte defensiva. A bola longa
+  por cima da defesa passa a chegar e nada a contém.
+
+### Fase futura (sem prazo): "Bola longa + contraparte defensiva"
+- **Pré-requisito:** aplicar o patch acima.
+- **Escopo:** (1) goleiro saindo do gol (interceptar, cortar cruzamento,
+  líbero) — o antigo passo 2.5; (2) impedimento apitado, com tiro livre;
+  (3) marcação de corredores **redesenhada** — o mecanismo tentado não
+  chega perto (mediana 3,9 m do corredor com a reação corrigida; alvo
+  1,5 m).
+- **Métrica de sucesso:** gols ≤ 3,5 por partida com o patch aplicado.
+
+### Histórico do Caminho A (como chegamos aqui)
+1. Física de movimento — feito (`8e5e7e8` + `5d34253`).
+2. Defesa ajustada à física — engajamento e corrida decidida feitos
+   (`19e7194`); "defesa acompanha o corredor" tentado e revertido.
+3. Item 9 (construção desde a defesa) — só diagnóstico. A investigação
+   desviou para a execução: bloqueio na estimativa do passe (`ac88f94`),
+   reinícios (`8b59e10`), bote (`616b1f6`), reação em `steer` (`f17b1d9`).
+4. Refazer o item 5 e 5. itens 6–8: não feitos.
+
+**Dois nomes de "passo" aparecem no SPEC:** os passos do Caminho A (acima)
+e os passos do item 5 (passe em profundidade: passo 1 `lofted_lane`
+ligado; passo 2 implementado e desligado).
 
 ### Tentativa revertida: defesa acompanha o corredor (2026-10-03)
 Commits `53f017a` (SPEC) e `2915e96` (código), revertidos. Desenho: cada
@@ -112,6 +135,7 @@ iniciados.
 | (reverts) | Revert de `2915e96` e `53f017a` (defesa acompanha o corredor) |
 | `2915e96` | Defesa acompanha o corredor — **revertido** (614,9M, +2,67%) |
 | `53f017a` | SPEC do commit 2 — **revertido** |
+| `87b1692` | Baseline 590.430.506; SPEC: 5D-3 medido e não aplicado |
 | `f17b1d9` | Reação em `steer` corrigida; bote em 1,01 (590,4M, −1,98%) |
 | `72385d0` | Baseline 602.368.082; SPEC: 5C, re-medição do passe, bug da reação |
 | `616b1f6` | Bote recalibrado: limiar 0,97 e cartões (602,4M, −1,28%) |
@@ -192,16 +216,16 @@ iniciados.
     com a bola, mas não conseguia virar). Sobra: "receptor fora do ponto"
     em 12,6% dos passes curtos (< 10 m), e o resolver e a estimativa
     continuam mirando onde o receptor está no chute.
-  - **Passe pelo alto (≥ 28 m):** 21% de acerto (era 9%) em ~120 passes por partida
-    (o receptor corre para debaixo da bola ainda alta).
+  - **Passe pelo alto (≥ 28 m):** 21% de acerto. Causa e correção
+    conhecidas (patch pronto, acima); depende da fase "Bola longa".
   - **Passe em profundidade:** 0,3% de acerto quando ligado; desligado.
 - **Bola conduzida para fora em jogo corrido:** 5,9 por partida (4,2 antes
   da correção dos reinícios): o portador sai do campo com a bola. Não
   investigado. Se for barato, vira commit próprio; se for estrutural
   (falta de limite da linha para o portador), vira fase.
-- **Saída forçada:** 52% dos passes saem na trava dos 5,5 s, e não reage
-  ao bote (52–53% com 8 ou com 415 botes por partida). É decisão de
-  conduzir (90% dos casos); tratamento próprio pendente.
+- **Saída forçada:** 52–53% dos passes saem na trava dos 5,5 s. É decisão
+  de conduzir (92% dos casos) e não reage ao bote. Só caiu (44%) com o
+  patch do passe pelo alto. Frente da Fase 6 ou de fase própria.
 - **Teste de faltas:** `match_statistics_are_plausible` tem piso de 2 faltas
   por partida (era 3; relaxado em 2026-10-03). É piso de regressão, não
   meta: o real é ~22 e o motor está em 2,8 (180 partidas).
@@ -260,7 +284,7 @@ commit `d6f433a`).
 | Tapia03/football-game#2 | Fase 2 | mergeado |
 | Tapia03/football-game#4 | Fase 3 + SPEC v2.1 + glow | mergeado |
 | Tapia03/football-game#5 | Fase 4 | mergeado |
-| — | Fase 5 (`fase-5`) | abre quando a fase fechar com CI verde |
+| — | Fase 5 (`fase-5`) | aberto em 2026-10-04 ((c1) fechada); aguardando merge |
 
 Branch `spike-render`: nunca mergeia (spike visual do render).
 
