@@ -18,7 +18,9 @@ export type EngineCommand =
   | { readonly type: 'start'; readonly seed: number; readonly speed: number; readonly buffer: SharedArrayBuffer }
   | { readonly type: 'speed'; readonly speed: number }
   | { readonly type: 'pause' }
-  | { readonly type: 'resume' };
+  | { readonly type: 'resume' }
+  /** Runs the match to logical tick `tick` exactly and pauses there. */
+  | { readonly type: 'runTo'; readonly tick: number };
 
 export type EngineEvent =
   | { readonly type: 'ready' }
@@ -88,6 +90,13 @@ addEventListener('message', (e: MessageEvent<EngineCommand>) => {
       break;
     case 'resume':
       setRunning(true);
+      break;
+    case 'runTo':
+      if (host !== undefined) {
+        host.run_to(msg.tick);
+        if (header !== undefined) Atomics.store(header, H_STEP_WALL, wallClockMs());
+        setRunning(false);
+      }
       break;
   }
 });

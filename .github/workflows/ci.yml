@@ -151,6 +151,16 @@ jobs:
           name: evidence-${{ matrix.browser }}
           path: evidence/
           if-no-files-found: warn
+      # Pixel goldens (Chromium only) are produced by this runner: when a
+      # reference is missing Playwright writes the image it got here, to be
+      # downloaded and committed (docs/STATE.md, "Golden de pixel").
+      - name: Upload pixel goldens as rendered here
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-${{ matrix.browser }}
+          path: tests/golden/${{ matrix.browser }}/
+          if-no-files-found: ignore
       - name: Upload Playwright report
         if: failure()
         uses: actions/upload-artifact@v4

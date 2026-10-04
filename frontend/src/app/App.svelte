@@ -32,6 +32,12 @@
   let speed: number = $state(10);
   let clock = $state('00:00');
   let score = $state('0 × 0');
+  // HUD (6B-1): what the snapshot carries besides positions. Plain DOM —
+  // readable by tests and screen readers, no font atlas in WebGL.
+  let half = $state('1º tempo');
+  let cards = $state({ homeYellows: 0, homeReds: 0, awayYellows: 0, awayReds: 0 });
+  /** Home share of the held-ball time so far, 0..100 (50 before any). */
+  let possession = $state(50);
   let status = $state('carregando…');
   let match: MatchHandle | undefined = $state();
   let canvasEl: HTMLCanvasElement | undefined = $state();
@@ -78,6 +84,13 @@
       if (interpolator.at(interpolator.renderTimeMs(), frame)) {
         clock = formatClock(frame.tMs);
         score = `${frame.homeGoals} × ${frame.awayGoals}`;
+        half = frame.half === 0 ? '1º tempo' : '2º tempo';
+        cards.homeYellows = frame.homeYellows;
+        cards.homeReds = frame.homeReds;
+        cards.awayYellows = frame.awayYellows;
+        cards.awayReds = frame.awayReds;
+        const held = frame.homeHeld + frame.awayHeld;
+        possession = held === 0 ? 50 : Math.round((100 * frame.homeHeld) / held);
         if (canvas !== undefined) {
           try {
             canvas.draw(frame.xy, frame.ballX, frame.ballY, frame.ballZ, frame.sentOff);
@@ -141,10 +154,38 @@
 </script>
 
 <section class="match" data-testid="match">
-  <header>
-    <span class="score" data-testid="match-score">{score}</span>
-    <span class="clock" data-testid="match-clock">{clock}</span>
+  <header class="hud" data-testid="hud">
+    <div class="team home">
+      <span class="name">Casa</span>
+      <span class="card yellow" data-testid="hud-home-yellows" title="Cartões amarelos da casa"
+        >{cards.homeYellows}</span
+      >
+      <span class="card red" data-testid="hud-home-reds" title="Cartões vermelhos da casa"
+        >{cards.homeReds}</span
+      >
+    </div>
+    <div class="centre">
+      <span class="score" data-testid="match-score">{score}</span>
+      <span class="time">
+        <span class="clock" data-testid="match-clock">{clock}</span>
+        <span data-testid="hud-half">{half}</span>
+      </span>
+    </div>
+    <div class="team away">
+      <span class="card yellow" data-testid="hud-away-yellows" title="Cartões amarelos do visitante"
+        >{cards.awayYellows}</span
+      >
+      <span class="card red" data-testid="hud-away-reds" title="Cartões vermelhos do visitante"
+        >{cards.awayReds}</span
+      >
+      <span class="name">Visitante</span>
+    </div>
   </header>
+  <div class="possession" data-testid="hud-possession" title="Posse de bola">
+    <span data-testid="hud-possession-home">{possession}%</span>
+    <span class="bar"><span class="home" style:width="{possession}%"></span></span>
+    <span data-testid="hud-possession-away">{100 - possession}%</span>
+  </div>
   <canvas id="match-canvas" bind:this={canvasEl}></canvas>
   <footer>
     <span>
@@ -188,7 +229,7 @@
   .match {
     /* The pitch plus its margin is 113 × 76 m: as wide as fits with the
        score bar and the controls still inside the viewport. */
-    width: min(100% - 2rem, calc((100vh - 8rem) * 113 / 76));
+    width: min(100% - 2rem, calc((100vh - 11rem) * 113 / 76));
     margin: 0 auto;
     padding: 1rem;
   }
@@ -198,18 +239,91 @@
     aspect-ratio: 113 / 76;
     margin-top: 0.5rem;
   }
-  .match header,
   .match footer {
     display: flex;
     justify-content: space-between;
     align-items: center;
     gap: 1rem;
   }
-  .score,
-  .clock {
-    font-size: 1.5rem;
+  .hud {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    gap: 1rem;
+  }
+  .team {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .team.away {
+    justify-content: flex-end;
+  }
+  .name {
+    font-weight: 700;
+  }
+  .home .name {
+    color: #ff6b6b;
+  }
+  .away .name {
+    color: #4dabf7;
+  }
+  .card {
+    min-width: 1.25rem;
+    padding: 0 0.25rem;
+    border-radius: 3px;
+    text-align: center;
+    font-size: 0.8125rem;
     font-weight: 700;
     font-variant-numeric: tabular-nums;
+    color: #1b1b1b;
+  }
+  .card.yellow {
+    background: #ffd43b;
+  }
+  .card.red {
+    background: #fa5252;
+    color: #fff;
+  }
+  .centre {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    line-height: 1.2;
+  }
+  .score {
+    font-size: 1.75rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+  .time {
+    color: var(--muted);
+    font-size: 0.875rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .clock {
+    color: var(--fg);
+    font-weight: 700;
+  }
+  .possession {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .bar {
+    flex: 1;
+    height: 0.375rem;
+    border-radius: 3px;
+    background: #4dabf7;
+    overflow: hidden;
+  }
+  .bar .home {
+    display: block;
+    height: 100%;
+    background: #ff6b6b;
   }
   .match footer {
     color: var(--muted);

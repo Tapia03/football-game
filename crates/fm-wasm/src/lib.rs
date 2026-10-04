@@ -60,6 +60,8 @@ pub struct EngineHost {
     match_ms: f64,
     /// Snapshots written so far (the ring's write sequence).
     seq: u32,
+    /// Cards and held-ball ticks so far (the HUD words of each snapshot).
+    hud: sab::Hud,
     ints: js_sys::Int32Array,
     words: js_sys::Uint32Array,
 }
@@ -87,6 +89,7 @@ impl EngineHost {
             engine: fm_match::MatchEngine::new(&setup, &db),
             match_ms: 0.0,
             seq: 0,
+            hud: sab::Hud::default(),
             ints: js_sys::Int32Array::new(buffer),
             words: js_sys::Uint32Array::new(buffer),
         };
@@ -115,15 +118,21 @@ impl EngineHost {
         while !self.engine.is_finished()
             && f64::from(self.engine.state().now_ms() + fm_match::LOGICAL_DT_MS) <= self.match_ms
         {
-            self.engine.tick_logic();
-            self.publish_tick();
+            self.step();
         }
-        if self.engine.is_finished() {
-            self.match_ms = f64::from(self.engine.state().now_ms());
-            let _ = js_sys::Atomics::store(&self.ints, sab::H_STATE, sab::STATE_FINISHED);
+        self.publish_clock();
+    }
+
+    /// Runs the match up to logical tick `tick` exactly (no further) and
+    /// leaves the clock on it. With the worker paused afterwards the page
+    /// shows one reproducible instant: what the pixel goldens need, since
+    /// the match otherwise follows the real clock.
+    pub fn run_to(&mut self, tick: u32) {
+        while !self.engine.is_finished() && self.engine.state().tick < tick {
+            self.step();
         }
-        #[allow(clippy::cast_possible_truncation)] // < 2^31 ms: a match is 5.4e6 ms
-        let _ = js_sys::Atomics::store(&self.ints, sab::H_NOW, self.match_ms as i32);
+        self.match_ms = f64::from(self.engine.state().now_ms());
+        self.publish_clock();
     }
 
     #[must_use]
@@ -146,10 +155,27 @@ impl EngineHost {
 
 #[cfg(target_arch = "wasm32")]
 impl EngineHost {
+    /// One logical tick, accounted for the HUD and published.
+    fn step(&mut self) {
+        self.engine.tick_logic();
+        self.hud.observe(&self.engine);
+        self.publish_tick();
+    }
+
+    /// Publishes the match clock (and the end of the match).
+    fn publish_clock(&mut self) {
+        if self.engine.is_finished() {
+            self.match_ms = f64::from(self.engine.state().now_ms());
+            let _ = js_sys::Atomics::store(&self.ints, sab::H_STATE, sab::STATE_FINISHED);
+        }
+        #[allow(clippy::cast_possible_truncation)] // < 2^31 ms: a match is 5.4e6 ms
+        let _ = js_sys::Atomics::store(&self.ints, sab::H_NOW, self.match_ms as i32);
+    }
+
     /// Publishes the snapshots of the tick just run: its whole 100 ms at
     /// 60 Hz, ahead of time (see `sab::tick_frames`).
     fn publish_tick(&mut self) {
-        for words in sab::tick_frames(&self.engine) {
+        for words in sab::tick_frames(&self.engine, &self.hud) {
             self.publish(&words);
         }
     }
@@ -195,10 +221,12 @@ pub fn frame_mesh_vertices(
 pub fn reference_slot(seed: u32, tick: u32) -> Vec<u32> {
     let (db, setup) = fm_match::demo::demo_match(u64::from(seed));
     let mut engine = fm_match::MatchEngine::new(&setup, &db);
+    let mut hud = sab::Hud::default();
     for _ in 0..tick {
         engine.tick_logic();
+        hud.observe(&engine);
     }
-    sab::tick_frames(&engine)[0].to_vec()
+    sab::tick_frames(&engine, &hud)[0].to_vec()
 }
 
 /// The canvas the match is drawn on (main thread). It owns the WebGL2

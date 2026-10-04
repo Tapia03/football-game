@@ -19,6 +19,13 @@ function copy(from: Frame, out: Frame): void {
   out.homePhase = from.homePhase;
   out.awayPhase = from.awayPhase;
   out.sentOff = from.sentOff;
+  out.half = from.half;
+  out.homeYellows = from.homeYellows;
+  out.homeReds = from.homeReds;
+  out.awayYellows = from.awayYellows;
+  out.awayReds = from.awayReds;
+  out.homeHeld = from.homeHeld;
+  out.awayHeld = from.awayHeld;
   out.ballX = from.ballX;
   out.ballY = from.ballY;
   out.ballZ = from.ballZ;

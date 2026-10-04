@@ -168,13 +168,16 @@ pub fn frame_from_parts(xy: &[f32], ball: [f32; 3], sent_off: u32) -> Frame {
         sent_off,
         ball: fm_core::Vec3::new(ball[0], ball[1], ball[2]),
         players,
+        half: 0,
+        cards: [0; 4],
+        held: [0; 2],
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sab::{decode, encode};
+    use crate::sab::{decode, encode, Hud};
     use fm_match::demo::demo_match;
     use fm_match::{LodLevel, MatchEngine};
 
@@ -187,7 +190,7 @@ mod tests {
         let snap = e
             .sample(LodLevel::Full, e.state().now_ms())
             .expect("snapshot");
-        decode(&encode(&snap))
+        decode(&encode(&snap, &Hud::default()))
     }
 
     #[test]

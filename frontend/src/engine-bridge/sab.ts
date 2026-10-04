@@ -2,10 +2,11 @@
 // `crates/fm-wasm/src/sab.rs`: the worker writes, the main thread reads the
 // same bytes through an Int32Array and a Float32Array.
 
-export const MAGIC = 0x464d_0001;
+/** "FM" + layout version 2 (6B-1: half, cards and held-ball ticks). */
+export const MAGIC = 0x464d_0002;
 export const HEADER_WORDS = 16;
 export const RING_SLOTS = 16;
-export const SLOT_WORDS = 52;
+export const SLOT_WORDS = 56;
 export const SLOT_BYTES = SLOT_WORDS * 4;
 export const BUFFER_BYTES = HEADER_WORDS * 4 + RING_SLOTS * SLOT_BYTES;
 
@@ -44,6 +45,8 @@ const S_PHASES = 3;
 const S_SENT_OFF = 4;
 const S_BALL = 5;
 const S_PLAYERS = 8;
+const S_CARDS = 52;
+const S_HELD = 53;
 
 export const PLAYERS = 22;
 
@@ -61,6 +64,15 @@ export type Frame = {
   ballY: number;
   ballZ: number;
   readonly xy: Float32Array;
+  /** 0 first half, 1 second half. */
+  half: number;
+  homeYellows: number;
+  homeReds: number;
+  awayYellows: number;
+  awayReds: number;
+  /** Logical ticks with the ball held by each side so far. */
+  homeHeld: number;
+  awayHeld: number;
 };
 
 export function newFrame(): Frame {
@@ -76,6 +88,13 @@ export function newFrame(): Frame {
     ballY: 0,
     ballZ: 0,
     xy: new Float32Array(PLAYERS * 2),
+    half: 0,
+    homeYellows: 0,
+    homeReds: 0,
+    awayYellows: 0,
+    awayReds: 0,
+    homeHeld: 0,
+    awayHeld: 0,
   };
 }
 
@@ -171,6 +190,14 @@ export class SnapshotReader {
     const phases = i[at + S_PHASES] ?? 0;
     out.homePhase = phases & 0xff;
     out.awayPhase = (phases >> 8) & 0xff;
+    out.half = (phases >> 16) & 0xff;
+    const cards = i[at + S_CARDS] ?? 0;
+    out.homeYellows = cards & 0xff;
+    out.homeReds = (cards >> 8) & 0xff;
+    out.awayYellows = (cards >> 16) & 0xff;
+    out.awayReds = (cards >>> 24) & 0xff;
+    out.homeHeld = i[at + S_HELD] ?? 0;
+    out.awayHeld = i[at + S_HELD + 1] ?? 0;
     out.sentOff = i[at + S_SENT_OFF] ?? 0;
     out.ballX = f[at + S_BALL] ?? 0;
     out.ballY = f[at + S_BALL + 1] ?? 0;

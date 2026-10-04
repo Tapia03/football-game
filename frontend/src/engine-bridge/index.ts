@@ -60,6 +60,8 @@ export type MatchHandle = {
   setSpeed(speed: number): void;
   pause(): void;
   resume(): void;
+  /** Runs the match to logical tick `tick` exactly and pauses there. */
+  runTo(tick: number): void;
   stop(): void;
 };
 
@@ -78,6 +80,7 @@ export function startMatch(seed: number, speed: number): Promise<MatchHandle> {
     setSpeed: (value) => send({ type: 'speed', speed: value }),
     pause: () => send({ type: 'pause' }),
     resume: () => send({ type: 'resume' }),
+    runTo: (tick) => send({ type: 'runTo', tick }),
     stop: () => worker.terminate(),
   };
   return new Promise((resolve, reject) => {

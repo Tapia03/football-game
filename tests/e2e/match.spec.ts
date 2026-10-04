@@ -8,7 +8,7 @@ type Reader = {
   rawSlot(n: number): Uint32Array | undefined;
 };
 type Hooks = {
-  fmMatch: { reader: Reader; pause(): void };
+  fmMatch: { reader: Reader; pause(): void; runTo(tick: number): void };
   fmLatency: { frames: number; sumMs: number; maxMs: number };
   fmReferenceSlot(seed: number, tick: number): Promise<Uint32Array>;
 };
@@ -79,9 +79,9 @@ test.describe('Fase 6 (6A): the match runs in the engine worker', () => {
       };
     });
     expect(header).toEqual({
-      magic: 0x464d_0001,
+      magic: 0x464d_0002,
       slots: 16,
-      slotBytes: 208,
+      slotBytes: 224,
       seed: 7,
       ready: true,
       isolated: true,
@@ -117,6 +117,60 @@ test.describe('Fase 6 (6A): the match runs in the engine worker', () => {
       published.tick,
     );
     expect(reference).toEqual(published.words);
+  });
+
+  test('HUD shows what the snapshot carries: half, cards, possession', async ({ page }) => {
+    await page.goto('/?seed=3');
+    await expect(page.getByTestId('match-status')).toHaveText('ao vivo');
+    // Tick 30 000 = 50:00, second half; seed 3 has cards on both sides.
+    await page.evaluate(() => (globalThis as unknown as Hooks).fmMatch.runTo(30_000));
+    await expect(page.getByTestId('match-status')).toHaveText('pausado');
+    await expect(page.getByTestId('match-clock')).toHaveText('49:59');
+    await expect(page.getByTestId('hud-half')).toHaveText('2º tempo');
+    await expect(page.getByTestId('match-score')).toHaveText(/^\d+ × \d+$/);
+
+    // The newest snapshot, straight from the ring: cards are word 52 (one
+    // byte each), held-ball ticks are words 53 and 54.
+    const ring = await page.evaluate(() => {
+      const { reader } = (globalThis as unknown as Hooks).fmMatch;
+      const words = reader.rawSlot(reader.sequence() - 1);
+      if (words === undefined) return undefined;
+      const cards = words[52] ?? 0;
+      return {
+        cards: [cards & 0xff, (cards >> 8) & 0xff, (cards >> 16) & 0xff, (cards >>> 24) & 0xff],
+        held: [words[53] ?? 0, words[54] ?? 0],
+      };
+    });
+    expect(ring).toBeDefined();
+    if (ring === undefined) return;
+    const shown = [
+      'hud-home-yellows',
+      'hud-home-reds',
+      'hud-away-yellows',
+      'hud-away-reds',
+    ].map((id) => page.getByTestId(id).innerText());
+    expect((await Promise.all(shown)).map(Number)).toEqual(ring.cards);
+    expect(ring.cards.reduce((a, b) => a + b, 0)).toBeGreaterThan(0);
+
+    const [home, away] = ring.held;
+    expect(home).toBeGreaterThan(0);
+    expect(away).toBeGreaterThan(0);
+    const share = Math.round((100 * (home ?? 0)) / ((home ?? 0) + (away ?? 0)));
+    await expect(page.getByTestId('hud-possession-home')).toHaveText(`${share}%`);
+    await expect(page.getByTestId('hud-possession-away')).toHaveText(`${100 - share}%`);
+  });
+
+  test('golden: the match at a fixed tick (pixels, Chromium only)', async ({ page, browserName }) => {
+    // Pixel goldens only where rendering is deterministic: the software
+    // renderer of headless Chromium (docs/SPEC.md, Fase 6). Firefox and
+    // WebKit run every other test of this file without comparing pixels.
+    test.skip(browserName !== 'chromium', 'Pixel goldens are Chromium-only (SPEC Fase 6)');
+    await openMatch(page);
+    await page.evaluate(() => (globalThis as unknown as Hooks).fmMatch.runTo(6_000));
+    await expect(page.getByTestId('match-status')).toHaveText('pausado');
+    await expect(page.getByTestId('match-clock')).toHaveText('09:59');
+    await expect(page.getByTestId('match-render')).toHaveText('ok');
+    await expect(page).toHaveScreenshot('match-hud.png', { maxDiffPixelRatio: 0.01 });
   });
 
   test('tick-to-draw latency stays under 50 ms at 1×', async ({ page }, testInfo) => {

@@ -8,27 +8,34 @@
 //!                    [2] ring slots     [3] bytes per slot
 //!                    [4] state          [5] speed × 1000   [6] seed
 //!                    [7] match clock of the worker (ms)
-//! slot, 52 words:    [0] tick  [1] t_ms  [2] score (home | away << 8)
-//!                    [3] phases (home | away << 8)
+//! slot, 56 words:    [0] tick  [1] t_ms  [2] score (home | away << 8)
+//!                    [3] phases (home | away << 8 | half << 16)
 //!                    [4] sent-off mask (bit i = player i)
 //!                    [5..8] ball x, y, z (f32)
 //!                    [8..52] players x, y (f32), engine order
+//!                    [52] cards (home yellow | home red << 8
+//!                                | away yellow << 16 | away red << 24)
+//!                    [53] home held-ball ticks  [54] away held-ball ticks
+//!                    [55] reserved (0)
 //! ```
+//!
+//! Version 2 (6B-1) appended words 52..56 and the half; nothing moved.
 //!
 //! Safe code: the engine fills a `[u32; SLOT_WORDS]` and the bindings copy
 //! it into a typed-array view of the buffer. Nothing here touches memory.
 
 use fm_core::{Vec2, Vec3};
-use fm_match::{LodLevel, MatchEngine, MatchSnapshot, Phase};
+use fm_match::state::BallState;
+use fm_match::{CardKind, EventKind, LodLevel, MatchEngine, MatchSnapshot, Phase, Side};
 
 /// `"FM"` and the layout version (bump on any layout change).
-pub const MAGIC: u32 = 0x464D_0001;
+pub const MAGIC: u32 = 0x464D_0002;
 /// Words of one slot (the length of the encoded array).
-pub const SLOT_WORDS: usize = 52;
+pub const SLOT_WORDS: usize = 56;
 // Sizes and indices as `u32`: that is what the typed-array API takes.
 pub const HEADER_WORDS: u32 = 16;
 pub const RING_SLOTS: u32 = 16;
-pub const SLOT_WORDS_U32: u32 = 52;
+pub const SLOT_WORDS_U32: u32 = 56;
 pub const SLOT_BYTES: u32 = SLOT_WORDS_U32 * 4;
 pub const BUFFER_BYTES: u32 = HEADER_WORDS * 4 + RING_SLOTS * SLOT_BYTES;
 
@@ -54,8 +61,50 @@ const S_PHASES: usize = 3;
 const S_SENT_OFF: usize = 4;
 const S_BALL: usize = 5;
 const S_PLAYERS: usize = 8;
+const S_CARDS: usize = 52;
+const S_HELD: usize = 53;
 
 const PLAYERS: usize = 22;
+
+/// What the HUD shows besides the snapshot itself (spec Fase 6, 6B-1),
+/// accumulated by the engine worker after every tick: cards per side and
+/// how long each side has held the ball. Outside `tick_logic`: the engine
+/// is only read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Hud {
+    /// 0 first half, 1 second half.
+    pub half: u8,
+    /// `[home yellow, home red, away yellow, away red]`.
+    pub cards: [u8; 4],
+    /// Ticks with the ball held by `[home, away]`.
+    pub held: [u32; 2],
+    /// Events of the log already counted.
+    seen: usize,
+}
+
+impl Hud {
+    /// Accounts for the tick the engine has just run.
+    pub fn observe(&mut self, engine: &MatchEngine) {
+        let state = engine.state();
+        self.half = u8::from(state.second_half);
+        let events = engine.events();
+        for event in &events[self.seen.min(events.len())..] {
+            if let EventKind::Card { player, card } = event.kind {
+                let away = state
+                    .players
+                    .iter()
+                    .any(|p| p.id == player && p.side == Side::Away);
+                let slot = 2 * usize::from(away) + usize::from(card == CardKind::Red);
+                self.cards[slot] = self.cards[slot].saturating_add(1);
+            }
+        }
+        self.seen = events.len();
+        if let BallState::Held { holder } = state.ball {
+            let away = state.players[usize::from(holder)].side == Side::Away;
+            self.held[usize::from(away)] += 1;
+        }
+    }
+}
 
 /// Word index of ring slot `seq` (the `seq`-th snapshot written).
 #[inline]
@@ -76,12 +125,16 @@ const fn phase_code(p: Phase) -> u32 {
 
 /// One snapshot as it sits in a ring slot.
 #[must_use]
-pub fn encode(s: &MatchSnapshot) -> [u32; SLOT_WORDS] {
+pub fn encode(s: &MatchSnapshot, hud: &Hud) -> [u32; SLOT_WORDS] {
     let mut w = [0_u32; SLOT_WORDS];
     w[S_TICK] = s.tick;
     w[S_T_MS] = s.t_ms;
     w[S_SCORE] = u32::from(s.score[0]) | u32::from(s.score[1]) << 8;
-    w[S_PHASES] = phase_code(s.phases[0]) | phase_code(s.phases[1]) << 8;
+    w[S_PHASES] =
+        phase_code(s.phases[0]) | phase_code(s.phases[1]) << 8 | u32::from(hud.half) << 16;
+    w[S_CARDS] = u32::from_le_bytes(hud.cards);
+    w[S_HELD] = hud.held[0];
+    w[S_HELD + 1] = hud.held[1];
     w[S_BALL] = s.ball.x.to_bits();
     w[S_BALL + 1] = s.ball.y.to_bits();
     w[S_BALL + 2] = s.ball.z.to_bits();
@@ -101,12 +154,12 @@ pub const SAMPLES_PER_TICK: usize = 6;
 /// 83 ms). Trajectories are pure functions of time inside a tick, so the
 /// whole interval is known as soon as the tick has run.
 #[must_use]
-pub fn tick_frames(engine: &MatchEngine) -> [[u32; SLOT_WORDS]; SAMPLES_PER_TICK] {
+pub fn tick_frames(engine: &MatchEngine, hud: &Hud) -> [[u32; SLOT_WORDS]; SAMPLES_PER_TICK] {
     let now = engine.state().now_ms();
     let mut out = [[0_u32; SLOT_WORDS]; SAMPLES_PER_TICK];
     for (slot, off) in out.iter_mut().zip(LodLevel::Full.sample_offsets_ms()) {
         if let Some(snap) = engine.sample(LodLevel::Full, now + off) {
-            *slot = encode(&snap);
+            *slot = encode(&snap, hud);
         }
     }
     out
@@ -124,6 +177,12 @@ pub struct Frame {
     pub sent_off: u32,
     pub ball: Vec3,
     pub players: [Vec2; PLAYERS],
+    /// 0 first half, 1 second half.
+    pub half: u8,
+    /// `[home yellow, home red, away yellow, away red]`.
+    pub cards: [u8; 4],
+    /// Ticks with the ball held by `[home, away]`.
+    pub held: [u32; 2],
 }
 
 #[must_use]
@@ -148,6 +207,9 @@ pub fn decode(w: &[u32; SLOT_WORDS]) -> Frame {
             f32::from_bits(w[S_BALL + 2]),
         ),
         players,
+        half: byte(w[S_PHASES], 16),
+        cards: w[S_CARDS].to_le_bytes(),
+        held: [w[S_HELD], w[S_HELD + 1]],
     }
 }
 
@@ -158,10 +220,13 @@ mod tests {
 
     #[test]
     fn layout_sizes_are_the_ones_in_the_spec() {
-        assert_eq!(SLOT_BYTES, 208);
-        assert_eq!(BUFFER_BYTES, 64 + 16 * 208);
-        assert_eq!(BUFFER_BYTES, 3_392);
-        assert_eq!(S_PLAYERS + 2 * PLAYERS, SLOT_WORDS);
+        assert_eq!(SLOT_BYTES, 224);
+        assert_eq!(BUFFER_BYTES, 64 + 16 * 224);
+        assert_eq!(BUFFER_BYTES, 3_648);
+        // Version 2 only appended: the 6A fields sit where they were.
+        assert_eq!(S_PLAYERS + 2 * PLAYERS, S_CARDS);
+        assert_eq!(S_HELD + 3, SLOT_WORDS);
+        assert_eq!(MAGIC & 0xFFFF, 2);
     }
 
     #[test]
@@ -183,7 +248,14 @@ mod tests {
         }
         let now = e.state().now_ms();
         let snap = e.sample(LodLevel::Full, now + 33).expect("snapshot");
-        let f = decode(&encode(&snap));
+        let hud = Hud {
+            half: 1,
+            cards: [3, 1, 2, 0],
+            held: [1_234, 987],
+            seen: 0,
+        };
+        let f = decode(&encode(&snap, &hud));
+        assert_eq!((f.half, f.cards, f.held), (hud.half, hud.cards, hud.held));
         assert_eq!((f.tick, f.t_ms), (snap.tick, snap.t_ms));
         assert_eq!(f.score, snap.score);
         assert_eq!(f.ball.x.to_bits(), snap.ball.x.to_bits());
@@ -199,6 +271,54 @@ mod tests {
             [phase_code(snap.phases[0]), phase_code(snap.phases[1])]
         );
     }
+
+    /// The HUD counters agree with the engine over a whole match: cards with
+    /// the event log, held ticks with the ball state, the half with the
+    /// state.
+    #[test]
+    fn hud_counters_match_the_engine_over_a_match() {
+        // Seeds chosen to cover matches with and without cards.
+        let mut any_card = false;
+        for seed in [3_u64, 7, 11] {
+            let (db, setup) = demo_match(seed);
+            let mut e = MatchEngine::new(&setup, &db);
+            let mut hud = Hud::default();
+            let mut held = [0_u32; 2];
+            assert_eq!(hud.half, 0);
+            while !e.is_finished() {
+                e.tick_logic();
+                hud.observe(&e);
+                if let BallState::Held { holder } = e.state().ball {
+                    let away = e.state().players[usize::from(holder)].side == Side::Away;
+                    held[usize::from(away)] += 1;
+                }
+            }
+            let mut cards = [0_u8; 4];
+            for event in e.events() {
+                if let EventKind::Card { player, card } = event.kind {
+                    let p = e
+                        .state()
+                        .players
+                        .iter()
+                        .find(|p| p.id == player)
+                        .expect("carded player is on the sheet");
+                    let slot =
+                        2 * usize::from(p.side == Side::Away) + usize::from(card == CardKind::Red);
+                    cards[slot] += 1;
+                }
+            }
+            assert_eq!(hud.cards, cards, "seed {seed}");
+            assert_eq!(hud.held, held, "seed {seed}");
+            assert_eq!(hud.half, 1, "second half by the end");
+            assert!(
+                held[0] > 5_000 && held[1] > 5_000,
+                "both sides hold the ball"
+            );
+            any_card |= cards.iter().any(|&c| c > 0);
+        }
+        assert!(any_card, "the seeds cover a match with cards");
+    }
+
     /// Each tick publishes six snapshots 16–17 ms apart, and the grid has no
     /// gap across ticks (83 ms → the next tick's 0 ms is 17 ms later).
     #[test]
@@ -212,14 +332,17 @@ mod tests {
         let mut e = MatchEngine::new(&setup, &db);
         let mut stamps = Vec::new();
         let mut moved = false;
+        let mut hud = Hud::default();
         for _ in 0..50 {
             e.tick_logic();
-            let frames = tick_frames(&e).map(|w| decode(&w));
+            hud.observe(&e);
+            let frames = tick_frames(&e, &hud).map(|w| decode(&w));
             // The first sample is the tick itself, bit for bit.
             let at_tick = e
                 .sample(LodLevel::Reduced, e.state().now_ms())
                 .expect("snapshot");
-            assert_eq!(encode(&at_tick), encode_frame_check(&frames[0], &at_tick));
+            let w = encode(&at_tick, &hud);
+            assert_eq!(decode(&w), frames[0]);
             moved |= frames[0].players != frames[5].players;
             stamps.extend(frames.iter().map(|f| f.t_ms));
         }
@@ -228,13 +351,5 @@ mod tests {
             let step = pair[1] - pair[0];
             assert!((16..=17).contains(&step), "grid step {step} ms");
         }
-    }
-
-    /// `encode(snap)` if `frame` is the decoded `snap` (keeps the assert
-    /// above a bit-for-bit comparison).
-    fn encode_frame_check(frame: &Frame, snap: &MatchSnapshot) -> [u32; SLOT_WORDS] {
-        let w = encode(snap);
-        assert_eq!(decode(&w), *frame);
-        w
     }
 }
