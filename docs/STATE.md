@@ -302,10 +302,18 @@ desta máquina são outras).
 O mesmo vale quando uma mudança visual intencional invalida um golden:
 apagar a referência antiga, e repetir.
 
-**Setup pendente — Playwright local:** os navegadores do Playwright não
-estão instalados nesta máquina, então os testes e2e (`npx playwright
-test`) só rodam no CI. Para rodá-los localmente: `npx playwright install`
-(baixa Chromium, Firefox e WebKit).
+**Playwright local (instalado em 2026-10-04):** `npx playwright install`
+foi rodado nesta máquina; `npx playwright test` roda os e2e localmente
+(sobe `npm run build && npm run preview` na porta 4173) em ~45 s: fora do
+CI a configuração usa 2 workers — com um worker por núcleo as páginas,
+que desenham com WebGL por software, saturam a máquina (a primeira
+tentativa travou por 30 min). O teste de golden de pixel é pulado fora do
+CI (a referência é do Chromium do CI, Linux); `FM_GOLDEN=1` força a
+comparação local.
+
+**`npm run dev` com o worker e o SAB:** funciona sem ajuste — o servidor de
+dev envia COOP/COEP (`vite.config.ts`). Só não sobe se a porta 5173
+estiver ocupada (`strictPort`); nesse caso `npx vite --port 5174`.
 
 ## PRs
 | PR | Conteúdo | Estado |

@@ -3,7 +3,9 @@
 Simulador/gerenciador de futebol que roda no navegador: motor em Rust → WASM,
 frontend Svelte 5 + Vite, persistência offline-first (IndexedDB + Supabase).
 
-Status: **Fase 0 — bootstrap**. Só existe a página "Hello from Rust".
+Status: **Fase 6 — render** (ver [`docs/STATE.md`](docs/STATE.md)). A página
+mostra uma partida ao vivo: o motor roda num Web Worker, publica snapshots num
+`SharedArrayBuffer` e a main thread desenha (WebGL2) e mostra o HUD.
 
 ## Pré-requisitos
 
@@ -23,12 +25,26 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 wasm-pack test --headless --chrome crates/fm-wasm
 
-npx playwright install --with-deps   # uma vez
+npx playwright install               # uma vez (no CI/Linux: --with-deps)
 npx playwright test                  # chromium, firefox, webkit
 ```
 
 Os servidores de dev e preview enviam COOP/COEP (iguais a `frontend/public/_headers`),
-então `crossOriginIsolated === true` e `SharedArrayBuffer` está disponível localmente.
+então `crossOriginIsolated === true` e `SharedArrayBuffer` está disponível localmente:
+o worker do motor e o anel de snapshots funcionam tanto em `npm run dev` quanto em
+`npm run preview`, sem configuração extra.
+
+- **Porta ocupada:** as portas são fixas (`strictPort`). Se já houver outro servidor
+  na 5173, o `npm run dev` não sobe; use outra porta: `npx vite --port 5174`
+  (depois de um `npm run wasm`).
+- **`?seed=N`** na URL escolhe a partida de demonstração (padrão 7).
+- **Golden de pixel:** `tests/golden/chromium/` guarda imagens produzidas pelo
+  Chromium do CI (Linux). Fora do CI o teste de golden é pulado, porque fontes e
+  rasterização de outra máquina diferem (`FM_GOLDEN=1` força a comparação). Os
+  demais testes e2e valem em qualquer lugar. Para atualizar uma referência, ver
+  "Golden de pixel" em `docs/STATE.md`.
+- **e2e locais:** fora do CI o Playwright usa 2 workers (as páginas desenham com
+  WebGL por software; mais que isso satura a máquina).
 
 ## Determinismo numérico
 
@@ -44,7 +60,8 @@ Regenerar (só se a versão de `libm` mudar de propósito):
 ## Estrutura
 
 ```
-crates/        fm-core, fm-entities, fm-match, fm-economy, fm-world, fm-persistence, fm-wasm
+crates/        fm-core, fm-entities, fm-match, fm-economy, fm-world, fm-persistence,
+               fm-render (malha e backend WebGL2), fm-wasm (bindings, anel de snapshots)
 frontend/      app Svelte (index.html, src/, public/_headers)
 tests/e2e/     Playwright
 tests/golden/  screenshots golden por navegador (a partir da Fase 6)

@@ -165,6 +165,13 @@ test.describe('Fase 6 (6A): the match runs in the engine worker', () => {
     // renderer of headless Chromium (docs/SPEC.md, Fase 6). Firefox and
     // WebKit run every other test of this file without comparing pixels.
     test.skip(browserName !== 'chromium', 'Pixel goldens are Chromium-only (SPEC Fase 6)');
+    // The reference is what the CI's Chromium renders (Linux fonts and
+    // rasteriser); another machine differs by more than the tolerance.
+    // FM_GOLDEN=1 runs it anyway.
+    test.skip(
+      process.env['CI'] === undefined && process.env['FM_GOLDEN'] === undefined,
+      'Pixel goldens are rendered by the CI (set FM_GOLDEN=1 to compare locally)',
+    );
     await openMatch(page);
     await page.evaluate(() => (globalThis as unknown as Hooks).fmMatch.runTo(6_000));
     await expect(page.getByTestId('match-status')).toHaveText('pausado');
