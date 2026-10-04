@@ -262,7 +262,7 @@ iniciados.
 
 ### Comandos para retomar
 ```sh
-git checkout fase-5
+git checkout fase-6
 cargo test --workspace --release
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo fmt --all -- --check
@@ -273,21 +273,23 @@ cargo bench -p fm-match --bench instructions
 UPDATE_GOLDEN=1 cargo test -p fm-match --release --lib parity
 # Calibrador (180 partidas, 4-3-3 e 4-4-2):
 FM_FORMATIONS=433,442 cargo run --release -p fm-match --features diagnostics --example calibrate
-# Spike visual: push em qualquer branch spike-* dispara o deploy
+# Preview: push em qualquer branch fase-* (ou spike-*) dispara o deploy
 # (.github/workflows/deploy.yml) e publica em
 # https://<branch>.football-game-b5k.pages.dev
 ```
-**Regra do spike local (2026-10-03):** o usuário vê o jogo no worktree
-`../football-game-spike` (branch `spike-render-v2`, `npm run dev` em
-`http://localhost:5173`). Sempre que ele pedir para atualizar o spike:
-(1) `git merge fase-5` nesse worktree; (2) `npm run wasm` nele; (3)
-informar qual commit da `fase-5` está rodando. Sem isso o navegador mostra
-um motor antigo sem avisar. O deploy remoto (`spike-render-v2` no
-Cloudflare) só muda com push, que é pedido à parte.
+**Ver o jogo a partir da Fase 6 (2026-10-04):** o render agora está na
+própria branch `fase-6`; os spikes ficaram para trás.
+- **Remoto:** todo push em `fase-*` publica um preview no Cloudflare Pages:
+  https://fase-6.football-game-b5k.pages.dev
+- **Local:** `git checkout fase-6 && npm ci && npm run build && npm run
+  preview`, depois http://localhost:4173 (ou `npm run dev`, porta 5173).
+- O worktree `../football-game-spike` (branch `spike-render-v2`, motor do
+  5D-2 com o render antigo, sem worker) não é mais atualizado.
 
-Para atualizar o spike com um motor novo: refazer `spike-render-v2` a
-partir da `fase-5` e copiar só os arquivos de render da `fase-6-v0` (ver o
-commit `d6f433a`).
+**Setup pendente — Playwright local:** os navegadores do Playwright não
+estão instalados nesta máquina, então os testes e2e (`npx playwright
+test`) só rodam no CI. Para rodá-los localmente: `npx playwright install`
+(baixa Chromium, Firefox e WebKit).
 
 ## PRs
 | PR | Conteúdo | Estado |
