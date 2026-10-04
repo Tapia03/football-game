@@ -22,14 +22,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.0 # keep in sync with rust-toolchain.toml
         with:
           components: rustfmt, clippy
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      # Diagnostics-only tools (feature `diagnostics`) are linted too.
+      - run: cargo clippy -p fm-match --all-targets --all-features -- -D warnings
       - run: cargo clippy --workspace --all-targets --target wasm32-unknown-unknown -- -D warnings
+      - run: cargo test --workspace
+
+  stable-canary:
+    name: stable-canary (latest stable, informative)
+    runs-on: ubuntu-latest
+    # Early warning for new lints/regressions in the next toolchain; never blocks.
+    continue-on-error: true
+    env:
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
 
   bench:
@@ -37,16 +55,46 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.0 # keep in sync with rust-toolchain.toml
       - uses: Swatinem/rust-cache@v2
-      # Hard gates (release timing tests, marked #[ignore] in debug runs).
-      - run: cargo test --release --workspace -- --ignored --nocapture
+      # Hard gates (release timing tests, marked #[ignore] in debug runs),
+      # except the tick_logic wall-clock gate, which runs on its own below.
+      - run: cargo test --release --workspace -- --ignored --nocapture --skip full_match_abstract_under_50ms
+      # tick_logic wall-clock gate (50 ms): coarse alarm only. Shared runners
+      # vary ~27% for identical code (SPEC Fase 5), so it never blocks.
+      - name: tick_logic wall-clock alarm (non-blocking)
+        continue-on-error: true
+        run: cargo test --release -p fm-match --test perf -- --ignored --nocapture
+      # Fine checkpoint (blocking): callgrind instruction count of a full
+      # match vs the committed baseline (+1.5% max). Deterministic.
+      - name: tick_logic instruction count (callgrind)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq valgrind
+          cargo bench -p fm-match --bench instructions
+      # The callgrind output of that run, kept as an artifact even when the
+      # gate passes or fails: per-function instruction counts, to tell "more
+      # game being played" from "more expensive code" when the count moves.
+      - name: callgrind profile
+        if: always()
+        run: |
+          out="${TMPDIR:-/tmp}/fm-instructions"
+          mkdir -p callgrind
+          cp "$out"/callgrind.*.out callgrind/ || true
+          callgrind_annotate callgrind/callgrind.match.out > callgrind/match.txt || true
+          callgrind_annotate callgrind/callgrind.setup.out > callgrind/setup.txt || true
+          head -60 callgrind/match.txt || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: callgrind
+          path: callgrind/
       # Informative numbers for the phase report; never fails the build on
       # timing, but does fail if a bench does not build/run (pipefail).
       # Only criterion targets: libtest harnesses reject criterion flags.
       - run: |
           set -o pipefail
           cargo bench -p fm-entities --bench weekly_update -- --quick 2>&1 | tee bench.txt
+          cargo bench -p fm-match --bench tick_logic 2>&1 | tee -a bench.txt
       - uses: actions/upload-artifact@v4
         with:
           name: bench
@@ -57,7 +105,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.0 # keep in sync with rust-toolchain.toml
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
@@ -82,7 +130,7 @@ jobs:
         browser: [chromium, firefox, webkit]
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.99.0 # keep in sync with rust-toolchain.toml
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2

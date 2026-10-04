@@ -5,12 +5,41 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[features]
+# Engine counters for diagnostics tools only (e.g. carrier decisions per
+# match); never on in the game build.
+diagnostics = []
+
 [dependencies]
 fm-core.workspace = true
 fm-entities.workspace = true
 
 [dev-dependencies]
 fm-test-utils = { workspace = true, features = ["alloc-counter"] }
+
+# criterion is native-only: it never builds for wasm32, where benches are not run.
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "tick_logic"
+harness = false
+
+[[bench]]
+name = "instructions"
+harness = false
+
+[[example]]
+name = "calibrate"
+required-features = ["diagnostics"]
+
+[[example]]
+name = "forced_release"
+required-features = ["diagnostics"]
+
+[[example]]
+name = "option_breakdown"
+required-features = ["diagnostics"]
 
 [lints]
 workspace = true

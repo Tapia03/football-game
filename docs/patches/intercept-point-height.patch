@@ -1,0 +1,93 @@
+diff --git a/crates/fm-match/src/engine.rs b/crates/fm-match/src/engine.rs
+index 0603a88..a805183 100644
+--- a/crates/fm-match/src/engine.rs
++++ b/crates/fm-match/src/engine.rs
+@@ -2,7 +2,7 @@
+ //! `tick_logic` advances the match by exactly `LOGICAL_DT_MS`, identically for
+ //! every LOD. It performs no heap allocation after construction (criterion 17).
+ 
+-use fm_core::{pitch, GoalEnd, Vec2};
++use fm_core::{pitch, GoalEnd, Vec2, Vec3};
+ use fm_entities::{PlayerDatabase, PlayerId};
+ 
+ use crate::anchor::FormationAnchor;
+@@ -598,10 +598,11 @@ fn on_ball(
+             // the point where they can meet it (not where it is now).
+             let ball = frame.ball(s).xy();
+             let mut path = FlightPath::new(&flight, now);
++            let reach_h = s.tuning.control.max_height;
+             for side in [Side::Home, Side::Away] {
+                 if let Some(c) = nearest_to(s, frame, side, ball) {
+                     let p = &s.players[c];
+-                    targets[c] = intercept_point(&mut path, frame.pos(c), p.top_speed);
++                    targets[c] = intercept_point(&mut path, frame.pos(c), p.top_speed, reach_h);
+                     in_play[c] = true;
+                     urgency[c] = 1.0;
+                 }
+@@ -610,7 +611,7 @@ fn on_ball(
+                 let r = receiver as usize;
+                 if s.players[r].active() {
+                     let p = &s.players[r];
+-                    targets[r] = intercept_point(&mut path, frame.pos(r), p.top_speed);
++                    targets[r] = intercept_point(&mut path, frame.pos(r), p.top_speed, reach_h);
+                     in_play[r] = true;
+                     urgency[r] = 1.0;
+                 }
+@@ -630,7 +631,7 @@ fn on_ball(
+ struct FlightPath<'a> {
+     flight: &'a crate::ball::BallFlight,
+     now: u32,
+-    pts: [Vec2; INTERCEPT_STEPS as usize],
++    pts: [Vec3; INTERCEPT_STEPS as usize],
+     filled: u32,
+ }
+ 
+@@ -642,34 +643,41 @@ impl<'a> FlightPath<'a> {
+         Self {
+             flight,
+             now,
+-            pts: [Vec2::ZERO; INTERCEPT_STEPS as usize],
++            pts: [Vec3::ZERO; INTERCEPT_STEPS as usize],
+             filled: 0,
+         }
+     }
+ 
+-    fn at(&mut self, step: u32) -> Vec2 {
++    fn at(&mut self, step: u32) -> Vec3 {
+         while self.filled < step {
+             self.filled += 1;
+             let t = self.now + self.filled * LOGICAL_DT_MS;
+-            self.pts[(self.filled - 1) as usize] = self.flight.pos_at(t).xy();
++            self.pts[(self.filled - 1) as usize] = self.flight.pos_at(t);
+         }
+         self.pts[(step - 1) as usize]
+     }
+ }
+ 
+ /// Earliest point on the ball's path a player at `from` running at `speed`
+-/// can reach in time (sampled every 100 ms over 3 s; no allocation). Falls
+-/// back to where the ball ends up after the look-ahead.
+-fn intercept_point(path: &mut FlightPath<'_>, from: Vec2, speed: f32) -> Vec2 {
++/// can reach in time **with the ball low enough to play** (below
++/// `reach_h`; sampled every 100 ms over 3 s; no allocation). Falls back to
++/// where the ball ends up after the look-ahead. Without the height test a
++/// receiver ran in under a lofted ball and let it fly over him to the
++/// spot he had just left.
++fn intercept_point(path: &mut FlightPath<'_>, from: Vec2, speed: f32, reach_h: f32) -> Vec2 {
+     for step in 1..=INTERCEPT_STEPS {
+         let b = path.at(step);
++        if b.z >= reach_h {
++            continue;
++        }
++        let b = b.xy();
+         #[allow(clippy::cast_precision_loss)] // ≤ 3000
+         let reach = speed * (step * LOGICAL_DT_MS) as f32 / 1000.0;
+         if from.distance(b) <= reach {
+             return b;
+         }
+     }
+-    path.at(INTERCEPT_STEPS)
++    path.at(INTERCEPT_STEPS).xy()
+ }
+ 
+ /// The two outfield players of `side` nearest to `at` (index breaks ties).

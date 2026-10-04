@@ -4,14 +4,15 @@
 use fm_core::{GoalEnd, Vec2, Vec3};
 use fm_entities::{PlayerAttributes, PlayerId};
 
-use crate::anchor::AnchorTuning;
 use crate::ball::BallFlight;
+use crate::decision::Action;
 use crate::events::{EventLog, RestartKind};
 use crate::formation::{Formation, Role};
 use crate::frame::TeamFrame;
-use crate::kinematics::{PlayerKinematics, Trajectory};
+use crate::kinematics::{Lead, PlayerKinematics, Trajectory};
 use crate::phase::{Phase, PhaseStateMachine, Side};
 use crate::tactics::Tactics;
+use crate::tuning::TuningParams;
 
 pub const PLAYERS: usize = 22;
 
@@ -27,6 +28,8 @@ pub struct MatchPlayer {
     pub attrs: PlayerAttributes,
     pub top_speed: f32,
     pub traj: Trajectory,
+    /// Movement physics of the current move; `None`: instant model.
+    pub lead: Option<Lead>,
     /// Number of resolved actions so far: the RNG stream index (spec 3.B).
     pub action_count: u32,
     pub yellow_cards: u8,
@@ -35,13 +38,22 @@ pub struct MatchPlayer {
     pub tackle_ready_tick: u32,
     /// Tick before which the player cannot touch a loose ball (just kicked it).
     pub touch_ready_tick: u32,
+    /// Off-ball run (spec Fase 5 (c1), item 4): where to, and the tick it
+    /// ends (`run_until <= tick`: not running).
+    pub run_target: Vec2,
+    pub run_until: u32,
+    /// Tick before which the player will not start another run.
+    pub run_ready_tick: u32,
 }
 
 impl MatchPlayer {
     #[inline]
     #[must_use]
     pub fn pos(&self, t_ms: u32) -> Vec2 {
-        PlayerKinematics::pos_at(&self.traj, t_ms)
+        match &self.lead {
+            None => PlayerKinematics::pos_at(&self.traj, t_ms),
+            Some(lead) => lead.pos(&self.traj, t_ms),
+        }
     }
 
     #[inline]
@@ -107,8 +119,16 @@ pub struct TeamState {
     pub passes: u16,
     pub passes_completed: u16,
     pub tackles: u16,
-    /// Tick before which no player of this team may challenge.
-    pub next_tackle_tick: u32,
+    /// Full option evaluations by this team's carriers (decision cadence
+    /// diagnostics; not used by the engine).
+    #[cfg(feature = "diagnostics")]
+    pub decisions: u32,
+    /// Through balls played, and controlled by their receiver (diagnostics
+    /// only).
+    #[cfg(feature = "diagnostics")]
+    pub through_passes: u32,
+    #[cfg(feature = "diagnostics")]
+    pub through_completed: u32,
 }
 
 /// Everything `tick_logic` reads and writes.
@@ -121,13 +141,19 @@ pub struct MatchState {
     pub ball: BallState,
     pub last_touch: Side,
     pub holder_ticks: u32,
+    /// What the carrier is doing between decisions (decision cadence,
+    /// spec Fase 5 (c1)): only `Hold` or `Dribble` carry over.
+    pub carrier_plan: Action,
     pub phase_sm: PhaseStateMachine,
     /// Phases computed at the current tick, `[home, away]`.
     pub phases: [Phase; 2],
     pub second_half: bool,
     pub finished: bool,
-    pub tuning: AnchorTuning,
+    pub tuning: TuningParams,
     pub events: EventLog,
+    /// Kick time of the last through ball (diagnostics only).
+    #[cfg(feature = "diagnostics")]
+    pub through_kick_ms: Option<u32>,
 }
 
 impl MatchState {
@@ -160,26 +186,14 @@ impl MatchState {
         &mut self.teams[side_index(side)]
     }
 
-    /// Ball position at the current tick.
-    #[must_use]
-    pub fn ball_pos(&self) -> Vec3 {
-        self.ball_pos_at(self.now_ms())
-    }
-
-    /// Ball position at `t_ms` (valid between this tick and the next).
+    /// Ball position at `t_ms` (valid between this tick and the next). Used
+    /// for sampling; inside the tick use `TickFrame::ball`.
     #[must_use]
     pub fn ball_pos_at(&self, t_ms: u32) -> Vec3 {
         match self.ball {
             BallState::Held { holder } => {
                 let p = &self.players[holder as usize];
-                // Ball sits half a metre ahead of the carrier, toward goal.
-                let ahead = self.attacking(p.side);
-                let dx = match ahead {
-                    GoalEnd::Right => 0.5,
-                    GoalEnd::Left => -0.5,
-                };
-                let pos = p.pos(t_ms);
-                Vec3::new(pos.x + dx, pos.y, 0.0)
+                crate::tick_frame::carried_ball(p.pos(t_ms), self.attacking(p.side))
             }
             BallState::Flight { flight, .. } => flight.pos_at(t_ms),
             BallState::Dead(r) => r.spot.extend(0.0),

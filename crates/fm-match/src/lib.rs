@@ -16,9 +16,16 @@ pub mod parity;
 pub mod phase;
 pub mod resolver;
 pub mod role;
+pub mod runs;
 pub mod snapshot;
 pub mod state;
 pub mod tactics;
+#[cfg(test)]
+mod test_support;
+pub mod tick_frame;
+pub mod tuning;
+pub mod value;
+pub mod xg;
 
 pub use anchor::{AnchorTuning, FormationAnchor, PhaseShape};
 pub use ball::BallFlight;
@@ -34,3 +41,5 @@ pub use role::{RoleBehavior, RoleContext, RoleIntent};
 pub use snapshot::{LodLevel, MatchSnapshot, PlayerSnapshot};
 pub use state::MatchState;
 pub use tactics::{LineHeight, Mentality, Tactics, Width};
+pub use tick_frame::TickFrame;
+pub use tuning::TuningParams;
