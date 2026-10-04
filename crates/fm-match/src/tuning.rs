@@ -555,7 +555,10 @@ impl Default for DefendingTuning {
             contain_mid: (2.0, 3.0),
             contain_far: (3.0, 4.0),
             contain_urgency: 1.0,
-            challenge_threshold: 1.15,
+            // Calibrated against the engine with movement physics: ~73
+            // challenges and ~21 fouls a match (real ~70 / ~22). The old
+            // 1.15 came from the arcade engine and gave ~8.
+            challenge_threshold: 0.97,
             challenge_base: 0.0,
             w_goal_side: 0.4,
             w_fresh: 0.25,
@@ -582,9 +585,11 @@ impl Default for DisciplineTuning {
             foul_range: (0.05, 0.45),
             foul_from_behind: 0.2,
             own_box_factor: 0.05,
-            booked_factor: 0.3,
-            // ~1 card per 6-7 fouls; direct reds ~1 per 250 fouls.
-            red_direct: 0.004,
+            // A booked player all but stops fouling: second yellows are
+            // ~0.1 a match in real football.
+            booked_factor: 0.1,
+            // ~1 card per 6-7 fouls; direct reds ~1 per 400 fouls.
+            red_direct: 0.0025,
             yellow_base: 0.07,
             yellow_aggression: 0.13,
         }

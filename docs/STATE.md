@@ -42,9 +42,10 @@ Caminho A**, não o passo 2 do item 5.
    dinâmica de profundidade estabilizar.
 3. Item 9: construção desde a defesa. **Adiado** (com o item 7) até fechar
    o time-box em curso: (1) reinícios corrigidos e (2) re-medidos —
-   feitos; perfil do custo no CI; **RETOMAR AQUI:** (3) por que saem ~6,5
-   botes por partida e não ~70; (4) por que o melhor passe vale 3× menos
-   que conduzir. Depois, decisão do usuário.
+   feitos; (3) botes e (4) valor do passe medidos; bote recalibrado (5B).
+   **RETOMAR AQUI:** (5C) medir o custo real da condução com o limiar
+   novo (`carry_cost`); se subiu, corrigir a decisão do portador; se não,
+   parar e reportar.
 4. Refazer o item 5 (passe em profundidade) sobre a física nova.
 5. Itens 6–8 (apoio sem bola → drible 1×1 → tabela).
 Depois: (c2) calibração, (d) comportamentos por papel, PR `fase-5` → `main`.
@@ -88,6 +89,9 @@ iniciados.
 | (reverts) | Revert de `2915e96` e `53f017a` (defesa acompanha o corredor) |
 | `2915e96` | Defesa acompanha o corredor — **revertido** (614,9M, +2,67%) |
 | `53f017a` | SPEC do commit 2 — **revertido** |
+| `b06c28e` | Medição: por que o passe vale 3× menos que conduzir |
+| `7be015d` | Medição: por que saem ~8 botes; perfil do custo dos reinícios |
+| `90f19b1` | CI guarda o perfil do callgrind; baseline 610.183.817 |
 | `8b59e10` | Reinícios não são mais perdidos na hora (610,2M, +2,10%, aceito) |
 | `1921910` | Medição: custo da condução na execução (e o bug dos reinícios) |
 | `d3150dc` | Medição: por que 52% dos passes saem na saída forçada |
@@ -168,19 +172,21 @@ iniciados.
   da correção dos reinícios): o portador sai do campo com a bola. Não
   investigado. Se for barato, vira commit próprio; se for estrutural
   (falta de limite da linha para o portador), vira fase.
-- **Saída forçada:** 51% dos passes saem na trava dos 5,5 s. Alarme do
-  item 9: acima de 55%, parar e reportar.
+- **Saída forçada:** 52% dos passes saem na trava dos 5,5 s, e não reage
+  ao bote (52–53% com 8 ou com 415 botes por partida). É decisão de
+  conduzir (90% dos casos); tratamento próprio pendente.
 - **Teste de faltas:** `match_statistics_are_plausible` tem piso de 2 faltas
   por partida (era 3; relaxado em 2026-10-03). É piso de regressão, não
   meta: o real é ~22 e o motor está em 2,8 (180 partidas).
-- **Acerto de passe 56%** (real ~80%): invariante 18 do lado do passe →
+- **Acerto de passe 59%** (real ~80%): invariante 18 do lado do passe →
   Caminho A passo 4 ou (c2).
-- **Botes 10 / faltas 3,6** (real ~70 / 22): calibração em (c2).
-- **Posse 4-4-2 × 4-3-3 não convergida:** o 4-4-2 fica com 57–58% nas
+- **Botes 74,5 / faltas 21,3** (real ~70 / 22): recalibrados em 2026-10-03
+  (`challenge_threshold` 0,97). Amarelos 2,95 (real ~4).
+- **Posse 4-4-2 × 4-3-3 não convergida:** o 4-4-2 fica com ~58% nas
   duas orientações, com teto de corredores 1, 2 ou sem teto; sem corrida
   nenhuma, 54,3%. Com a física, parte da assimetria é da formação em si,
   não das corridas (SPEC, commit 1 do passo 2).
-- **Gols 5,3** por partida (real ~2,7); xG por chute 0,23 (real ~0,10).
+- **Gols 4,9** por partida (real ~2,7); xG por chute 0,21 (real ~0,10).
 
 ### Branches vivas
 | Branch | Papel |
@@ -268,8 +274,8 @@ Ver SPEC, Seção 0 e decisões das Fases 3–5. Os que mais pesam no dia a dia:
 - **Kickoff sobreposto:** as âncoras de bola parada põem atacantes no campo
   adversário no pontapé inicial. A regra do kickoff não é aplicada. Alvo:
   Fase 5 (d) ou 6.
-- **Vermelhos** 0,53/partida (real 0,15) e **pênaltis** 0,02 (real 0,3).
-  Alvo: Fase 6.
+- **Pênaltis** 0,005 por partida (real ~0,3). Alvo: Fase 6. (Os **vermelhos**
+  estão em 0,17, real ~0,15; o "0,53" antigo era de antes da física.)
 - **Tempo de bola parada** 4% (real ~35%): reinícios curtos demais. Entra em
   (c2).
 - **Impedimento não apitado** (decisão): infla gols em profundidade. Viés
