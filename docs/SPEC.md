@@ -1661,6 +1661,51 @@ Não há decisão de "dar o bote ou conter": toda oportunidade é aproveitada.
     passo de 5 m; a decisão até superestima o risco de conduzir. O que
     está fora do real é a execução: a defesa não dá o bote (commit 3) e o
     passe falha demais (dívida "execução de passes").
+- **Recalibração do bote (2026-10-03) `[ALTERADO v2.1]`.** Time-box: 5A
+  varre, 5B aplica, 5C mede o custo real da condução com o limiar novo.
+  - **5A — varredura do `challenge_threshold` (180 partidas por
+    orientação, média das duas; `foul_base` atual salvo indicação):**
+
+    | Limiar | Botes | Faltas | Falta/bote | Vermelhos | Pênaltis | Gols | Saída forçada | Passes |
+    |---|---|---|---|---|---|---|---|---|
+    | 1,15 (antes) | 7,7 | 2,9 | 37% | 0,02 | 0,00 | 4,38 | 52% | 916 |
+    | 1,10 | 15 | 5,6 | 37% | 0,04 | 0,00 | 4,42 | 52% | 915 |
+    | 1,00 | 54 | 17,7 | 33% | 0,30 | 0,01 | 4,44 | 52–53% | 901 |
+    | 1,00 + `foul_base` 0,18 | 54 | 14,4 | 27% | 0,23 | 0,01 | 4,73 | 52% | 904 |
+    | 0,97 | 73 | 22,6 | 31% | 0,46 | 0,01 | 4,87 | 52% | 892 |
+    | 0,90 | 132 | 39,0 | 30% | 0,90 | 0,01 | 5,00 | 53% | 868 |
+    | 0,70 | 415 | 96,7 | 23% | 3,89 | 0,10 | 7,21 | 52% | 725 |
+    | Real | ~70 | ~22 | ~31% | ~0,15 | ~0,3 | ~2,7 | — | ~900 |
+
+    (0,95, só 30 partidas: 86 botes, 25,8 faltas.) A taxa de falta por
+    bote cai sozinha quando o limiar baixa: reduzir `foul_base` não é
+    necessário.
+  - **A saída forçada não reage ao bote:** 52–53% do limiar 1,15 ao 0,70,
+    mesmo com 415 botes por partida. Consertar o bote não resolve a
+    condução; são problemas separados. Leitura do código, não medição: a
+    chance de manter a bola que a decisão usa para conduzir é constante
+    (97% no espaço), independente do que a defesa faz.
+  - **5B — aplicado:** `challenge_threshold` **0,97** (era 1,15, herdado
+    do motor arcade). Cartões: com mais botes os vermelhos subiam para
+    0,46; a maior parte era segundo amarelo. `booked_factor` 0,3 → **0,1**
+    (jogador com amarelo quase não faz falta) e `red_direct` 0,004 →
+    **0,0025**. A alternativa de cortar pela metade a taxa de amarelo foi
+    medida e descartada: amarelos 1,75 (real ~4) e faltas 25,2.
+
+    | Métrica (180 partidas por orientação) | Antes | 5B | Real |
+    |---|---|---|---|
+    | Botes | 7,7 | 74,5 | ~70 |
+    | Faltas | 2,9 | 21,3 | ~22 |
+    | Falta por bote | 37% | 29% | ~31% |
+    | Amarelos | 0,41 | 2,95 | ~4 |
+    | Vermelhos | 0,02 | 0,17 | ~0,15 |
+    | Pênaltis | 0,00 | 0,005 | ~0,3 |
+    | Gols | 4,38 | 4,88 | ~2,7 |
+    | Passes (acerto) | 916 (59%) | 895 (59%) | ~900 (80%) |
+    | Saída forçada | 52% | 52% | — |
+    | Posse do 4-4-2 (casa / fora) | 58,2% / 58,6% | 57,7% / 58,4% | — |
+
+    Golden de paridade regenerado. Instruções: a medir no CI.
 - **Sinais registrados (não calibrar agora):**
   - **Posse do mandante:** 73% (arcade) → 56,9% (física no lance) →
     42,5% (física + engajamento). A assimetria mudou com a física, não com
