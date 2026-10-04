@@ -1,6 +1,13 @@
 <script lang="ts">
   import { loadEngineInfo, startMatch, type EngineInfo, type MatchHandle } from '../engine-bridge';
-  import { STATE_FINISHED, STATE_PAUSED, newFrame } from '../engine-bridge/sab';
+  import {
+    SAMPLE_INTERVAL_MS,
+    STATE_FINISHED,
+    STATE_PAUSED,
+    STATE_RUNNING,
+    newFrame,
+  } from '../engine-bridge/sab';
+  import { FrameInterpolator } from '../render/interpolate';
 
   type State =
     | { readonly kind: 'loading' }
@@ -30,13 +37,24 @@
     let handle: MatchHandle | undefined;
     let stopped = false;
     const frame = newFrame();
+    let interpolator: FrameInterpolator | undefined;
+    // Tick-to-draw latency (spec Fase 6, 6A): the frame drawn is one sample
+    // interval behind the worker's clock, plus however stale that clock is.
+    const latency = { frames: 0, sumMs: 0, maxMs: 0 };
+    (globalThis as { fmLatency?: typeof latency }).fmLatency = latency;
     const tick = (): void => {
-      if (handle === undefined) return;
-      if (handle.reader.latest(frame)) {
+      if (handle === undefined || interpolator === undefined) return;
+      const s = handle.reader.state();
+      if (interpolator.at(interpolator.renderTimeMs(), frame)) {
         clock = formatClock(frame.tMs);
         score = `${frame.homeGoals} × ${frame.awayGoals}`;
+        if (s === STATE_RUNNING) {
+          const ms = SAMPLE_INTERVAL_MS / speed + handle.reader.stalenessMs();
+          latency.frames += 1;
+          latency.sumMs += ms;
+          latency.maxMs = Math.max(latency.maxMs, ms);
+        }
       }
-      const s = handle.reader.state();
       status = s === STATE_FINISHED ? 'fim de jogo' : s === STATE_PAUSED ? 'pausado' : 'ao vivo';
       raf = requestAnimationFrame(tick);
     };
@@ -48,6 +66,7 @@
         }
         handle = h;
         match = h;
+        interpolator = new FrameInterpolator(h.reader);
         raf = requestAnimationFrame(tick);
       },
       (err: unknown) => {

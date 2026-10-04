@@ -2097,7 +2097,8 @@ recalibrar contra a coluna "Real". As constantes estão em `AnchorTuning`,
       bytes por posição (208), `[4]` estado (rodando, pausado, fim),
       `[5]` velocidade × 1000, `[6]` seed, `[7]` relógio da partida no
       worker (ms; a main desenha um intervalo de amostra atrás dele),
-      `[8..16]` reservado.
+      `[8]` relógio de parede do último passo do worker (para medir a
+      latência), `[9..16]` reservado.
     - Posição, 208 bytes: i32 `tick`; i32 `t_ms`; i32 placar (um byte
       por time); i32 fases dos dois times; i32 máscara de 22 bits dos
       expulsos; f32 × 3 bola (x, y, z); f32 × 44 jogadores (x, y), na

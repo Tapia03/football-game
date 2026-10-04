@@ -18,6 +18,16 @@ export const H_SPEED = 5;
 export const H_SEED = 6;
 /** The worker's match clock (ms since kick-off). */
 export const H_NOW = 7;
+/**
+ * Wall-clock time of the worker's last step (ms, see `wallClockMs`): lets
+ * the main thread measure how stale the match clock is when it draws.
+ */
+export const H_STEP_WALL = 8;
+
+/** A wall clock both threads share, folded into 31 bits. */
+export function wallClockMs(): number {
+  return Math.floor(performance.timeOrigin + performance.now()) & 0x7fff_ffff;
+}
 
 /** Snapshots per logical tick (the 60 Hz grid) and their spacing. */
 export const SAMPLES_PER_TICK = 6;
@@ -111,6 +121,16 @@ export class SnapshotReader {
   /** The worker's match clock (ms since kick-off). */
   clockMs(): number {
     return Atomics.load(this.ints, H_NOW);
+  }
+
+  /** Real milliseconds since the worker last advanced the match. */
+  stalenessMs(): number {
+    return (wallClockMs() - Atomics.load(this.ints, H_STEP_WALL)) & 0x7fff_ffff;
+  }
+
+  /** Match time of snapshot `n` (only meaningful while it is in the ring). */
+  timeOf(n: number): number {
+    return this.ints[HEADER_WORDS + (n % RING_SLOTS) * SLOT_WORDS + S_T_MS] ?? 0;
   }
 
   header(index: number): number {

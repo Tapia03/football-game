@@ -5,7 +5,14 @@
 // and reads the ring.
 
 import init, { EngineHost } from '../engine-bridge/pkg/fm_wasm.js';
-import { H_SPEED, H_STATE, STATE_PAUSED, STATE_RUNNING } from '../engine-bridge/sab';
+import {
+  H_SPEED,
+  H_STATE,
+  H_STEP_WALL,
+  STATE_PAUSED,
+  STATE_RUNNING,
+  wallClockMs,
+} from '../engine-bridge/sab';
 
 export type EngineCommand =
   | { readonly type: 'start'; readonly seed: number; readonly speed: number; readonly buffer: SharedArrayBuffer }
@@ -51,6 +58,7 @@ function step(): void {
   const dt = Math.min(now - last, MAX_STEP_MS);
   last = now;
   host.advance(dt * speed);
+  if (header !== undefined) Atomics.store(header, H_STEP_WALL, wallClockMs());
   if (host.finished()) running = false;
 }
 
