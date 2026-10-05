@@ -2,7 +2,7 @@
 
 Resumo de uma tela que sobrevive a compactações de sessão. A fonte de verdade
 de arquitetura e regras é o [`docs/SPEC.md`](SPEC.md); este arquivo só diz
-*onde estamos*. Atualizado em **2026-10-05** (Fase 6 completa — 6A, 6B, 6C, 6D — em PR para a `main`).
+*onde estamos*. Atualizado em **2026-10-05** (Fase 6 mergeada; Fase 7A — persistência local — pronta, em PR).
 
 ## Ordem geral (redefinida pelo usuário em 2026-10-05)
 Fases 0–6 fechadas. A ordem nova, que **substitui** a anterior ("Bola
@@ -38,6 +38,16 @@ para orientar a próxima rodada de refinamento.
   domínio por `MessagePort`. **A fonte de verdade local passou a ser o
   SQLite em OPFS** (era IndexedDB); o sync por chunk será redesenhado na
   Fase 10. Branch `fase-7a`, da `main` depois do merge do PR #7.
+  **Feita (2026-10-05), em PR.** O que o CI mostrou: Chromium e Firefox
+  têm OPFS; o WebKit do Playwright não tem `navigator.storage` e roda só
+  no fallback. Tela mínima em `?view=saves` (`&storage=idb` força o
+  fallback). Detalhes e achados no SPEC.
+  - **A verificar no Safari real** (não há como no CI): se o OPFS
+    funciona, e se o Worker carrega logo depois de recarregar a página (no
+    WebKit do Playwright falha por ~1 s; o cliente tenta de novo).
+  - **Para a 7B:** o Worker de mundo fala com o banco por `MessagePort`
+    (`connect()`); entram `world.load` e `world.commitDay` (uma transação
+    por dia) e o teste de determinismo por `save.digest`.
 - **7B — Mundo mínimo e calendário:** bootstrap determinístico (1 liga,
   20 clubes, ~500 jogadores sintéticos — sem a base FM real), round-robin
   de 38 rodadas / 380 partidas, `WorldSimulator` num Worker com LOD

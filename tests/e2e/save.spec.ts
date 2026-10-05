@@ -102,8 +102,8 @@ async function digestOf(page: Page, id: string): Promise<string> {
  * test skipped (the `idb` run of the same test covers that browser).
  */
 async function open(page: Page, project: string): Promise<Storage> {
-  await page.goto('/?view=saves');
-  await expect(page.getByTestId('saves-placeholder')).toBeVisible();
+  await page.goto('/?view=blank');
+  await expect(page.getByTestId('blank')).toBeVisible();
   await start(page);
   const storage = await ask<Storage>(page, 'storage.info');
   console.log(

@@ -2667,6 +2667,50 @@ depois. O jogo ainda não tem nome ("o jogo", "o projeto").
   e operações básicas, só com `opfs-sahpool`; (3) detecção de OPFS e
   fallback IndexedDB; (4) troca atômica, export, import, limpeza de
   órfãos; (5) tela mínima, `persist()`, aviso de segunda aba.
+- **7A implementada (2026-10-05), como ficou e o que o CI mostrou:**
+  - **OPFS nos navegadores do CI:** Chromium e Firefox têm; o **WebKit
+    do Playwright não tem `navigator.storage`** (nem OPFS, nem
+    `persist()`): nele o Worker cai sozinho no IndexedDB ("sem OPFS:
+    Missing required OPFS APIs") e a tela mostra persistência
+    "desconhecido". Todo teste do Worker roda duas vezes — pedindo OPFS e
+    forçando IndexedDB (`?storage=idb` na tela, `storage: 'idb'` no
+    Worker); a variante OPFS é pulada onde não há OPFS.
+  - **Testes (CI):** 16 do Worker (8 por armazenamento) + 4 da tela, em
+    cada navegador. Bench de instruções em +0,00% (nenhum crate Rust
+    mudou).
+  - **Tamanho:** `sqlite3.wasm` 869 kB (407 kB gzip) e o Worker de banco
+    224 kB, carregados só quando o banco é aberto.
+  - **"Arquivo `.tmp`" na prática:** o import grava o arquivo novo já
+    com o nome final (`save-<id>.<8 hex>.sqlite`); enquanto o catálogo
+    não aponta para ele, ele é **de ninguém** — é a referência no
+    catálogo, não um sufixo, que decide o que é save e o que é órfão. A
+    limpeza no boot remove tudo o que nenhuma linha referencia (menos o
+    journal de um arquivo referenciado, que o SQLite ainda usa).
+  - **Testado com crash nos dois lados da troca:** o Worker é morto logo
+    antes e logo depois do commit do ponteiro. Antes: vale o save antigo
+    inteiro e o arquivo novo some no boot. Depois: vale o novo inteiro e
+    o antigo some no boot.
+  - **Migração:** exercitada com migrações de teste (v1 → v2, e uma
+    v2 → v3 que falha no meio): cadeia no open e no import, `.bak` antes
+    da cadeia e restaurado se ela falhar, versão mais nova recusada sem
+    tocar no arquivo.
+  - **`save.digest`:** SHA-256 do conteúdo de todas as tabelas (sem a
+    data das migrações). Dois saves com o mesmo conteúdo têm o mesmo
+    digest, mesmo com arquivos diferentes byte a byte; é o que a 7B usa
+    no teste de determinismo.
+  - **Pedidos em fila:** o Worker atende um pedido por vez, na ordem de
+    chegada (as operações ficaram assíncronas com o fallback).
+  - **`persist()`:** pedido uma vez (a resposta fica em `localStorage`);
+    o que a tela mostra é sempre `persisted()` de agora.
+  - **Achado no WebKit do Playwright:** criar o Worker de novo logo
+    depois de carregar o mesmo script (recarregar a página, ou matar e
+    recriar) falha com "Worker load was blocked by
+    Cross-Origin-Embedder-Policy"; um segundo depois carrega. O cliente
+    tenta de novo (até 5 vezes, com pausa crescente). **Não verificado no
+    Safari real.**
+  - **Página de teste:** `?view=saves` é a tela; `?view=blank` é uma
+    página vazia para os testes que dirigem o Worker direto (a tela
+    segura o lock de aba única e o pool).
 
 ## FASE 7 (numeração antiga; agora parte da Fase 9) — UI + Overlays Táticos
 - **Ordem (2026-10-05):** vem depois da fase "Bola longa + contraparte
