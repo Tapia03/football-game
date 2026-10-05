@@ -2,9 +2,26 @@
 
 Resumo de uma tela que sobrevive a compactações de sessão. A fonte de verdade
 de arquitetura e regras é o [`docs/SPEC.md`](SPEC.md); este arquivo só diz
-*onde estamos*. Atualizado em **2026-10-04** (Fase 5 (c1) mergeada; Fase 6 em andamento, parte 6A).
+*onde estamos*. Atualizado em **2026-10-05** (Fase 6 completa — 6A, 6B, 6C, 6D — em PR para a `main`).
 
-## Fase atual — Fase 6 (render), parte 6A
+## Ordem geral (decidida em 2026-10-05)
+**Fase 6 → "Bola longa + contraparte defensiva" → Fase 7.** O 6C-2 vem
+depois da fase de motor. Motivos:
+- O motor com 4,4 gols por partida (real ~2,7) é visivelmente errado;
+  construir a UI da Fase 7 em cima disso é chão ruim.
+- A UI da Fase 7 mostra o que essa fase muda: a linha de impedimento do
+  F3 passa a ter consequência quando o impedimento é apitado, e o painel
+  de pressing ganha outro peso quando a bola longa pune linha alta.
+- Os números de calibração vão se mexer (botes, faltas, posse, extremos
+  do pressing): telas de tática e estatísticas feitas antes seriam
+  ajustadas duas vezes.
+- O 6C-2 ("opções de passe", "zonas de pressing") expõe a avaliação de
+  passes do motor, justamente o que o patch do passe pelo alto altera.
+
+Sem lugar na ordem ainda: (c2) e (d) da Fase 5 (das quais depende o
+6C-bis), fadiga, IA tática.
+
+## Fase 6 (render) — completa, em PR
 **Fase 6 — Snapshot + Renderer2D + Canvas**, branch `fase-6` (criada de
 `main` em `6ae001a`, depois do merge do PR #6). Partes: **6A** infra de
 render (worker + SAB + interpolação) → 6B HUD e overlays → 6C painel
@@ -48,9 +65,13 @@ TS, malha como função WASM pura. Latência tick → desenho a 1×: média
   rodapé. Custo por quadro: +0,08 ms (HalfPitch), +0,44 ms (Tactical).
   Velocidades 1×/2×/5×/10×/30×/60×. Cinco goldens. Aprovado visualmente
   pelo usuário ("os 3 modos estão ótimos"). Zoom/pan manuais ficam para
-  a Fase 7. **Pendente: 6C-2**
-  (overlays de zonas de pressing e opções de passe; trabalho de motor +
-  render, desenho próprio).
+  a Fase 7.
+- **6C-2: pendente, depois da fase "Bola longa"** (overlays de zonas de
+  pressing e opções de passe; trabalho de motor + render, desenho e PR
+  próprios). Não entra no PR da Fase 6.
+- **Fase 7, já registrado:** botão **"Simular partida"** (LOD Abstract,
+  tela de resultado com placar, estatísticas e eventos, botão voltar). A
+  infraestrutura existe; o custo é UI.
 
 **Bench:** referência atualizada para 582.952.421 instruções no fim do 6C
 (era 590.430.506; caiu 1,27% no 6C.2 com a paridade inalterada).
@@ -135,7 +156,17 @@ fechar (c1) no motor do 5D-2 (`f17b1d9`); PR #6 mergeado em `6ae001a`.
 - **Por que não foi aplicado:** falta a contraparte defensiva. A bola longa
   por cima da defesa passa a chegar e nada a contém.
 
-### Fase futura (sem prazo): "Bola longa + contraparte defensiva"
+### Próxima fase: "Bola longa + contraparte defensiva" (depois da Fase 6, antes da Fase 7)
+- **Branch:** nasce da `main` depois do merge da Fase 6.
+- **Quatro componentes, time-box por componente (não escopo fechado):**
+  patch do passe pelo alto (pronto; provavelmente o primeiro, para medir
+  o efeito puro), goleiro saindo do gol, impedimento apitado, marcação
+  de corredores redesenhada.
+- **Para liberar a Fase 7:** gols ≤ 3,5 por partida **e** os quatro
+  componentes no lugar. Se a marcação de corredores falhar de novo, o
+  número não libera sozinho. Se passar de 3,5: PARAR e reescopar.
+- **3,5 é "aceitável", não "bom"** (real ~2,7): se fechar em ≤ 3,5 e a
+  Fase 7 abrir, a diferença fica como dívida no backlog de refinamento.
 - **Pré-requisito:** aplicar o patch acima.
 - **Escopo:** (1) goleiro saindo do gol (interceptar, cortar cruzamento,
   líbero) — o antigo passo 2.5; (2) impedimento apitado, com tiro livre;

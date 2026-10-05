@@ -2524,7 +2524,14 @@ recalibrar contra a coluna "Real". As constantes estão em `AnchorTuning`,
   - FPS medido e informado (não é gate).
 
 ## FASE 7 — UI + Overlays Táticos
+- **Ordem (2026-10-05):** vem depois da fase "Bola longa + contraparte
+  defensiva" (ver STATE).
 - Telas: menu, elenco, táticas e calendário.
+- **Botão "Simular partida":** roda a partida em LOD Abstract e mostra a
+  tela de resultado (placar, estatísticas, eventos), com botão voltar.
+- No painel tático só o lado do clube do usuário é controlável (o seletor
+  Casa/Visitante do 6C some ou trava).
+- Candidato: zoom e pan manuais da câmera (fora do 6D).
 - Overlays via `Renderer2D`: linha de impedimento, zonas de pressão,
   linhas de formação, linhas de passe e setas de instrução.
 - HUD.
