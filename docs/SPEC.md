@@ -2887,6 +2887,91 @@ depois. O jogo ainda não tem nome ("o jogo", "o projeto").
   - **A distância entre campeão e lanterna ficou larga** com todos em
     4-4-2: 93 a 15 pontos (seed 2026). É ajuste do ruído do draft
     (`DRAFT_NOISE` em `fm-world`), para (c2).
+- **7B.3 — `fm-persistence`, migração v2 e operações `world.*` (desenho
+  aprovado em 2026-10-05).** Não faz `WorldHost`, Worker de mundo,
+  progresso nem tela (commits 4 e 5): aqui o banco é exercitado por
+  testes.
+  - **Codecs em Rust (`fm-persistence`), sem `unsafe`, little-endian
+    explícito, versão do layout no primeiro byte:**
+    - ficha estática do jogador, **60 bytes**: versão (1), os cinco
+      blocos de atributos (41), biografia (12: nome, sobrenome,
+      nacionalidade e ano de nascimento em `u16`; semana de nascimento,
+      altura, peso e pé em `u8`), posição (1), potencial (1), clube (4,
+      `u32::MAX` = sem clube);
+    - estado dinâmico, **14 bytes**: versão (1), fadiga, condição, forma,
+      moral e minutos da semana em `u16`, semanas de lesão, tipo de lesão
+      e semanas sem jogar em `u8`;
+    - onze inicial do clube, **44 bytes** (11 ids em `u32`).
+    - Decodificar **valida** (versão conhecida, enums na faixa, atributos
+      em 1..=100): blob inválido vira erro, nunca estado torto.
+  - **`WorldSave` (`fm-world`):** estrutura só de dados, com
+    `World::to_save()` e `World::from_save()`. Leva os blobs e as colunas
+    que as telas consultam (nome, posição, ano de nascimento, overall,
+    condição, moral, semanas de lesão), calculadas no Rust.
+  - **Migração v2 — recria `players`, `clubs` e `matches`** em vez de
+    alterá-las coluna a coluna (aprovado): as três estão vazias, por
+    desenho, em todo save v1 (a 7A nunca gravou nelas); recriar dá o
+    formato final com `NOT NULL` onde deve e sem coluna morta.
+    - **Guarda:** a migração confere que as três estão vazias. Se alguma
+      tiver linha, falha — a cadeia desfaz e o arquivo volta ao que era —
+      e **o erro diz qual tabela tinha linhas e quantas** (um v1 que
+      ganhou dados por bug, corrupção ou código antigo tem de ser
+      identificável). A informação vai na mensagem do erro de migração
+      que o pedido devolve, não num log de console.
+    - **`players`:** sai `attributes`; entram `sheet` (a ficha inteira,
+      60 bytes), `potential` e `injury_weeks`. Ficam `id`, `club_id`,
+      `name`, `position`, `birth_year`, `overall`, `condition`, `morale`,
+      `dynamic` (14 bytes).
+    - **`clubs`:** entram `strength` e `formation`.
+    - **`matches`:** entram `home_shots`, `away_shots`,
+      `home_on_target`, `away_on_target`; **`seed` muda de tipo: de
+      `INTEGER` para `BLOB` de 8 bytes** (little-endian). É mudança de
+      schema, não conversão de valor: a seed tem 64 bits sem sinal, o
+      inteiro do SQLite tem sinal e o JavaScript só guarda 53 bits com
+      exatidão.
+    - **`tactics`:** fica como na v1 (`slots` com os 44 bytes do onze).
+    - **`meta`:** chaves novas `world_seed` (texto: o `u64` em decimal),
+      `day`, `season_year`, `user_club`.
+  - **Operações novas no Worker de banco, sobre o save aberto:**
+    - `world.create`: grava o mundo recém-gerado numa transação; recusa
+      se o save já tem mundo (`world-exists`).
+    - `world.load`: devolve o `WorldSave`, blobs transferidos. **Save
+      sem mundo: erro `no-world`** ("este save não tem mundo; foi criado
+      antes da Fase 7B"), sem quebrar.
+    - `world.commitDay`: resultados do dia, estado dinâmico e colunas de
+      tela dos 500 jogadores e o dia novo, **numa transação**. Só aceita
+      o dia seguinte ao gravado: repetido ou fora de ordem é recusado
+      (`out-of-order`) — defesa contra commit duplo se o Worker de mundo
+      reiniciar no meio.
+    - `world.standings` e `world.round`: classificação e resultados de
+      uma rodada, por consulta sobre `matches`.
+    - O catálogo (clube, temporada, dia) é atualizado **depois** do
+      commit do arquivo — são dois arquivos, não dá para ser a mesma
+      transação; o `save.open` seguinte corrige o catálogo a partir do
+      `meta`.
+  - **Testes.**
+    - Nativo: os 500 jogadores codificados e decodificados dão o mesmo
+      banco, bit a bit; **10 dias, salvar, carregar, mais 10 dias = 20
+      dias direto**; blob corrompido ou de versão desconhecida recusado.
+    - **Fixture v1 de verdade** (`tests/fixtures/save-v1-7a.sqlite`,
+      exportada pelo código da 7A): o código da 7B a importa, migra para
+      v2, o que estava no `meta` continua lá e `world.load` responde
+      `no-world` sem quebrar. É o teste que mais importa deste commit.
+    - Guarda falhando: um v1 com linha em `players` não migra, o erro
+      nomeia a tabela e a contagem, e o arquivo fica como estava.
+    - `world.create` → `world.load` devolve os mesmos bytes; criar duas
+      vezes é recusado. `world.commitDay` em ordem funciona; repetido ou
+      pulando um dia é recusado e o save não muda. Worker morto no meio
+      de um `commitDay`: o save está no dia anterior, inteiro. A
+      classificação do banco bate com a soma dos resultados gravados.
+      Export e import de um save com mundo preservam o `save.digest`.
+  - **Fica para o commit 5:** comparar a classificação do Rust com a do
+    banco (precisa do `WorldHost`).
+  - **Tamanho do save:** medir e reportar. Até 1 MB continua barato
+    regravar o arquivo inteiro por dia no fallback IndexedDB; muito além
+    disso, parar e conversar.
+  - **Sub-commits:** (1) codecs; (2) `WorldSave`; (3) migração v2 com a
+    guarda; (4) operações `world.*`; (5) medições no SPEC e no STATE.
 
 ## FASE 7 (numeração antiga; agora parte da Fase 9) — UI + Overlays Táticos
 - **Ordem (2026-10-05):** vem depois da fase "Bola longa + contraparte
