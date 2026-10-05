@@ -71,8 +71,32 @@ export type Database = {
   terminate(): void;
 };
 
-/** Starts the database worker; resolves once it has opened its storage. */
-export function startDatabase(options: DbOptions = {}): Promise<Database> {
+/** How many times the worker is started before giving up, and the pause. */
+const START_ATTEMPTS = 5;
+const START_RETRY_MS = 250;
+
+/**
+ * Starts the database worker; resolves once it has opened its storage.
+ *
+ * The start is retried: WebKit refuses to load a worker script ("blocked
+ * by Cross-Origin-Embedder-Policy") when the same script was loaded a
+ * moment before — a reload, or a worker just terminated — and loads it
+ * fine a second later. Seen in the WebKit of the test runner (2026-10-05).
+ */
+export async function startDatabase(options: DbOptions = {}): Promise<Database> {
+  let failure: unknown;
+  for (let attempt = 0; attempt < START_ATTEMPTS; attempt += 1) {
+    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, START_RETRY_MS * attempt));
+    try {
+      return await startOnce(options);
+    } catch (err: unknown) {
+      failure = err;
+    }
+  }
+  throw failure;
+}
+
+function startOnce(options: DbOptions): Promise<Database> {
   const worker = new Worker(new URL('../workers/db.worker.ts', import.meta.url), {
     type: 'module',
   });
@@ -92,7 +116,10 @@ export function startDatabase(options: DbOptions = {}): Promise<Database> {
         });
       }
     });
-    worker.addEventListener('error', (e) => reject(new Error(e.message)));
+    worker.addEventListener('error', (e) => {
+      worker.terminate();
+      reject(new Error(e.message || 'o Worker de banco não carregou'));
+    });
     const init: DbControl = { type: 'init', options };
     worker.postMessage(init);
   });

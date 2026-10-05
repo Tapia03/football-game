@@ -1,9 +1,14 @@
 import { expect, test, type Page } from '@playwright/test';
 
-// Fase 7A: the database worker (SQLite WASM over `opfs-sahpool`). Each test
-// has a fresh browser context, so a fresh origin private file system.
+// Fase 7A: the database worker (SQLite WASM). Every test runs over both
+// kinds of storage: `opfs` (the `opfs-sahpool` VFS) and `idb` (the
+// IndexedDB fallback, forced). Each test has a fresh browser context, so a
+// fresh origin private file system and a fresh IndexedDB.
 
-type Options = { test?: { migrations?: 'v2' | 'v2-then-broken' } };
+type Backend = 'opfs' | 'idb';
+type Options = { storage?: 'idb'; test?: { migrations?: 'v2' | 'v2-then-broken' } };
+/** The storage the tests of the running `describe` ask for. */
+let wanted: Backend = 'opfs';
 type SaveInfo = {
   id: string;
   name: string;
@@ -25,11 +30,14 @@ type Hooks = {
 
 /** Starts (or restarts, after killing it) the database worker of the page. */
 async function start(page: Page, options: Options = { test: {} }): Promise<void> {
-  await page.evaluate(async (o) => {
-    const hooks = globalThis as unknown as Partial<Hooks> & Pick<Hooks, 'fmSave'>;
-    hooks.db?.terminate();
-    hooks.db = await hooks.fmSave.startDatabase(o);
-  }, options);
+  await page.evaluate(
+    async (o) => {
+      const hooks = globalThis as unknown as Partial<Hooks> & Pick<Hooks, 'fmSave'>;
+      hooks.db?.terminate();
+      hooks.db = await hooks.fmSave.startDatabase(o);
+    },
+    wanted === 'idb' ? { ...options, storage: 'idb' as const } : options,
+  );
 }
 
 /** One request; a failed one comes back as `{ error: code }`. */
@@ -47,12 +55,12 @@ async function ask<T>(page: Page, op: string, args: unknown = {}): Promise<T> {
   );
 }
 
-type Storage = { backend: 'opfs' | 'none'; sqlite: string; detail?: string };
+type Storage = { backend: Backend | 'none'; sqlite: string; detail?: string };
 
 /**
- * Opens the quiet page and the database. Where the browser has no usable
- * OPFS the test is skipped, and the log says so: the fallback (IndexedDB)
- * is the next commit's.
+ * Opens the quiet page and the database. Asked for OPFS, a browser without
+ * it falls back to IndexedDB by itself: that is checked, logged, and the
+ * test skipped (the `idb` run of the same test covers that browser).
  */
 async function open(page: Page, project: string): Promise<Storage> {
   await page.goto('/?view=saves');
@@ -60,13 +68,25 @@ async function open(page: Page, project: string): Promise<Storage> {
   await start(page);
   const storage = await ask<Storage>(page, 'storage.info');
   console.log(
-    `[7A storage ${project}] backend ${storage.backend}, sqlite ${storage.sqlite}${storage.detail === undefined ? '' : ` — ${storage.detail}`}`,
+    `[7A storage ${project}] asked ${wanted}, got ${storage.backend}, sqlite ${storage.sqlite}${storage.detail === undefined ? '' : ` — ${storage.detail}`}`,
   );
-  test.skip(storage.backend !== 'opfs', `no OPFS in this browser: ${storage.detail ?? ''}`);
+  if (wanted === 'idb') {
+    expect(storage.backend).toBe('idb');
+  } else if (storage.backend !== 'opfs') {
+    // No OPFS: the worker must have fallen back, saying why.
+    expect(storage.backend).toBe('idb');
+    expect(storage.detail).toMatch(/^sem OPFS: /);
+  }
+  test.skip(storage.backend !== wanted, `no OPFS in this browser: ${storage.detail ?? ''}`);
   return storage;
 }
 
-test.describe('Fase 7A: local persistence (SQLite WASM in the database worker)', () => {
+for (const backend of ['opfs', 'idb'] as const) {
+test.describe(`Fase 7A: local persistence (SQLite WASM in the database worker, ${backend})`, () => {
+  test.beforeEach(() => {
+    wanted = backend;
+  });
+
   test('saves: create, list, open, delete; the catalog points at one file a save', async ({
     page,
   }, testInfo) => {
@@ -213,3 +233,4 @@ test.describe('Fase 7A: local persistence (SQLite WASM in the database worker)',
     expect(await ask(page, 'meta.get', { key: 'day' })).toBe(21);
   });
 });
+}

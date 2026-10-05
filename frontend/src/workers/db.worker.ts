@@ -1,14 +1,13 @@
 // Database worker (spec Fase 7A): the only place of the page that opens the
 // save files and speaks SQL. SQLite (official WASM build) over the
-// `opfs-sahpool` VFS: synchronous access handles of the origin private file
-// system, held by this worker alone. The page and the other workers ask for
-// domain operations (`save/protocol.ts`), never for SQL.
+// `opfs-sahpool` VFS — synchronous access handles of the origin private file
+// system, held by this worker alone — or, where there is no OPFS, in memory
+// with each file stored whole in IndexedDB (`save/files.ts`). The page and
+// the other workers ask for domain operations (`save/protocol.ts`), never
+// for SQL.
 
-import sqlite3InitModule, {
-  type Database,
-  type SAHPoolUtil,
-  type SqlValue,
-} from '@sqlite.org/sqlite-wasm';
+import sqlite3InitModule, { type Database, type SqlValue } from '@sqlite.org/sqlite-wasm';
+import { openIdb, openOpfs, type Files } from '../save/files';
 import {
   MigrationFailedError,
   NewerVersionError,
@@ -43,8 +42,6 @@ import {
 const CATALOG_FILE = '/catalog.sqlite';
 /** Suffix of the copy of a save made before its migration chain runs. */
 const BACKUP_SUFFIX = '.bak';
-/** Pool slots kept free beyond what the saves use (journals, copies). */
-const SPARE_SLOTS = 6;
 
 /** An error with a code the caller can act on. */
 class OpError extends Error {
@@ -57,7 +54,7 @@ class OpError extends Error {
 }
 
 type Storage = {
-  readonly pool: SAHPoolUtil;
+  readonly files: Files;
   readonly catalog: Database;
 };
 
@@ -65,7 +62,7 @@ let options: DbOptions = {};
 let info: StorageInfo = { backend: 'none', sqlite: '', detail: 'not started' };
 let storage: Storage | undefined;
 /** The save that is open, if any. */
-let current: { readonly id: string; readonly db: Database } | undefined;
+let current: { readonly id: string; readonly name: string; readonly db: Database } | undefined;
 
 const fileOf = (id: string): string => `/save-${id}.sqlite`;
 
@@ -92,69 +89,50 @@ function saveMigrations(): readonly Migration[] {
   }
 }
 
-function openFile(pool: SAHPoolUtil, name: string): Database {
-  const db = new pool.OpfsSAHPoolDb(name);
+async function openFile(files: Files, name: string): Promise<Database> {
+  const db = await files.open(name);
   db.exec('PRAGMA foreign_keys = ON');
   return db;
-}
-
-/** Removes a file of the pool and its rollback journal, if they exist. */
-function removeFile(pool: SAHPoolUtil, name: string): void {
-  pool.unlink(name);
-  pool.unlink(`${name}-journal`);
-}
-
-/** Copies `from` over `to` (both closed). */
-function copyFile(pool: SAHPoolUtil, from: string, to: string): void {
-  const bytes = pool.exportFile(from);
-  removeFile(pool, to);
-  pool.importDb(to, bytes);
 }
 
 /**
  * A `.bak` left behind means a migration chain did not finish: the copy is
  * the save as it was, so it goes back in place.
  */
-function restoreBackups(pool: SAHPoolUtil): void {
-  for (const name of pool.getFileNames()) {
+async function restoreBackups(files: Files): Promise<void> {
+  for (const name of await files.list()) {
     if (!name.endsWith(BACKUP_SUFFIX)) continue;
-    copyFile(pool, name, name.slice(0, -BACKUP_SUFFIX.length));
-    removeFile(pool, name);
+    await files.copy(name, name.slice(0, -BACKUP_SUFFIX.length));
+    await files.flush([], [name]);
+  }
+}
+
+const reason = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+/** OPFS when the browser has it, IndexedDB otherwise (or when asked for). */
+async function openFiles(
+  sqlite3: Awaited<ReturnType<typeof sqlite3InitModule>>,
+): Promise<{ files: Files; detail?: string }> {
+  if (options.storage === 'idb') return { files: await openIdb(sqlite3), detail: 'IndexedDB pedido' };
+  try {
+    return { files: await openOpfs(sqlite3) };
+  } catch (err: unknown) {
+    return { files: await openIdb(sqlite3), detail: `sem OPFS: ${reason(err)}` };
   }
 }
 
 async function boot(): Promise<void> {
   const sqlite3 = await sqlite3InitModule();
   const sqlite = sqlite3.version.libVersion;
-  let pool: SAHPoolUtil | undefined;
-  let failure: unknown;
-  // The handles of a worker that was just terminated (a reload, a crash)
-  // take a moment to be released: retry before giving up.
-  for (let attempt = 0; attempt < 20 && pool === undefined; attempt += 1) {
-    try {
-      pool = await sqlite3.installOpfsSAHPoolVfs({
-        name: 'fm-saves',
-        directory: '.fm-saves',
-        initialCapacity: SPARE_SLOTS + 4,
-      });
-    } catch (err: unknown) {
-      failure = err;
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+  info = { backend: 'none', sqlite, detail: 'not started' };
+  const { files, detail } = await openFiles(sqlite3);
+  await restoreBackups(files);
+  const catalog = await openFile(files, CATALOG_FILE);
+  if (migrate(wrap(catalog), CATALOG_MIGRATIONS).length > 0) {
+    await files.flush([{ name: CATALOG_FILE, db: catalog }]);
   }
-  if (pool === undefined) {
-    info = {
-      backend: 'none',
-      sqlite,
-      detail: failure instanceof Error ? failure.message : String(failure),
-    };
-    return;
-  }
-  restoreBackups(pool);
-  const catalog = openFile(pool, CATALOG_FILE);
-  migrate(wrap(catalog), CATALOG_MIGRATIONS);
-  storage = { pool, catalog };
-  info = { backend: 'opfs', sqlite };
+  storage = { files, catalog };
+  info = detail === undefined ? { backend: files.backend, sqlite } : { backend: files.backend, sqlite, detail };
 }
 
 function need(): Storage {
@@ -164,9 +142,9 @@ function need(): Storage {
   return storage;
 }
 
-function needCurrent(): Database {
+function needCurrent(): { readonly name: string; readonly db: Database } {
   if (current === undefined) throw new OpError('no-save-open', 'nenhum save aberto');
-  return current.db;
+  return current;
 }
 
 const text = (v: SqlValue | undefined): string => (typeof v === 'string' ? v : '');
@@ -211,40 +189,41 @@ const handlers: { [O in DbOp]: (args: DbOps[O]['args']) => DbOps[O]['result'] | 
     need().catalog.selectObjects('SELECT * FROM saves ORDER BY last_opened_at DESC, id').map(saveInfo),
 
   'save.create': async ({ name }) => {
-    const { pool, catalog } = need();
+    const { files, catalog } = need();
     const trimmed = name.trim();
     if (trimmed === '') throw new OpError('invalid', 'o save precisa de um nome');
-    const count = int(catalog.selectValue('SELECT count(*) FROM saves'));
-    // A save takes two slots (file and journal); copies need a few more.
-    await pool.reserveMinimumCapacity(2 * (count + 2) + SPARE_SLOTS);
+    await files.reserve(int(catalog.selectValue('SELECT count(*) FROM saves')) + 1);
     const id = crypto.randomUUID();
     const file = fileOf(id);
-    const db = openFile(pool, file);
-    let version: number;
+    const db = await openFile(files, file);
     try {
       migrate(wrap(db), saveMigrations());
       setMeta(db, 'name', trimmed);
-      version = schemaVersion(wrap(db));
+      const now = new Date().toISOString();
+      catalog.exec({
+        sql: `INSERT INTO saves (id, name, created_at, last_opened_at, active_file, schema_version)
+              VALUES (?, ?, ?, ?, ?, ?)`,
+        bind: [id, trimmed, now, now, file, schemaVersion(wrap(db))],
+      });
+      // The file and the row that points at it, together.
+      await files.flush([
+        { name: file, db },
+        { name: CATALOG_FILE, db: catalog },
+      ]);
     } finally {
       db.close();
     }
-    const now = new Date().toISOString();
-    catalog.exec({
-      sql: `INSERT INTO saves (id, name, created_at, last_opened_at, active_file, schema_version)
-            VALUES (?, ?, ?, ?, ?, ?)`,
-      bind: [id, trimmed, now, now, file, version],
-    });
     return findSave(catalog, id);
   },
 
-  'save.open': ({ id }) => {
-    const { pool, catalog } = need();
+  'save.open': async ({ id }) => {
+    const { files, catalog } = need();
     const save = findSave(catalog, id);
     closeCurrent();
     const migrations = saveMigrations();
     const file = save.activeFile;
     const backup = `${file}${BACKUP_SUFFIX}`;
-    let db = openFile(pool, file);
+    let db = await openFile(files, file);
     let migrated: number[] = [];
     try {
       // Ours, and not from a newer game: checked before anything is touched.
@@ -252,17 +231,17 @@ const handlers: { [O in DbOp]: (args: DbOps[O]['args']) => DbOps[O]['result'] | 
       if (schemaVersion(wrap(db)) < (migrations.at(-1)?.version ?? 0)) {
         // The save as it is, kept until the whole chain has worked.
         db.close();
-        copyFile(pool, file, backup);
-        db = openFile(pool, file);
+        await files.copy(file, backup);
+        db = await openFile(files, file);
         migrated = migrate(wrap(db), migrations);
-        removeFile(pool, backup);
+        await files.flush([{ name: file, db }], [backup]);
       }
     } catch (err: unknown) {
       db.close();
-      if (pool.getFileNames().includes(backup)) {
+      if ((await files.list()).includes(backup)) {
         // The chain stopped half way: back to the save as it was.
-        copyFile(pool, backup, file);
-        removeFile(pool, backup);
+        await files.copy(backup, file);
+        await files.flush([], [backup]);
       }
       throw err;
     }
@@ -274,7 +253,8 @@ const handlers: { [O in DbOp]: (args: DbOps[O]['args']) => DbOps[O]['result'] | 
       sql: 'UPDATE saves SET last_opened_at = ?, schema_version = ? WHERE id = ?',
       bind: [new Date().toISOString(), schemaVersion(wrap(db)), id],
     });
-    current = { id, db };
+    await files.flush([{ name: CATALOG_FILE, db: catalog }]);
+    current = { id, name: file, db };
     const opened: OpenedSave = { save: findSave(catalog, id), migrated, tables, migrations: applied };
     return opened;
   },
@@ -284,30 +264,31 @@ const handlers: { [O in DbOp]: (args: DbOps[O]['args']) => DbOps[O]['result'] | 
     return null;
   },
 
-  'save.delete': ({ id }) => {
-    const { pool, catalog } = need();
+  'save.delete': async ({ id }) => {
+    const { files, catalog } = need();
     const save = findSave(catalog, id);
     if (current?.id === id) closeCurrent();
     // The row first: a file nobody points at is an orphan, not a save.
     catalog.exec({ sql: 'DELETE FROM saves WHERE id = ?', bind: [id] });
-    removeFile(pool, save.activeFile);
+    await files.flush([{ name: CATALOG_FILE, db: catalog }], [save.activeFile]);
     return null;
   },
 
   'meta.get': ({ key }) => {
-    const value = needCurrent().selectValue('SELECT value FROM meta WHERE key = ?', [key]);
+    const value = needCurrent().db.selectValue('SELECT value FROM meta WHERE key = ?', [key]);
     return typeof value === 'string' || typeof value === 'number' ? value : null;
   },
 
-  'meta.set': ({ key, value }) => {
-    const db = needCurrent();
-    db.transaction(() => setMeta(db, key, value));
+  'meta.set': async ({ key, value }) => {
+    const open = needCurrent();
+    open.db.transaction(() => setMeta(open.db, key, value));
+    await need().files.flush([open]);
     return null;
   },
 
   'test.writeWithoutCommit': ({ key, value }) => {
     testOnly();
-    const db = needCurrent();
+    const { db } = needCurrent();
     db.exec('BEGIN IMMEDIATE');
     setMeta(db, key, value);
     return null;
@@ -315,7 +296,7 @@ const handlers: { [O in DbOp]: (args: DbOps[O]['args']) => DbOps[O]['result'] | 
 
   'test.files': () => {
     testOnly();
-    return need().pool.getFileNames().sort();
+    return need().files.list();
   },
 };
 

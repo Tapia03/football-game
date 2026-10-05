@@ -12,6 +12,8 @@
 export type StorageBackend =
   /** SQLite files in the origin private file system (`opfs-sahpool`). */
   | 'opfs'
+  /** Fallback: databases in memory, each file stored whole in IndexedDB. */
+  | 'idb'
   /** No usable storage: every other operation fails. */
   | 'none';
 
@@ -19,7 +21,7 @@ export type StorageInfo = {
   readonly backend: StorageBackend;
   /** SQLite version of the WASM build. */
   readonly sqlite: string;
-  /** Why there is no storage, when `backend` is `'none'`. */
+  /** Why this is not `'opfs'`, when it is not. */
   readonly detail?: string;
 };
 
@@ -106,6 +108,8 @@ export type DbError = {
 
 /** Start-up options of the worker (first message it receives). */
 export type DbOptions = {
+  /** `'idb'`: skip OPFS and use the IndexedDB fallback (tests, diagnosis). */
+  readonly storage?: 'idb';
   /**
    * Test mode: enables the `test.*` operations and, with `migrations`,
    * appends test migrations to the save schema so that the chain can be
