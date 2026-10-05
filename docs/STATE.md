@@ -15,7 +15,8 @@ longa" antes da UI):
 3. **Fase 9 — Resto do gerenciamento:** mercado, contratos, finanças,
    ligas múltiplas, copas — e o que o SPEC chamava de "Fase 7" (UI da
    partida, botão simular, painel tático só do clube do usuário, zoom e
-   pan).
+   pan). **PWA e Demo + Deploy foram movidas explicitamente para cá**
+   (depois do MVP).
 4. **Fase 10 — Polimento e comunidade:** packs, auth, sync.
 
 **Motivo:** depois das Fases 0–6 o projeto é um motor de partida com um
@@ -27,11 +28,16 @@ código é pequeno, e (3) ter feedback visual do motor no contexto real,
 para orientar a próxima rodada de refinamento.
 
 **Fase 7 em quatro sub-fases, um PR cada, CI verde antes da próxima:**
-- **7A — Persistência local:** SQLite em WASM num Web Worker dedicado,
-  OPFS com fallback para IndexedDB, schema mínimo (players, clubs,
-  competitions, matches, saves, tactics), escrita atômica, export/import
-  do save, `navigator.storage.persist()`, protocolo entre Workers.
-  Desenho antes do código.
+- **7A — Persistência local (desenho aprovado em 2026-10-05, no SPEC):**
+  SQLite em WASM (build oficial) num Worker dedicado, VFS `opfs-sahpool`,
+  fallback para blob no IndexedDB; um arquivo por save + catálogo;
+  colunas para as telas e blobs bit a bit para o motor; migração de
+  schema em cadeia no open (`user_version` + tabela `migrations`);
+  escrita atômica por troca de ponteiro no catálogo + limpeza de órfãos
+  no boot; export/import; `navigator.storage.persist()`; protocolo de
+  domínio por `MessagePort`. **A fonte de verdade local passou a ser o
+  SQLite em OPFS** (era IndexedDB); o sync por chunk será redesenhado na
+  Fase 10. Branch `fase-7a`, da `main` depois do merge do PR #7.
 - **7B — Mundo mínimo e calendário:** bootstrap determinístico (1 liga,
   20 clubes, ~500 jogadores sintéticos — sem a base FM real), round-robin
   de 38 rodadas / 380 partidas, `WorldSimulator` num Worker com LOD

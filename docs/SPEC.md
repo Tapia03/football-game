@@ -118,7 +118,10 @@ objetivo é um jogo de gerenciamento de futebol com:
 
 1. Execução no **navegador** (Chrome, Firefox, Safari, Edge).
 2. Autenticação e sincronização na nuvem via Supabase.
-3. **Offline-first:** o IndexedDB é a fonte de verdade; a nuvem é sync.
+3. **Offline-first:** o arquivo SQLite do save, em OPFS, é a fonte de
+   verdade local; a nuvem é sync. `[ALTERADO 2026-10-05, Fase 7A]` (era
+   "o IndexedDB é a fonte de verdade", decisão da Fase 0; o IndexedDB
+   fica como fallback quando não há OPFS.)
 4. Visualização 2D a 60 fps, com jogadores em movimento contínuo, HUD
    tático e overlays que refletem as instruções em tempo real.
 5. **Um único motor de partida**, parametrizado por LOD. A lógica que gera
@@ -171,7 +174,11 @@ A sessão roda na nuvem, sem navegador gráfico. Consequências:
   main thread.
 
 ## Persistência e Backend
-- **IndexedDB** (via `idb`).
+- **SQLite em WASM** (`@sqlite.org/sqlite-wasm`, build oficial), num Web
+  Worker dedicado, com o VFS `opfs-sahpool` sobre OPFS. **Fallback:**
+  banco em memória com o arquivo inteiro gravado como blob no IndexedDB
+  (sem a biblioteca `idb`: é um object store só). `[ALTERADO 2026-10-05,
+  Fase 7A]` (era "IndexedDB via `idb`".)
 - **Supabase:** Auth (email + Google OAuth via **redirect**, nunca popup,
   porque popup quebra com COOP `same-origin`), Postgres e Storage.
 - Abstrações `SaveBackend` e `AuthProvider`.
@@ -350,14 +357,20 @@ pub trait Renderer2D {
 
 ## 3.J — Auth (Supabase)
 - Telas: entrar, criar conta, continuar como convidado.
-- Convidado: save só no IndexedDB. Autenticado: save local + sync.
+- Convidado: save só local (SQLite em OPFS, ver Fase 7A). Autenticado:
+  save local + sync.
 - Google OAuth via **redirect**.
 - Sessão em `localStorage`, com rotação de refresh.
 - Logout não apaga o save local.
 - O save de convidado migra para a conta no primeiro signup.
 
 ## 3.K — Sync offline-first
-- O IndexedDB é a fonte de verdade.
+- **A refazer na Fase 10, com dados concretos** `[ALTERADO 2026-10-05]`:
+  o desenho abaixo (chunks versionados, last-write-wins por chunk) foi
+  feito para um save em IndexedDB. A fonte de verdade local passou a ser
+  o arquivo SQLite do save (Fase 7A); o que segue fica como registro, não
+  como decisão.
+- O save local é a fonte de verdade.
 - O sync worker empurra mudanças quando há rede, com fila persistente.
 - Save em chunks versionados.
 - Conflito: last-write-wins por chunk, com o timestamp do servidor.
@@ -439,9 +452,10 @@ da Fase 6 guardam a numeração antiga; vale esta:
 | **Fase 9** | Resto do gerenciamento: mercado, contratos, finanças, ligas múltiplas, copas; UI da partida | antigas "Fase 7 — UI + Overlays Táticos" e "Fase 11 — Motor Econômico" |
 | **Fase 10** | Polimento e comunidade: packs, auth, sync | antigas "Fase 8 — Auth" e "Fase 9 — Sync" |
 
-As antigas "Fase 10 — PWA" e "Fase 13 — Demo + Deploy" ainda não têm
-lugar na ordem nova. O desenho de cada sub-fase da Fase 7 entra aqui
-quando for aprovado.
+As antigas "Fase 10 — PWA" e "Fase 13 — Demo + Deploy" foram **movidas
+explicitamente para depois do MVP: Fase 9** (decisão do usuário,
+2026-10-05). O desenho de cada sub-fase da Fase 7 fica na seção "FASE 7
+— MVP de Gerenciamento", logo depois da Fase 6.
 
 ## FASE 0 — Bootstrap ✅
 Workspace, Vite + Svelte 5 + TS strict, `wasm-pack`, Playwright nos 3
@@ -2538,7 +2552,123 @@ recalibrar contra a coluna "Real". As constantes estão em `AnchorTuning`,
     GPU): a mesma `DrawList` gera a mesma sequência de comandos.
   - FPS medido e informado (não é gate).
 
-## FASE 7 — UI + Overlays Táticos
+## FASE 7 — MVP de Gerenciamento `[NOVA, 2026-10-05]`
+Quatro sub-fases, um PR cada (`fase-7a` … `fase-7d`, cada branch criada
+da `main` atualizada), CI verde antes de abrir a próxima. **Não mexer no
+motor**: se o MVP precisar de mudança no motor, parar e trazer a
+proposta. Determinismo bit a bit e `test_cross_lod_consistency`
+continuam bloqueantes. Dados sintéticos; a base FM real fica para
+depois. O jogo ainda não tem nome ("o jogo", "o projeto").
+
+### 7A — Persistência local (desenho aprovado em 2026-10-05)
+- **SQLite em WASM, num Worker próprio.** Build oficial
+  (`@sqlite.org/sqlite-wasm`, versão exata fixada). O `.wasm` (~900 KB)
+  é servido da nossa origem (passa pelo COEP) e só o Worker de banco o
+  carrega. O Worker de banco é TypeScript, separado do Worker de engine,
+  e é o **único** que abre o arquivo e fala SQL. Nenhum crate Rust muda
+  (bench em +0,00%).
+- **VFS: `opfs-sahpool`** (handles síncronos do OPFS dentro do Worker;
+  não depende de `SharedArrayBuffer`; o mais rápido dos dois VFS de
+  OPFS). Os nomes de arquivo são virtuais, dentro de um pool.
+- **Fallback (Safari privado, OPFS ausente ou com erro ao abrir):** banco
+  em memória, com o arquivo inteiro gravado como um blob no IndexedDB a
+  cada commit de dia (o build oficial não tem VFS de IndexedDB; para um
+  save abaixo de 1 MB, regravar tudo numa transação é simples e
+  atômico). A tela de saves mostra qual dos dois está em uso.
+- **Um arquivo por save, mais um catálogo.**
+  - `catalog.sqlite`: tabela `saves` (id, nome, criado em, último
+    acesso, clube, temporada e dia, **arquivo ativo**, versão do schema).
+  - `save-<id>.sqlite`: tabelas `meta`, `clubs`, `players`,
+    `competitions`, `matches`, `tactics`. Nada de mercado, contratos ou
+    finanças. Exportar é baixar esse arquivo; apagar é remover o arquivo
+    e a linha do catálogo.
+- **Serialização.**
+  - Colunas de verdade para o que as telas consultam (nome, posição,
+    idade, clube, overall, condição, moral; placar e rodada das
+    partidas; formação e papel por slot).
+  - Blobs para o que o motor precisa de volta **bit a bit**: os cinco
+    blocos de atributos (41 bytes) e o estado dinâmico do jogador
+    (14 bytes), como estão na memória.
+  - Sem estado de RNG: o RNG é indexado por evento; bastam a seed do
+    mundo e o dia.
+  - Só entre dias: nada de salvar no meio de uma partida no MVP.
+  - Teste de determinismo (entra de fato na 7B): salvar, recarregar e
+    simular a rodada seguinte dá o mesmo que simular direto (digest).
+- **Migração de schema entre versões do jogo (parte da 7A).**
+  - `PRAGMA application_id` próprio (reconhece um arquivo nosso) e
+    `PRAGMA user_version` = versão do schema do arquivo.
+  - Tabela `migrations` (versão, nome, aplicada em) em cada arquivo:
+    o histórico do que foi aplicado.
+  - Funções `migrate_v1_to_v2`, `migrate_v2_to_v3`, … numa lista
+    ordenada, **aplicadas em cadeia no open**, cada uma na sua
+    transação (migração + linha em `migrations` + `user_version`): um
+    arquivo que morre no meio volta à versão anterior inteira.
+  - Arquivo com versão **maior** que a do jogo: recusado com mensagem
+    ("save de uma versão mais nova"), nunca aberto às cegas.
+  - Antes de migrar, o arquivo é copiado (`save-<id>.bak`), removido só
+    depois da cadeia inteira dar certo.
+  - O primeiro save é v1; o teste da 7A exercita a cadeia com uma
+    migração de teste (v1 → v2 num arquivo de fixture), para o mecanismo
+    não nascer sem uso. A Fase 9, ao acrescentar tabelas, só acrescenta
+    funções à lista.
+  - O catálogo tem a mesma mecânica (versão própria).
+- **Escrita atômica.**
+  - Dia a dia: cada avanço de dia é **uma transação** SQLite; se a aba
+    morrer no meio, o arquivo volta ao último dia completo.
+  - Import e criação: grava em `save-<id>.tmp`, valida (cabeçalho
+    SQLite, `application_id`, versão do schema, `integrity_check`) e só
+    então troca o arquivo ativo.
+  - **A troca é do ponteiro "arquivo ativo" no catálogo, numa
+    transação**, seguida da remoção do arquivo antigo — o mesmo contrato
+    do `tmp` → rename (ou vale o antigo inteiro, ou o novo inteiro), com
+    outro mecanismo: no `opfs-sahpool` não há rename de arquivo.
+    (Aprovado; a alternativa, o VFS `opfs` comum, é mais lenta, depende
+    de `SharedArrayBuffer` e o rename no OPFS não existe em todos os
+    navegadores.)
+  - **Limpeza de órfãos no boot:** se o processo morrer entre o commit
+    do catálogo e a remoção do antigo, sobra um arquivo no pool. Ao
+    abrir, o Worker remove todo arquivo do pool que nenhuma linha do
+    catálogo referencia (inclui `.tmp` e `.bak` abandonados).
+- **Comunicação entre Workers.**
+  - A main cria o Worker de banco e entrega uma `MessagePort` a quem
+    precisar (o Worker de mundo na 7B; o de engine quando precisar):
+    engine e mundo pedem leitura e escrita ao banco sem passar pela
+    main.
+  - Protocolo: pedido `{id, op, args}`, resposta `{id, ok, result |
+    error}`. Operações **de domínio**, não SQL cru: `save.list`,
+    `save.create`, `save.open`, `save.delete`, `save.export`,
+    `save.import`; na 7B entram `world.load` e `world.commitDay`.
+  - Dados grandes vão como `ArrayBuffer` **transferido** (blobs de
+    jogadores, bytes do export).
+  - Um arquivo de tipos do protocolo, usado pelos dois lados.
+  - **Duas abas:** o `opfs-sahpool` é exclusivo; Web Locks detecta a
+    segunda aba, que mostra "o jogo já está aberto em outra aba".
+- **Export / import.** Exportar baixa `save-<nome>-<data>.sqlite`.
+  Importar lê o arquivo, valida, migra se for de versão anterior e
+  substitui o save atual pela troca atômica; arquivo inválido é recusado
+  e o save atual fica intacto.
+- **`navigator.storage.persist()`** na main, na primeira abertura; o
+  resultado fica registrado e visível na tela de saves (no Firefox abre
+  um pedido de permissão; no Chromium a decisão é automática).
+- **Tela da 7A:** mínima, para exercitar o banco (listar, criar, abrir,
+  apagar, exportar, importar; indicador OPFS / IndexedDB, persistente ou
+  não). A tela de verdade é da 7C.
+- **Testes (Playwright, três navegadores, os dois caminhos de
+  armazenamento — o fallback forçado por parâmetro):** criar, listar,
+  abrir, apagar; os dados sobrevivem a recarregar; matar o Worker no
+  meio de uma transação e reabrir → vale o último commit; export →
+  import devolve o mesmo conteúdo (digest das tabelas); import inválido
+  recusado, save atual intacto; cadeia de migração no open; órfãos
+  removidos no boot; segunda aba avisada; `persist()` chamado uma vez.
+  **Não se sabe ainda se o Firefox e o WebKit do CI têm OPFS
+  utilizável:** onde não houver, os testes do caminho OPFS são pulados e
+  o log diz qual caminho rodou.
+- **Ordem dos commits:** (1) este SPEC; (2) catálogo, schema, migrações
+  e operações básicas, só com `opfs-sahpool`; (3) detecção de OPFS e
+  fallback IndexedDB; (4) troca atômica, export, import, limpeza de
+  órfãos; (5) tela mínima, `persist()`, aviso de segunda aba.
+
+## FASE 7 (numeração antiga; agora parte da Fase 9) — UI + Overlays Táticos
 - **Ordem (2026-10-05):** vem depois da fase "Bola longa + contraparte
   defensiva" (ver STATE).
 - Telas: menu, elenco, táticas e calendário.
