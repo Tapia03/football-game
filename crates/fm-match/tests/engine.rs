@@ -3,7 +3,10 @@
 //! `fm-wasm/tests/web.rs`.
 
 use fm_match::demo::demo_match;
-use fm_match::{EventKind, LodLevel, MatchEngine, MatchSnapshot, Mentality, Role, Side, Tactics};
+use fm_match::state::BallState;
+use fm_match::{
+    EventKind, LodLevel, MatchEngine, MatchSnapshot, Mentality, Pressing, Role, Side, Tactics,
+};
 
 fn play(seed: u64, lod: LodLevel) -> (MatchEngine, usize) {
     let (db, setup) = demo_match(seed);
@@ -333,4 +336,75 @@ fn mentality_moves_the_block_five_metres_in_five_seconds() {
         gains[gains.len() - 1]
     );
     assert!(gains[0] >= 5.0, "least gain after 5 s: {:.1} m", gains[0]);
+}
+
+/// Distance from the ball carrier to the nearest outfielder of the other
+/// side, when the carrier is outside that side's box zone; `None` otherwise.
+fn carrier_gap(engine: &MatchEngine, defending: Side) -> Option<f32> {
+    let state = engine.state();
+    let BallState::Held { holder } = state.ball else {
+        return None;
+    };
+    let carrier = &state.players[holder as usize];
+    if carrier.side == defending {
+        return None;
+    }
+    let now = state.now_ms();
+    let at = carrier.pos(now);
+    let own_goal = state.attacking(defending).opposite().goal_centre();
+    if at.distance(own_goal) <= state.tuning.defending.zone_box_dist {
+        return None;
+    }
+    state
+        .players
+        .iter()
+        .filter(|p| p.side == defending && p.active() && p.role != Role::Goalkeeper)
+        .map(|p| p.pos(now).distance(at))
+        .min_by(f32::total_cmp)
+}
+
+/// Acceptance criterion 5 (spec Fase 6, 6C): switching the pressing level
+/// in the middle of a match moves the distance from the carrier to the
+/// nearest defender within 5 s — tighter for `UltraHigh`, looser for `Low`.
+/// Measured against the same match left on `Medium`, over the 5 s that
+/// follow the switch.
+#[test]
+fn pressing_moves_the_distance_to_the_carrier_within_five_seconds() {
+    // Sum of gaps and number of ticks with one, for [Medium, UltraHigh, Low].
+    let mut gaps = [(0.0_f32, 0.0_f32); 3];
+    for seed in [3, 7, 11] {
+        for switch_at in [1_500, 9_000, 20_000, 33_000] {
+            let mut engines = [Pressing::Medium, Pressing::UltraHigh, Pressing::Low].map(|to| {
+                let (db, setup) = demo_match(seed);
+                let mut engine = MatchEngine::new(&setup, &db);
+                for _ in 0..switch_at {
+                    engine.tick_logic();
+                }
+                engine.set_tactics(
+                    Side::Home,
+                    Tactics {
+                        pressing: to,
+                        ..Tactics::default()
+                    },
+                );
+                engine
+            });
+            for (engine, (sum, n)) in engines.iter_mut().zip(&mut gaps) {
+                for _ in 0..50 {
+                    engine.tick_logic();
+                    if let Some(gap) = carrier_gap(engine, Side::Home) {
+                        *sum += gap;
+                        *n += 1.0;
+                    }
+                }
+            }
+        }
+    }
+    let [medium, ultra, low] = gaps.map(|(sum, n)| sum / n);
+    println!("gap over the 5 s after the switch: Low {low:.2} m, Medium {medium:.2} m, UltraHigh {ultra:.2} m");
+    assert!(
+        ultra < medium - 0.5,
+        "UltraHigh {ultra:.2} vs Medium {medium:.2}"
+    );
+    assert!(low > medium + 0.5, "Low {low:.2} vs Medium {medium:.2}");
 }

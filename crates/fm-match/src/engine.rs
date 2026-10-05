@@ -581,7 +581,9 @@ fn on_ball(
                 if let Some(d) = first {
                     targets[d] = DecisionSystem::containment_point(s, frame, d, carrier);
                     in_play[d] = true;
-                    urgency[d] = s.tuning.defending.contain_urgency;
+                    urgency[d] = s.tuning.defending.contain_urgency
+                        * s.tuning.defending.press_urgency
+                            [s.team(defending).tactics.pressing.index()];
                 }
                 if let Some(d) = second {
                     let behind = s.tuning.defending.contain_far.1 + s.tuning.duel.cover_dist;

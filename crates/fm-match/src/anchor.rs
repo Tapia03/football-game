@@ -270,11 +270,13 @@ mod tests {
                 mentality: Mentality::Attacking,
                 width: Width::Wide,
                 line_height: LineHeight::High,
+                ..Tactics::default()
             },
             Tactics {
                 mentality: Mentality::Defensive,
                 width: Width::Narrow,
                 line_height: LineHeight::Deep,
+                ..Tactics::default()
             },
         ];
         for f in Formation::ALL {
@@ -394,6 +396,14 @@ mod tests {
     fn default_tuning_is_the_phase3_calibration() {
         // Pinned so an accidental edit of the defaults shows up in review.
         let t = AnchorTuning::default();
+        // Pressing: Medium is the calibrated behaviour, exactly.
+        let d = crate::tuning::DefendingTuning::default();
+        let medium = crate::tactics::Pressing::Medium.index();
+        assert_eq!(
+            (d.press_distance[medium], d.press_urgency[medium]),
+            (1.0, 1.0)
+        );
+        assert_eq!(d.press_distance, [1.6, 1.0, 0.7, 0.45]);
         assert_eq!(t.mentality_shift, [-0.08, -0.04, 0.0, 0.04, 0.08]);
         assert_eq!(t.width_factor, [0.75, 0.9, 1.0]);
         assert_eq!(t.line_shift, [-0.05, 0.0, 0.05]);
