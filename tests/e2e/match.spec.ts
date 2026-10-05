@@ -79,9 +79,9 @@ test.describe('Fase 6 (6A): the match runs in the engine worker', () => {
       };
     });
     expect(header).toEqual({
-      magic: 0x464d_0002,
+      magic: 0x464d_0003,
       slots: 16,
-      slotBytes: 224,
+      slotBytes: 288,
       seed: 7,
       ready: true,
       isolated: true,

@@ -129,6 +129,11 @@ pub struct TeamState {
     pub through_passes: u32,
     #[cfg(feature = "diagnostics")]
     pub through_completed: u32,
+    /// Sum of the xG of this team's shots, as `resolve_shot` computes it
+    /// (diagnostics only: the reference `xg::struck_shot_xg` is tested
+    /// against, bit for bit).
+    #[cfg(feature = "diagnostics")]
+    pub xg: f32,
 }
 
 /// Everything `tick_logic` reads and writes.

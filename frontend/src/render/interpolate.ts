@@ -8,6 +8,7 @@ import {
   SAMPLE_INTERVAL_MS,
   type Frame,
   type SnapshotReader,
+  copyStats,
   newFrame,
 } from '../engine-bridge/sab';
 
@@ -26,6 +27,8 @@ function copy(from: Frame, out: Frame): void {
   out.awayReds = from.awayReds;
   out.homeHeld = from.homeHeld;
   out.awayHeld = from.awayHeld;
+  copyStats(from.homeStats, out.homeStats);
+  copyStats(from.awayStats, out.awayStats);
   out.ballX = from.ballX;
   out.ballY = from.ballY;
   out.ballZ = from.ballZ;

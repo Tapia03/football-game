@@ -6,7 +6,7 @@ use fm_core::{math, pitch, GoalEnd, Vec2};
 use fm_entities::PlayerAttributes;
 
 use crate::formation::Role;
-use crate::state::{MatchState, PLAYERS};
+use crate::state::{BallState, FlightIntent, MatchState, PLAYERS};
 use crate::tick_frame::TickFrame;
 use crate::tuning::XgTuning;
 
@@ -59,6 +59,37 @@ pub fn shot_skill(a: &PlayerAttributes, dist: f32, long_shot_dist: f32) -> f32 {
 #[must_use]
 pub fn finisher(skill: f32, t: &XgTuning) -> f32 {
     t.skill_base + t.skill_k * skill
+}
+
+/// The xG of the shot struck on the tick `state` has just run, exactly as
+/// `ActionResolver::resolve_shot` computed it — read back from outside the
+/// tick, for consumers that total xG without touching the engine (the HUD
+/// of the engine worker, spec Fase 6, 6B-2).
+///
+/// The resolver's inputs are the kick point, the goal attacked, the
+/// shooter's attributes and the tuning. The kick point is where the shot's
+/// flight starts, and the flight is still the ball right after the tick, so
+/// every input is the same value and the result is the same bits. `None`
+/// when the ball is not a shot kicked this tick by this player.
+#[must_use]
+pub fn struck_shot_xg(state: &MatchState, shooter: usize) -> Option<f32> {
+    let now = state.now_ms();
+    let BallState::Flight {
+        flight,
+        intent: FlightIntent::Shot { shooter: by, .. },
+    } = state.ball
+    else {
+        return None;
+    };
+    if flight.kick_ms != now || usize::from(by) != shooter {
+        return None;
+    }
+    let p = &state.players[shooter];
+    let from = flight.pos_at(now).xy();
+    let end = state.attacking(p.side);
+    let dist = from.distance(end.goal_centre());
+    let skill = shot_skill(&p.attrs, dist, state.tuning.decision.long_shot_dist);
+    Some(xg(from, end, &state.tuning.xg) * finisher(skill, &state.tuning.xg))
 }
 
 /// Fraction of the goal mouth (by angle, seen from the shooter) covered by
@@ -202,5 +233,53 @@ mod tests {
         let (s, me, _) = state_with(shooter, Vec2::new(c.x - 20.0, c.y));
         let f = TickFrame::capture(&s);
         assert_eq!(coverage(&s, &f, me, end), 0.0, "body behind the shooter");
+    }
+
+    /// `struck_shot_xg`, read from outside after each tick, reproduces the
+    /// resolver's xG **bit for bit**: summed per team over whole matches it
+    /// equals the sum the engine itself keeps (diagnostics), and no shot is
+    /// missed. Needs `--features diagnostics` (the engine-side sum).
+    #[cfg(feature = "diagnostics")]
+    #[test]
+    fn struck_shot_xg_is_the_resolvers_xg_bit_for_bit() {
+        use crate::events::EventKind;
+        use crate::phase::Side;
+
+        let mut shots_seen = 0_u32;
+        for seed in 0..12_u64 {
+            let (db, setup) = crate::demo::demo_match(seed);
+            let mut e = crate::engine::MatchEngine::new(&setup, &db);
+            let mut sum = [0.0_f32; 2];
+            let mut seen = 0;
+            while !e.is_finished() {
+                e.tick_logic();
+                let s = e.state();
+                for event in &e.events()[seen..] {
+                    if let EventKind::Shot { side, player, .. } = event.kind {
+                        let shooter = s
+                            .players
+                            .iter()
+                            .position(|p| p.id == player)
+                            .expect("shooter is on the sheet");
+                        let xg = struck_shot_xg(s, shooter).unwrap_or_else(|| {
+                            panic!("seed {seed} tick {}: shot not readable", s.tick)
+                        });
+                        sum[usize::from(side == Side::Away)] += xg;
+                        shots_seen += 1;
+                    }
+                }
+                seen = e.events().len();
+            }
+            let s = e.state();
+            for (side, (outside, team)) in sum.iter().zip(&s.teams).enumerate() {
+                assert_eq!(
+                    outside.to_bits(),
+                    team.xg.to_bits(),
+                    "seed {seed} side {side}: {outside} outside vs {} in the engine",
+                    team.xg
+                );
+            }
+        }
+        assert!(shots_seen > 200, "the matches have shots: {shots_seen}");
     }
 }

@@ -171,6 +171,7 @@ pub fn frame_from_parts(xy: &[f32], ball: [f32; 3], sent_off: u32) -> Frame {
         half: 0,
         cards: [0; 4],
         held: [0; 2],
+        stats: [crate::sab::TeamStats::default(); 2],
     }
 }
 

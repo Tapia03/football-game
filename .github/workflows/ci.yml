@@ -33,6 +33,9 @@ jobs:
       - run: cargo clippy -p fm-match --all-targets --all-features -- -D warnings
       - run: cargo clippy --workspace --all-targets --target wasm32-unknown-unknown -- -D warnings
       - run: cargo test --workspace
+      # The xG the engine worker reads back from outside the tick must be
+      # the resolver's, bit for bit (needs the engine-side sum: diagnostics).
+      - run: cargo test --release -p fm-match --features diagnostics --lib struck_shot_xg
 
   stable-canary:
     name: stable-canary (latest stable, informative)

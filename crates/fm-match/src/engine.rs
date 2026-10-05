@@ -163,6 +163,8 @@ impl MatchEngine {
             through_passes: 0,
             #[cfg(feature = "diagnostics")]
             through_completed: 0,
+            #[cfg(feature = "diagnostics")]
+            xg: 0.0,
         };
         let mut state = MatchState {
             match_seed: setup.match_seed,

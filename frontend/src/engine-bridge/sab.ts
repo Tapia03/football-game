@@ -2,11 +2,14 @@
 // `crates/fm-wasm/src/sab.rs`: the worker writes, the main thread reads the
 // same bytes through an Int32Array and a Float32Array.
 
-/** "FM" + layout version 2 (6B-1: half, cards and held-ball ticks). */
-export const MAGIC = 0x464d_0002;
+/**
+ * "FM" + layout version 3 (6B-1 added half, cards and held-ball ticks;
+ * 6B-2 added the team statistics).
+ */
+export const MAGIC = 0x464d_0003;
 export const HEADER_WORDS = 16;
 export const RING_SLOTS = 16;
-export const SLOT_WORDS = 56;
+export const SLOT_WORDS = 72;
 export const SLOT_BYTES = SLOT_WORDS * 4;
 export const BUFFER_BYTES = HEADER_WORDS * 4 + RING_SLOTS * SLOT_BYTES;
 
@@ -47,8 +50,36 @@ const S_BALL = 5;
 const S_PLAYERS = 8;
 const S_CARDS = 52;
 const S_HELD = 53;
+const S_STATS = 56;
+const STATS_WORDS = 7;
 
 export const PLAYERS = 22;
+
+/** One team's running statistics. */
+export type TeamStats = {
+  shots: number;
+  onTarget: number;
+  xg: number;
+  passes: number;
+  passesCompleted: number;
+  tackles: number;
+  /** Fouls committed. */
+  fouls: number;
+};
+
+function newStats(): TeamStats {
+  return { shots: 0, onTarget: 0, xg: 0, passes: 0, passesCompleted: 0, tackles: 0, fouls: 0 };
+}
+
+export function copyStats(from: TeamStats, out: TeamStats): void {
+  out.shots = from.shots;
+  out.onTarget = from.onTarget;
+  out.xg = from.xg;
+  out.passes = from.passes;
+  out.passesCompleted = from.passesCompleted;
+  out.tackles = from.tackles;
+  out.fouls = from.fouls;
+}
 
 /** One snapshot copied out of the ring. `xy` is x0, y0, x1, y1, … */
 export type Frame = {
@@ -73,6 +104,8 @@ export type Frame = {
   /** Logical ticks with the ball held by each side so far. */
   homeHeld: number;
   awayHeld: number;
+  readonly homeStats: TeamStats;
+  readonly awayStats: TeamStats;
 };
 
 export function newFrame(): Frame {
@@ -95,6 +128,8 @@ export function newFrame(): Frame {
     awayReds: 0,
     homeHeld: 0,
     awayHeld: 0,
+    homeStats: newStats(),
+    awayStats: newStats(),
   };
 }
 
@@ -198,6 +233,8 @@ export class SnapshotReader {
     out.awayReds = (cards >>> 24) & 0xff;
     out.homeHeld = i[at + S_HELD] ?? 0;
     out.awayHeld = i[at + S_HELD + 1] ?? 0;
+    this.readStats(at + S_STATS, out.homeStats);
+    this.readStats(at + S_STATS + STATS_WORDS, out.awayStats);
     out.sentOff = i[at + S_SENT_OFF] ?? 0;
     out.ballX = f[at + S_BALL] ?? 0;
     out.ballY = f[at + S_BALL + 1] ?? 0;
@@ -205,6 +242,17 @@ export class SnapshotReader {
     out.xy.set(f.subarray(at + S_PLAYERS, at + S_PLAYERS + PLAYERS * 2));
     // Lapped while copying: the slot may be half overwritten.
     return this.sequence() - n < RING_SLOTS;
+  }
+
+  private readStats(at: number, out: TeamStats): void {
+    const i = this.ints;
+    out.shots = i[at] ?? 0;
+    out.onTarget = i[at + 1] ?? 0;
+    out.xg = this.floats[at + 2] ?? 0;
+    out.passes = i[at + 3] ?? 0;
+    out.passesCompleted = i[at + 4] ?? 0;
+    out.tackles = i[at + 5] ?? 0;
+    out.fouls = i[at + 6] ?? 0;
   }
 
   /** The newest snapshot, if any. */

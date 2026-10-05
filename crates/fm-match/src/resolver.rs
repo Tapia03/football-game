@@ -183,6 +183,10 @@ impl ActionResolver {
         // is not discounted here — the decision already anticipated it.
         let xg = crate::xg::xg(from.xy(), end, &state.tuning.xg)
             * crate::xg::finisher(shot_skill, &state.tuning.xg);
+        #[cfg(feature = "diagnostics")]
+        {
+            state.team_mut(p.side).xg += xg;
+        }
 
         let (on_target, outcome) = Self::shot_outcome(
             state,

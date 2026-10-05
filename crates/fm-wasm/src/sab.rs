@@ -8,7 +8,7 @@
 //!                    [2] ring slots     [3] bytes per slot
 //!                    [4] state          [5] speed × 1000   [6] seed
 //!                    [7] match clock of the worker (ms)
-//! slot, 56 words:    [0] tick  [1] t_ms  [2] score (home | away << 8)
+//! slot, 72 words:    [0] tick  [1] t_ms  [2] score (home | away << 8)
 //!                    [3] phases (home | away << 8 | half << 16)
 //!                    [4] sent-off mask (bit i = player i)
 //!                    [5..8] ball x, y, z (f32)
@@ -17,9 +17,14 @@
 //!                                | away yellow << 16 | away red << 24)
 //!                    [53] home held-ball ticks  [54] away held-ball ticks
 //!                    [55] reserved (0)
+//!                    [56..63] home stats  [63..70] away stats, each:
+//!                             shots, on target, xG (f32), passes,
+//!                             passes completed, tackles, fouls committed
+//!                    [70..72] reserved (0)
 //! ```
 //!
-//! Version 2 (6B-1) appended words 52..56 and the half; nothing moved.
+//! Version 2 (6B-1) appended words 52..56 and the half; version 3 (6B-2)
+//! appended the team statistics. Nothing ever moved.
 //!
 //! Safe code: the engine fills a `[u32; SLOT_WORDS]` and the bindings copy
 //! it into a typed-array view of the buffer. Nothing here touches memory.
@@ -29,13 +34,13 @@ use fm_match::state::BallState;
 use fm_match::{CardKind, EventKind, LodLevel, MatchEngine, MatchSnapshot, Phase, Side};
 
 /// `"FM"` and the layout version (bump on any layout change).
-pub const MAGIC: u32 = 0x464D_0002;
+pub const MAGIC: u32 = 0x464D_0003;
 /// Words of one slot (the length of the encoded array).
-pub const SLOT_WORDS: usize = 56;
+pub const SLOT_WORDS: usize = 72;
 // Sizes and indices as `u32`: that is what the typed-array API takes.
 pub const HEADER_WORDS: u32 = 16;
 pub const RING_SLOTS: u32 = 16;
-pub const SLOT_WORDS_U32: u32 = 56;
+pub const SLOT_WORDS_U32: u32 = 72;
 pub const SLOT_BYTES: u32 = SLOT_WORDS_U32 * 4;
 pub const BUFFER_BYTES: u32 = HEADER_WORDS * 4 + RING_SLOTS * SLOT_BYTES;
 
@@ -63,14 +68,57 @@ const S_BALL: usize = 5;
 const S_PLAYERS: usize = 8;
 const S_CARDS: usize = 52;
 const S_HELD: usize = 53;
+const S_STATS: usize = 56;
+/// Words of one team's statistics block.
+const STATS_WORDS: usize = 7;
 
 const PLAYERS: usize = 22;
+
+/// One team's running statistics (spec Fase 6, 6B-2).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct TeamStats {
+    pub shots: u32,
+    pub on_target: u32,
+    /// Sum of the xG of the shots, as the resolver computed each.
+    pub xg: f32,
+    pub passes: u32,
+    pub passes_completed: u32,
+    pub tackles: u32,
+    /// Fouls committed.
+    pub fouls: u32,
+}
+
+impl TeamStats {
+    fn words(&self) -> [u32; STATS_WORDS] {
+        [
+            self.shots,
+            self.on_target,
+            self.xg.to_bits(),
+            self.passes,
+            self.passes_completed,
+            self.tackles,
+            self.fouls,
+        ]
+    }
+
+    fn from_words(w: &[u32]) -> Self {
+        Self {
+            shots: w[0],
+            on_target: w[1],
+            xg: f32::from_bits(w[2]),
+            passes: w[3],
+            passes_completed: w[4],
+            tackles: w[5],
+            fouls: w[6],
+        }
+    }
+}
 
 /// What the HUD shows besides the snapshot itself (spec Fase 6, 6B-1),
 /// accumulated by the engine worker after every tick: cards per side and
 /// how long each side has held the ball. Outside `tick_logic`: the engine
 /// is only read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Hud {
     /// 0 first half, 1 second half.
     pub half: u8,
@@ -78,6 +126,9 @@ pub struct Hud {
     pub cards: [u8; 4],
     /// Ticks with the ball held by `[home, away]`.
     pub held: [u32; 2],
+    /// Statistics of `[home, away]`: the engine's own counters, plus fouls
+    /// (from the event log) and xG (`fm_match::xg::struck_shot_xg`).
+    pub stats: [TeamStats; 2],
     /// Events of the log already counted.
     seen: usize,
 }
@@ -88,17 +139,41 @@ impl Hud {
         let state = engine.state();
         self.half = u8::from(state.second_half);
         let events = engine.events();
+        let index_of = |id| state.players.iter().position(|p| p.id == id);
+        let away = |i: usize| usize::from(state.players[i].side == Side::Away);
         for event in &events[self.seen.min(events.len())..] {
-            if let EventKind::Card { player, card } = event.kind {
-                let away = state
-                    .players
-                    .iter()
-                    .any(|p| p.id == player && p.side == Side::Away);
-                let slot = 2 * usize::from(away) + usize::from(card == CardKind::Red);
-                self.cards[slot] = self.cards[slot].saturating_add(1);
+            match event.kind {
+                EventKind::Card { player, card } => {
+                    if let Some(i) = index_of(player) {
+                        let slot = 2 * away(i) + usize::from(card == CardKind::Red);
+                        self.cards[slot] = self.cards[slot].saturating_add(1);
+                    }
+                }
+                EventKind::Foul { by, .. } => {
+                    if let Some(i) = index_of(by) {
+                        self.stats[away(i)].fouls += 1;
+                    }
+                }
+                EventKind::Shot { side, player, .. } => {
+                    // The shot's flight is still the ball: its xG reads back
+                    // exactly (tested bit for bit against the engine).
+                    if let Some(xg) =
+                        index_of(player).and_then(|i| fm_match::xg::struck_shot_xg(state, i))
+                    {
+                        self.stats[usize::from(side == Side::Away)].xg += xg;
+                    }
+                }
+                _ => {}
             }
         }
         self.seen = events.len();
+        for (stats, team) in self.stats.iter_mut().zip(&state.teams) {
+            stats.shots = u32::from(team.shots);
+            stats.on_target = u32::from(team.shots_on_target);
+            stats.passes = u32::from(team.passes);
+            stats.passes_completed = u32::from(team.passes_completed);
+            stats.tackles = u32::from(team.tackles);
+        }
         if let BallState::Held { holder } = state.ball {
             let away = state.players[usize::from(holder)].side == Side::Away;
             self.held[usize::from(away)] += 1;
@@ -135,6 +210,10 @@ pub fn encode(s: &MatchSnapshot, hud: &Hud) -> [u32; SLOT_WORDS] {
     w[S_CARDS] = u32::from_le_bytes(hud.cards);
     w[S_HELD] = hud.held[0];
     w[S_HELD + 1] = hud.held[1];
+    for (side, stats) in hud.stats.iter().enumerate() {
+        let at = S_STATS + side * STATS_WORDS;
+        w[at..at + STATS_WORDS].copy_from_slice(&stats.words());
+    }
     w[S_BALL] = s.ball.x.to_bits();
     w[S_BALL + 1] = s.ball.y.to_bits();
     w[S_BALL + 2] = s.ball.z.to_bits();
@@ -183,6 +262,8 @@ pub struct Frame {
     pub cards: [u8; 4],
     /// Ticks with the ball held by `[home, away]`.
     pub held: [u32; 2],
+    /// Statistics of `[home, away]`.
+    pub stats: [TeamStats; 2],
 }
 
 #[must_use]
@@ -210,6 +291,10 @@ pub fn decode(w: &[u32; SLOT_WORDS]) -> Frame {
         half: byte(w[S_PHASES], 16),
         cards: w[S_CARDS].to_le_bytes(),
         held: [w[S_HELD], w[S_HELD + 1]],
+        stats: [
+            TeamStats::from_words(&w[S_STATS..S_STATS + STATS_WORDS]),
+            TeamStats::from_words(&w[S_STATS + STATS_WORDS..S_STATS + 2 * STATS_WORDS]),
+        ],
     }
 }
 
@@ -220,13 +305,14 @@ mod tests {
 
     #[test]
     fn layout_sizes_are_the_ones_in_the_spec() {
-        assert_eq!(SLOT_BYTES, 224);
-        assert_eq!(BUFFER_BYTES, 64 + 16 * 224);
-        assert_eq!(BUFFER_BYTES, 3_648);
-        // Version 2 only appended: the 6A fields sit where they were.
+        assert_eq!(SLOT_BYTES, 288);
+        assert_eq!(BUFFER_BYTES, 64 + 16 * 288);
+        assert_eq!(BUFFER_BYTES, 4_672);
+        // Versions 2 and 3 only appended: older fields sit where they were.
         assert_eq!(S_PLAYERS + 2 * PLAYERS, S_CARDS);
-        assert_eq!(S_HELD + 3, SLOT_WORDS);
-        assert_eq!(MAGIC & 0xFFFF, 2);
+        assert_eq!(S_HELD + 3, S_STATS);
+        assert_eq!(S_STATS + 2 * STATS_WORDS + 2, SLOT_WORDS);
+        assert_eq!(MAGIC & 0xFFFF, 3);
     }
 
     #[test]
@@ -248,14 +334,26 @@ mod tests {
         }
         let now = e.state().now_ms();
         let snap = e.sample(LodLevel::Full, now + 33).expect("snapshot");
+        let stats = |k: u32, xg: f32| TeamStats {
+            shots: 10 + k,
+            on_target: 4 + k,
+            xg,
+            passes: 400 + k,
+            passes_completed: 300 + k,
+            tackles: 30 + k,
+            fouls: 9 + k,
+        };
         let hud = Hud {
             half: 1,
             cards: [3, 1, 2, 0],
             held: [1_234, 987],
+            stats: [stats(0, 1.234_567), stats(1, 2.345_678)],
             seen: 0,
         };
         let f = decode(&encode(&snap, &hud));
         assert_eq!((f.half, f.cards, f.held), (hud.half, hud.cards, hud.held));
+        assert_eq!(f.stats, hud.stats);
+        assert_eq!(f.stats[1].xg.to_bits(), hud.stats[1].xg.to_bits());
         assert_eq!((f.tick, f.t_ms), (snap.tick, snap.t_ms));
         assert_eq!(f.score, snap.score);
         assert_eq!(f.ball.x.to_bits(), snap.ball.x.to_bits());
@@ -309,6 +407,46 @@ mod tests {
             }
             assert_eq!(hud.cards, cards, "seed {seed}");
             assert_eq!(hud.held, held, "seed {seed}");
+            // Statistics: the engine's counters, fouls from the log, and an
+            // xG for every shot (its bit-exactness is tested in fm-match).
+            for (side, team) in e.state().teams.iter().enumerate() {
+                let s = hud.stats[side];
+                assert_eq!(
+                    (
+                        s.shots,
+                        s.on_target,
+                        s.passes,
+                        s.passes_completed,
+                        s.tackles
+                    ),
+                    (
+                        u32::from(team.shots),
+                        u32::from(team.shots_on_target),
+                        u32::from(team.passes),
+                        u32::from(team.passes_completed),
+                        u32::from(team.tackles)
+                    ),
+                    "seed {seed} side {side}"
+                );
+                let fouls = e
+                    .events()
+                    .iter()
+                    .filter(|ev| match ev.kind {
+                        EventKind::Foul { by, .. } => e
+                            .state()
+                            .players
+                            .iter()
+                            .any(|p| p.id == by && usize::from(p.side == Side::Away) == side),
+                        _ => false,
+                    })
+                    .count();
+                assert_eq!(s.fouls as usize, fouls, "seed {seed} side {side}");
+                assert!(s.shots == 0 || s.xg > 0.0, "shots carry xG");
+                assert!(
+                    f64::from(s.xg) < f64::from(s.shots),
+                    "an xG is below 1 per shot"
+                );
+            }
             assert_eq!(hud.half, 1, "second half by the end");
             assert!(
                 held[0] > 5_000 && held[1] > 5_000,
