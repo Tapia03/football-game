@@ -250,6 +250,127 @@ test.describe('Fase 6 (6A): the match runs in the engine worker', () => {
     }
   });
 
+  test('tactical panel: mentality moves the block, pressing closes on the carrier (criteria 3 and 5)', async ({
+    page,
+  }, testInfo) => {
+    await openMatch(page);
+    const mentality = page.getByTestId('tactics-mentality');
+    const pressing = page.getByTestId('tactics-pressing');
+    // What the snapshot says: Balanced + Medium for the home side, shown.
+    await expect(page.getByTestId('tactics-side-home')).toHaveAttribute('aria-pressed', 'true');
+    await expect(mentality).toHaveValue('2');
+    await expect(pressing).toHaveValue('1');
+    // Tempo is planned, not there: visible and disabled.
+    await expect(page.getByTestId('tactics-tempo')).toBeDisabled();
+    await expect(page.getByTestId('tactics-tempo')).toHaveAttribute('title', 'O motor ainda não suporta');
+
+    const runTo = async (tick: number): Promise<void> => {
+      await page.evaluate(async (to) => {
+        const match = (globalThis as unknown as Hooks).fmMatch;
+        match.runTo(to);
+        while (match.reader.clockMs() !== to * 100) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+      }, tick);
+    };
+    /** First slot of `tick`, as the worker published it. */
+    const published = async (tick: number): Promise<number[] | undefined> =>
+      page.evaluate((at) => {
+        const { reader } = (globalThis as unknown as Hooks).fmMatch;
+        const seq = reader.sequence();
+        for (let n = seq - 1; n >= Math.max(0, seq - 15); n -= 1) {
+          const words = reader.rawSlot(n);
+          if (words !== undefined && words[0] === at && (words[1] ?? 1) % 100 === 0) {
+            return Array.from(words);
+          }
+        }
+        return undefined;
+      }, tick);
+    /**
+     * From reference slots of the match with `commands`: the mean x of the
+     * home outfielders at `to`, and the mean distance from the ball to the
+     * nearest home outfielder over the ticks `from+1..=to` in which the
+     * away side has the ball.
+     */
+    const measure = async (
+      commands: number[],
+      from: number,
+      to: number,
+    ): Promise<{ depth: number; gap: number; samples: number; last: number[] }> =>
+      page.evaluate(
+        async ([list, first, lastTick]) => {
+          const reference = (globalThis as unknown as Hooks).fmReferenceSlot;
+          let depth = 0;
+          let gap = 0;
+          let samples = 0;
+          let last: number[] = [];
+          for (let tick = (first as number) + 1; tick <= (lastTick as number); tick += 1) {
+            const words = await reference(7, tick, list as number[]);
+            const f = new Float32Array(words.buffer, words.byteOffset, words.length);
+            const awayPhase = ((words[3] ?? 0) >> 8) & 0xff;
+            let nearest = Infinity;
+            depth = 0;
+            for (let i = 1; i < 11; i += 1) {
+              const x = f[8 + 2 * i] ?? 0;
+              const y = f[9 + 2 * i] ?? 0;
+              depth += x / 10;
+              nearest = Math.min(nearest, Math.hypot(x - (f[5] ?? 0), y - (f[6] ?? 0)));
+            }
+            if (awayPhase === 0 || awayPhase === 2) {
+              gap += nearest;
+              samples += 1;
+            }
+            last = Array.from(words);
+          }
+          return { depth, gap: gap / samples, samples, last };
+        },
+        [commands, from, to] as const,
+      );
+
+    // Criterion 5. At tick 3,000 the panel sets the home pressing to
+    // UltraHigh; over the next 5 s the nearest home outfielder stands
+    // closer to the ball the away side has than in the untouched match.
+    await runTo(3_000);
+    await pressing.selectOption('3');
+    await runTo(3_050);
+    await expect(pressing).toHaveValue('3');
+    await expect(mentality).toHaveValue('2');
+    const press = [3_000, 0, 2, 3];
+    const pressed = await measure(press, 3_000, 3_050);
+    const medium = await measure([], 3_000, 3_050);
+    // The page's match is the reference with exactly this command.
+    expect(await published(3_050)).toEqual(pressed.last);
+
+    // Criterion 3. Home goes Defensive at 3,050; at 4,000 the panel
+    // switches it to Attacking; 5 s later (tick 4,050) the block is at
+    // least 5 m further up than in the same match left on Defensive.
+    await mentality.selectOption('0');
+    await runTo(4_000);
+    await expect(mentality).toHaveValue('0');
+    await mentality.selectOption('4');
+    await runTo(4_050);
+    await expect(mentality).toHaveValue('4');
+    await expect(pressing).toHaveValue('3');
+    const defensive = [...press, 3_050, 0, 0, 3];
+    const switched = await measure([...defensive, 4_000, 0, 4, 3], 4_049, 4_050);
+    const kept = await measure(defensive, 4_049, 4_050);
+    expect(await published(4_050)).toEqual(switched.last);
+    // Home attacks to the right in the first half: further up is larger x.
+    const gain = switched.depth - kept.depth;
+
+    // The other side is its own: selecting it shows its tactics, untouched.
+    await page.getByTestId('tactics-side-away').click();
+    await expect(mentality).toHaveValue('2');
+    await expect(pressing).toHaveValue('1');
+
+    console.log(
+      `[6C criteria ${testInfo.project.name}] mentality: block +${gain.toFixed(1)} m after 5 s | pressing: gap ${medium.gap.toFixed(2)} -> ${pressed.gap.toFixed(2)} m over 5 s (${pressed.samples} ticks)`,
+    );
+    expect(gain).toBeGreaterThanOrEqual(5);
+    expect(pressed.samples).toBeGreaterThanOrEqual(10);
+    expect(pressed.gap).toBeLessThan(medium.gap - 0.3);
+  });
+
   test('F1 labels every player, F2 draws velocity arrows; keys and buttons', async ({
     page,
     browserName,

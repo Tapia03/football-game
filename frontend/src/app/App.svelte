@@ -16,7 +16,9 @@
     STATE_PAUSED,
     STATE_RUNNING,
     copyStats,
+    mentalityOf,
     newFrame,
+    pressingOf,
   } from '../engine-bridge/sab';
   import { FrameInterpolator } from '../render/interpolate';
 
@@ -54,6 +56,23 @@
     { id: 'tackles', label: 'Botes', value: (s: typeof noStats) => String(s.tackles) },
     { id: 'fouls', label: 'Faltas', value: (s: typeof noStats) => String(s.fouls) },
   ].map((row) => ({ id: row.id, label: row.label, home: row.value(stats.home), away: row.value(stats.away) })));
+  // Tactical panel (6C). It shows what the snapshot says is in force, not
+  // what was clicked: a command that did not arrive never looks applied.
+  const MENTALITIES = ['Defensiva', 'Cautelosa', 'Equilibrada', 'Positiva', 'Ofensiva'];
+  const PRESSINGS = ['Baixa', 'Média', 'Alta', 'Muito alta'];
+  /** Tactics words of the snapshot, `[home, away]` (Balanced + Medium). */
+  let tactics = $state([0x0102, 0x0102]);
+  /** Team the panel controls: 0 home, 1 away. */
+  let tacticsSide = $state(0);
+  const mentality = $derived(mentalityOf(tactics[tacticsSide] ?? 0));
+  const pressing = $derived(pressingOf(tactics[tacticsSide] ?? 0));
+  /** Sends the command and puts the control back on what is in force. */
+  function command(e: Event, to: (value: number) => [number, number]): void {
+    const select = e.currentTarget as HTMLSelectElement;
+    const [m, p] = to(Number(select.value));
+    match?.setTactics(tacticsSide, m, p);
+    select.value = String(select.dataset['inForce']);
+  }
   let status = $state('carregando…');
   let match: MatchHandle | undefined = $state();
   let canvasEl: HTMLCanvasElement | undefined = $state();
@@ -167,6 +186,8 @@
         cards.awayReds = frame.awayReds;
         const held = frame.homeHeld + frame.awayHeld;
         possession = held === 0 ? 50 : Math.round((100 * frame.homeHeld) / held);
+        tactics[0] = frame.homeTactics;
+        tactics[1] = frame.awayTactics;
         copyStats(frame.homeStats, stats.home);
         copyStats(frame.awayStats, stats.away);
         if (canvas !== undefined) {
@@ -314,6 +335,57 @@
           {/each}
         </tbody>
       </table>
+      <h2 class="tactics-title">Táticas</h2>
+      <div class="tactics" data-testid="tactics">
+        <div class="sides" role="group" aria-label="Time controlado">
+          <button
+            class="home"
+            class:active={tacticsSide === 0}
+            aria-pressed={tacticsSide === 0}
+            data-testid="tactics-side-home"
+            onclick={() => (tacticsSide = 0)}>Casa</button
+          >
+          <button
+            class="away"
+            class:active={tacticsSide === 1}
+            aria-pressed={tacticsSide === 1}
+            data-testid="tactics-side-away"
+            onclick={() => (tacticsSide = 1)}>Visitante</button
+          >
+        </div>
+        <label>
+          <span>Mentalidade</span>
+          <select
+            data-testid="tactics-mentality"
+            data-in-force={mentality}
+            value={String(mentality)}
+            onchange={(e) => command(e, (m) => [m, pressing])}
+          >
+            {#each MENTALITIES as name, i (i)}
+              <option value={String(i)}>{name}</option>
+            {/each}
+          </select>
+        </label>
+        <label title="O motor ainda não suporta">
+          <span>Tempo</span>
+          <select data-testid="tactics-tempo" disabled title="O motor ainda não suporta">
+            <option>Normal</option>
+          </select>
+        </label>
+        <label>
+          <span>Pressão</span>
+          <select
+            data-testid="tactics-pressing"
+            data-in-force={pressing}
+            value={String(pressing)}
+            onchange={(e) => command(e, (p) => [mentality, p])}
+          >
+            {#each PRESSINGS as name, i (i)}
+              <option value={String(i)}>{name}</option>
+            {/each}
+          </select>
+        </label>
+      </div>
     </aside>
   </div>
   <footer>
@@ -477,6 +549,51 @@
     color: #4dabf7;
     text-align: right;
     font-weight: 700;
+  }
+  .stats .tactics-title {
+    margin-top: 1.25rem;
+  }
+  .tactics {
+    display: grid;
+    gap: 0.5rem;
+    font-size: 0.8125rem;
+  }
+  .tactics .sides {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.25rem;
+  }
+  .tactics .sides button {
+    background: transparent;
+    border: 1px solid currentcolor;
+    border-radius: 4px;
+    padding: 0.125rem 0.5rem;
+    cursor: pointer;
+    text-align: center;
+    opacity: 0.55;
+  }
+  .tactics .sides button.active {
+    opacity: 1;
+    background: rgb(255 255 255 / 12%);
+  }
+  .tactics label {
+    display: grid;
+    grid-template-columns: 1fr 1.4fr;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--muted);
+  }
+  .tactics select {
+    font: inherit;
+    color: inherit;
+    background: var(--bg);
+    border: 1px solid var(--muted);
+    border-radius: 4px;
+    padding: 0.125rem 0.25rem;
+  }
+  .tactics select:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
   /* Narrow screens: the panel goes under the pitch. */
   @media (max-width: 56rem) {
