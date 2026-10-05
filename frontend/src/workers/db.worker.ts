@@ -33,9 +33,8 @@ import type {
 } from '../save/protocol';
 import {
   CATALOG_MIGRATIONS,
-  SAVE_MIGRATIONS,
-  TEST_MIGRATION_V2,
-  TEST_MIGRATION_V3_BROKEN,
+  SAVE_SCHEMA,
+  testMigrations,
   type Migration,
 } from '../save/schema';
 
@@ -87,13 +86,14 @@ function wrap(db: Database): MigratableDb {
 }
 
 function saveMigrations(): readonly Migration[] {
+  const { next, broken } = testMigrations();
   switch (options.test?.migrations) {
-    case 'v2':
-      return [...SAVE_MIGRATIONS, TEST_MIGRATION_V2];
-    case 'v2-then-broken':
-      return [...SAVE_MIGRATIONS, TEST_MIGRATION_V2, TEST_MIGRATION_V3_BROKEN];
+    case 'next':
+      return [...SAVE_SCHEMA, next];
+    case 'next-then-broken':
+      return [...SAVE_SCHEMA, next, broken];
     case undefined:
-      return SAVE_MIGRATIONS;
+      return SAVE_SCHEMA;
   }
 }
 
@@ -425,13 +425,37 @@ const handlers: { [O in DbOp]: (args: DbOps[O]['args']) => DbOps[O]['result'] | 
     return need().files.list();
   },
 
-  'test.plantFile': async ({ name }) => {
+  'test.plantFile': async ({ name, bytes }) => {
     testOnly();
-    // The size of one SQLite page, so that every backend takes it as a file.
-    const bytes = new Uint8Array(4096);
-    bytes.set(new TextEncoder().encode(SQLITE_HEADER));
-    await need().files.write(name, bytes);
+    // By default the size of one SQLite page, so that every backend takes
+    // it as a file.
+    const content = bytes === undefined ? new Uint8Array(4096) : new Uint8Array(bytes);
+    if (bytes === undefined) content.set(new TextEncoder().encode(SQLITE_HEADER));
+    const { files, catalog } = need();
+    await files.reserve(int(catalog.selectValue('SELECT count(*) FROM saves')) + 1);
+    await files.write(name, content);
     return null;
+  },
+
+  'test.sql': async ({ file, sql }) => {
+    testOnly();
+    const { files, catalog } = need();
+    const plain = (rows: SqlValue[][]): (string | number | null)[][] =>
+      rows.map((row) => row.map((v) => (typeof v === 'string' || typeof v === 'number' ? v : null)));
+    if (file === CATALOG_FILE) {
+      const rows = plain(catalog.selectArrays(sql));
+      await files.flush([{ name: CATALOG_FILE, db: catalog }]);
+      return rows;
+    }
+    // The file as it is: opened raw, never migrated.
+    const db = await files.open(file);
+    try {
+      const rows = plain(db.selectArrays(sql));
+      await files.flush([{ name: file, db }]);
+      return rows;
+    } finally {
+      db.close();
+    }
   },
 };
 

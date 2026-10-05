@@ -100,8 +100,21 @@ export type DbOps = {
   };
   /** Test only: the names of the files in the pool, sorted. */
   'test.files': { args: Record<string, never>; result: readonly string[] };
-  /** Test only: leaves a file nobody references (an orphan) in the storage. */
-  'test.plantFile': { args: { readonly name: string }; result: null };
+  /**
+   * Test only: writes a file into the storage — `bytes` when given, else
+   * one page with a SQLite header. Nobody references it (an orphan) unless
+   * the test points the catalog at it.
+   */
+  'test.plantFile': { args: { readonly name: string; readonly bytes?: ArrayBuffer }; result: null };
+  /**
+   * Test only: runs SQL straight on a file of the storage, without opening
+   * it as a save (so without migrating it), and returns the rows. `file`
+   * `/catalog.sqlite` is the catalog.
+   */
+  'test.sql': {
+    args: { readonly file: string; readonly sql: string };
+    result: readonly (readonly (string | number | null)[])[];
+  };
 };
 
 export type DbOp = keyof DbOps;
@@ -138,11 +151,11 @@ export type DbOptions = {
    * Test mode: enables the `test.*` operations and, with `migrations`,
    * appends test migrations to the save schema so that the chain can be
    * exercised before the game has a second schema version.
-   *  - `'v2'`: one more migration (v1 → v2, adds a table).
-   *  - `'v2-then-broken'`: that one and a v2 → v3 that fails half way.
+   *  - `'next'`: one more migration than the game has (adds a table).
+   *  - `'next-then-broken'`: that one and another that fails half way.
    */
   readonly test?: {
-    readonly migrations?: 'v2' | 'v2-then-broken';
+    readonly migrations?: 'next' | 'next-then-broken';
     /**
      * `save.import` stops for good (never answers) right before or right
      * after the catalog is pointed at the new file: killing the worker then

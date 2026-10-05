@@ -1,4 +1,12 @@
+import { readFile } from 'node:fs/promises';
 import { expect, test, type Page } from '@playwright/test';
+
+/** Schema version the game writes today (v2 since Fase 7B). */
+const CURRENT = 2;
+/** Migrations a save of today has been through. */
+const GAME_MIGRATIONS = ['world', 'world-v2'];
+/** A real save written by the Fase 7A code: schema v1, with `meta` keys. */
+const V1_FIXTURE = 'tests/fixtures/save-v1-7a.sqlite';
 
 // Fase 7A: the database worker (SQLite WASM). Every test runs over both
 // kinds of storage: `opfs` (the `opfs-sahpool` VFS) and `idb` (the
@@ -8,7 +16,7 @@ import { expect, test, type Page } from '@playwright/test';
 type Backend = 'opfs' | 'idb';
 type Options = {
   storage?: 'idb';
-  test?: { migrations?: 'v2' | 'v2-then-broken'; stopImport?: 'before-swap' | 'after-swap' };
+  test?: { migrations?: 'next' | 'next-then-broken'; stopImport?: 'before-swap' | 'after-swap' };
 };
 /** The storage the tests of the running `describe` ask for. */
 let wanted: Backend = 'opfs';
@@ -134,7 +142,7 @@ test.describe(`Fase 7A: local persistence (SQLite WASM in the database worker, $
     const first = await ask<SaveInfo>(page, 'save.create', { name: '  Primeiro  ' });
     const second = await ask<SaveInfo>(page, 'save.create', { name: 'Segundo' });
     expect(first.name).toBe('Primeiro');
-    expect(first.schemaVersion).toBe(1);
+    expect(first.schemaVersion).toBe(CURRENT);
     expect(first.activeFile).toBe(`/save-${first.id}.sqlite`);
     expect(first.id).not.toBe(second.id);
     expect(await ask(page, 'save.create', { name: '   ' })).toEqual({ error: 'invalid' });
@@ -153,7 +161,7 @@ test.describe(`Fase 7A: local persistence (SQLite WASM in the database worker, $
       { id: first.id },
     );
     expect(opened.tables).toEqual(['clubs', 'competitions', 'matches', 'meta', 'migrations', 'players', 'tactics']);
-    expect(opened.migrations).toEqual(['world']);
+    expect(opened.migrations).toEqual(GAME_MIGRATIONS);
     expect(opened.migrated).toEqual([]);
     expect(await ask(page, 'meta.get', { key: 'name' })).toBe('Primeiro');
     // The save opened last comes first.
@@ -215,16 +223,16 @@ test.describe(`Fase 7A: local persistence (SQLite WASM in the database worker, $
     expect(await ask(page, 'test.files')).toEqual({ error: 'invalid' }); // not in test mode
 
     // A game one schema version ahead opens it: v1 → v2, data intact.
-    await start(page, { test: { migrations: 'v2' } });
+    await start(page, { test: { migrations: 'next' } });
     const opened = await ask<{ save: SaveInfo; migrated: number[]; tables: string[]; migrations: string[] }>(
       page,
       'save.open',
       { id: save.id },
     );
-    expect(opened.migrated).toEqual([2]);
-    expect(opened.save.schemaVersion).toBe(2);
-    expect(opened.tables).toContain('test_v2');
-    expect(opened.migrations).toEqual(['world', 'test-v2']);
+    expect(opened.migrated).toEqual([CURRENT + 1]);
+    expect(opened.save.schemaVersion).toBe(CURRENT + 1);
+    expect(opened.tables).toContain('test_next');
+    expect(opened.migrations).toEqual([...GAME_MIGRATIONS, 'test-next']);
     expect(await ask(page, 'meta.get', { key: 'day' })).toBe(7);
     // The copy made before the chain is gone once the chain has worked.
     expect(await ask(page, 'test.files')).toEqual(['/catalog.sqlite', save.activeFile].sort());
@@ -234,24 +242,24 @@ test.describe(`Fase 7A: local persistence (SQLite WASM in the database worker, $
 
     // A migration that fails half way: the file is back as it was (v2),
     // nothing of the failed one stays, and no copy is left.
-    await start(page, { test: { migrations: 'v2-then-broken' } });
+    await start(page, { test: { migrations: 'next-then-broken' } });
     expect(await ask(page, 'save.open', { id: save.id })).toEqual({ error: 'migration-failed' });
     expect(await ask(page, 'test.files')).toEqual(['/catalog.sqlite', save.activeFile].sort());
-    await start(page, { test: { migrations: 'v2' } });
+    await start(page, { test: { migrations: 'next' } });
     const intact = await ask<{ save: SaveInfo; migrated: number[]; tables: string[]; migrations: string[] }>(
       page,
       'save.open',
       { id: save.id },
     );
     expect(intact.migrated).toEqual([]);
-    expect(intact.tables).not.toContain('test_v3');
-    expect(intact.migrations).toEqual(['world', 'test-v2']);
+    expect(intact.tables).not.toContain('test_broken');
+    expect(intact.migrations).toEqual([...GAME_MIGRATIONS, 'test-next']);
     expect(await ask(page, 'meta.get', { key: 'day' })).toBe(7);
 
     // The game of today meets a file from a newer game: refused, untouched.
     await start(page, { test: {} });
     expect(await ask(page, 'save.open', { id: save.id })).toEqual({ error: 'newer-version' });
-    await start(page, { test: { migrations: 'v2' } });
+    await start(page, { test: { migrations: 'next' } });
     await ask(page, 'save.open', { id: save.id });
     expect(await ask(page, 'meta.get', { key: 'day' })).toBe(7);
   });
@@ -270,6 +278,119 @@ test.describe(`Fase 7A: local persistence (SQLite WASM in the database worker, $
     expect((viaPort as SaveInfo[]).map((s) => s.name)).toEqual(['Porta']);
     // One database behind both lines.
     expect(await ask(page, 'meta.get', { key: 'day' })).toBe(21);
+  });
+
+  test('a real save of Fase 7A (schema v1) migrates to v2 with its data intact', async ({ page }, testInfo) => {
+    await open(page, testInfo.project.name);
+    const v1 = Array.from(await readFile(V1_FIXTURE));
+    // The file as Fase 7A left it: v1, the six tables, nothing in them.
+    await page.evaluate(async (bytes) => {
+      const { db } = globalThis as unknown as Hooks;
+      const buffer = new Uint8Array(bytes).buffer;
+      await db.client.request('test.plantFile', { name: '/fixture-v1.sqlite', bytes: buffer }, [buffer]);
+    }, v1);
+    const raw = (sql: string, file = '/fixture-v1.sqlite') => ask<(string | number | null)[][]>(page, 'test.sql', { file, sql });
+    expect(await raw('PRAGMA user_version')).toEqual([[1]]);
+    expect(await raw("SELECT name FROM migrations ORDER BY version")).toEqual([['world']]);
+    expect(await raw("SELECT type FROM pragma_table_info('matches') WHERE name = 'seed'")).toEqual([['INTEGER']]);
+    expect(await raw("SELECT count(*) FROM pragma_table_info('players') WHERE name = 'attributes'")).toEqual([[1]]);
+
+    // Imported by the game of today: migrated on the way in.
+    const save = await ask<SaveInfo>(page, 'save.create', { name: 'Recebe a 7A' });
+    const imported = (await importSave(page, save.id, v1)) as SaveInfo;
+    expect(imported.schemaVersion).toBe(CURRENT);
+    const opened = await ask<{ migrated: number[]; tables: string[]; migrations: string[] }>(page, 'save.open', {
+      id: save.id,
+    });
+    expect(opened.migrated).toEqual([]); // already done by the import
+    expect(opened.migrations).toEqual(GAME_MIGRATIONS);
+    expect(opened.tables).toEqual(['clubs', 'competitions', 'matches', 'meta', 'migrations', 'players', 'tactics']);
+    // What Fase 7A had written is still there.
+    expect(await ask(page, 'meta.get', { key: 'name' })).toBe('Save da Fase 7A');
+    expect(await ask(page, 'meta.get', { key: 'day' })).toBe(12);
+    expect(await ask(page, 'meta.get', { key: 'club' })).toBe('Atlético Sintético');
+    // The v2 shape: the seed is a blob, the sheet replaces the attributes.
+    const file = imported.activeFile;
+    await ask(page, 'save.close');
+    expect(await raw('PRAGMA user_version', file)).toEqual([[CURRENT]]);
+    expect(await raw("SELECT type FROM pragma_table_info('matches') WHERE name = 'seed'", file)).toEqual([['BLOB']]);
+    expect(
+      await raw(
+        "SELECT name FROM pragma_table_info('players') WHERE name IN ('attributes', 'sheet', 'potential', 'injury_weeks') ORDER BY name",
+        file,
+      ),
+    ).toEqual([['injury_weeks'], ['potential'], ['sheet']]);
+    expect(
+      await raw("SELECT count(*) FROM pragma_table_info('matches') WHERE name LIKE '%shots' OR name LIKE '%on_target'", file),
+    ).toEqual([[4]]);
+    expect(await raw("SELECT name FROM pragma_table_info('clubs') ORDER BY cid", file)).toEqual([
+      ['id'],
+      ['name'],
+      ['short_name'],
+      ['strength'],
+      ['formation'],
+    ]);
+
+    // The same file opened in place (not imported) migrates on open too.
+    await raw(
+      `UPDATE saves SET active_file = '/fixture-v1.sqlite', schema_version = 1 WHERE id = '${save.id}' RETURNING id`,
+      '/catalog.sqlite',
+    );
+    const inPlace = await ask<{ migrated: number[]; save: SaveInfo }>(page, 'save.open', { id: save.id });
+    expect(inPlace.migrated).toEqual([CURRENT]);
+    expect(inPlace.save.schemaVersion).toBe(CURRENT);
+    expect(await ask(page, 'meta.get', { key: 'day' })).toBe(12);
+  });
+
+  test('the v2 guard: a v1 file with rows where there should be none does not migrate, and says which', async ({
+    page,
+  }, testInfo) => {
+    await open(page, testInfo.project.name);
+    const v1 = Array.from(await readFile(V1_FIXTURE));
+    await page.evaluate(async (bytes) => {
+      const { db } = globalThis as unknown as Hooks;
+      const buffer = new Uint8Array(bytes).buffer;
+      await db.client.request('test.plantFile', { name: '/tainted-v1.sqlite', bytes: buffer }, [buffer]);
+    }, v1);
+    const raw = (sql: string, file = '/tainted-v1.sqlite') => ask<(string | number | null)[][]>(page, 'test.sql', { file, sql });
+    // A v1 file that somehow got data: two clubs and three players.
+    await raw("INSERT INTO clubs (id, name, short_name) VALUES (1, 'Um', 'UM'), (2, 'Dois', 'DOI') RETURNING id");
+    await raw(
+      `INSERT INTO players (id, club_id, name, position, birth_year, overall, condition, morale, attributes, dynamic)
+       VALUES (1, 1, 'A', 0, 2000, 50, 1, 1, x'00', x'00'), (2, 1, 'B', 0, 2000, 50, 1, 1, x'00', x'00'),
+              (3, 2, 'C', 0, 2000, 50, 1, 1, x'00', x'00') RETURNING id`,
+    );
+    const save = await ask<SaveInfo>(page, 'save.create', { name: 'Com dados' });
+    const original = save.activeFile;
+    await raw(
+      `UPDATE saves SET active_file = '/tainted-v1.sqlite', schema_version = 1 WHERE id = '${save.id}' RETURNING id`,
+      '/catalog.sqlite',
+    );
+
+    // Opening refuses, and the error names each table and its rows.
+    const failure = await page.evaluate(async (id) => {
+      const { db } = globalThis as unknown as Hooks;
+      try {
+        await db.client.request('save.open', { id });
+        return { code: 'opened', message: '' };
+      } catch (err: unknown) {
+        const e = err as { code?: string; message?: string };
+        return { code: e.code ?? '', message: e.message ?? '' };
+      }
+    }, save.id);
+    expect(failure.code).toBe('migration-failed');
+    expect(failure.message).toContain('players: 3 linhas');
+    expect(failure.message).toContain('clubs: 2 linhas');
+    expect(failure.message).not.toContain('matches:');
+
+    // The file is exactly as it was: v1, its rows, no copy left behind.
+    expect(await raw('PRAGMA user_version')).toEqual([[1]]);
+    expect(await raw('SELECT count(*) FROM players')).toEqual([[3]]);
+    expect(await raw('SELECT count(*) FROM clubs')).toEqual([[2]]);
+    expect(await raw("SELECT count(*) FROM pragma_table_info('players') WHERE name = 'attributes'")).toEqual([[1]]);
+    expect(await ask<string[]>(page, 'test.files')).toEqual(
+      ['/catalog.sqlite', '/tainted-v1.sqlite', original].sort(),
+    );
   });
 
   test('export then import: the save is replaced by the file, content for content', async ({
@@ -340,13 +461,13 @@ test.describe(`Fase 7A: local persistence (SQLite WASM in the database worker, $
     await unchanged();
 
     // A file from a newer game: refused. An older one: migrated on import.
-    await start(page, { test: { migrations: 'v2' } });
+    await start(page, { test: { migrations: 'next' } });
     await ask(page, 'save.open', { id: save.id }); // v1 → v2
     const newer = (await exportSave(page, save.id)).bytes;
     const v2 = await ask<string>(page, 'save.digest');
-    await start(page, { test: { migrations: 'v2' } });
+    await start(page, { test: { migrations: 'next' } });
     const migratedOnImport = (await importSave(page, save.id, good)) as SaveInfo;
-    expect(migratedOnImport.schemaVersion).toBe(2);
+    expect(migratedOnImport.schemaVersion).toBe(CURRENT + 1);
     expect(await digestOf(page, save.id)).toBe(v2);
     await ask(page, 'save.close');
     const other = await ask<SaveInfo>(page, 'save.create', { name: 'De hoje' });

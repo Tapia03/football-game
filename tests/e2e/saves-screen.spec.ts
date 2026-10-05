@@ -76,7 +76,7 @@ for (const url of ['/?view=saves', '/?view=saves&storage=idb']) {
       // Opening shows the schema and the digest of the content.
       await row(page, 'Primeiro').getByTestId('saves-open').click();
       await expect(page.getByTestId('saves-opened-name')).toHaveText('Primeiro');
-      await expect(page.getByTestId('saves-opened')).toContainText('Schema v1');
+      await expect(page.getByTestId('saves-opened')).toContainText('Schema v2');
       await expect(page.getByTestId('saves-opened')).toContainText('players');
       const digest = page.getByTestId('saves-digest');
       await expect(digest).toHaveText(/^[0-9a-f]{64}$/);
