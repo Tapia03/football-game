@@ -170,7 +170,9 @@
               frame.ballY,
               frame.ballZ,
               frame.sentOff,
+              frame.homePhase | (frame.awayPhase << 8) | (frame.half << 16),
               showVectors ? interpolator.velocity : NO_VELOCITIES,
+              0,
             );
             perf.frames += 1;
             perf.labelsMs += t1 - t0;

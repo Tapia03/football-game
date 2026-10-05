@@ -5,6 +5,7 @@
 
 use fm_core::pitch::{self, GoalEnd};
 use fm_core::Vec2;
+use fm_match::Side;
 use fm_render::shapes::{tessellate, Mesh, Rgba, Shape, View};
 
 use crate::sab::Frame;
@@ -111,23 +112,141 @@ pub fn pitch_view(width_px: u32, height_px: u32) -> View {
 const ARROW_SECONDS: f32 = 0.6;
 const ARROW_MIN_SPEED: f32 = 0.5;
 
+/// What is laid over the plain frame (the toggles of the page).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Overlays<'a> {
+    /// F2: velocities in m/s, one per player; each moving player gets an
+    /// arrow along its velocity.
+    pub velocities: Option<&'a [Vec2; 22]>,
+    /// F3: the offside line (`offside_line`).
+    pub offside: bool,
+}
+
+/// Phase codes of a team that has the ball (`sab` layout): in possession,
+/// or in attacking transition.
+const fn has_ball(phase: u8) -> bool {
+    matches!(phase, 0 | 2)
+}
+
+const fn first_of(side: Side) -> usize {
+    match side {
+        Side::Home => 0,
+        Side::Away => SIDE,
+    }
+}
+
+/// Goal `side` defends in the frame's half: home attacks to the right in
+/// the first half and the sides swap at half time.
+const fn defended_goal(frame: &Frame, side: Side) -> GoalEnd {
+    match (side, frame.half == 0) {
+        (Side::Home, true) | (Side::Away, false) => GoalEnd::Left,
+        (Side::Away, true) | (Side::Home, false) => GoalEnd::Right,
+    }
+}
+
+/// The side attacking in `frame`, from the phase codes; `None` when they do
+/// not tell (set piece: both teams carry the same code).
+#[must_use]
+pub const fn attacking_side(frame: &Frame) -> Option<Side> {
+    match (has_ball(frame.phases[0]), has_ball(frame.phases[1])) {
+        (true, false) => Some(Side::Home),
+        (false, true) => Some(Side::Away),
+        _ => None,
+    }
+}
+
+/// `x` of the second-last player of `defending`, counted from its own goal
+/// line: the keeper counts, players sent off do not; with fewer than two
+/// left, the goal line. The engine's own line (`TickFrame::offside_line`),
+/// read from a snapshot: the same values, bit for bit.
+#[must_use]
+pub fn second_last_defender_x(frame: &Frame, defending: Side) -> f32 {
+    let goal = defended_goal(frame, defending);
+    let goal_x = goal.goal_line_x();
+    let away_from_goal = -goal.direction();
+    let start = first_of(defending);
+    let mut depth = [f32::INFINITY; SIDE];
+    for (i, d) in depth.iter_mut().enumerate() {
+        if frame.sent_off >> (start + i) & 1 == 0 {
+            *d = (frame.players[start + i].x - goal_x) * away_from_goal;
+        }
+    }
+    // Deepest player, then the deepest of the others (first index on ties).
+    let deepest = (1..SIDE).fold(0, |m, i| if depth[i] < depth[m] { i } else { m });
+    let second = (0..SIDE)
+        .filter(|&i| i != deepest)
+        .fold(None, |m: Option<usize>, i| match m {
+            Some(j) if depth[j] <= depth[i] => Some(j),
+            _ => Some(i),
+        });
+    match second {
+        Some(i) if depth[i].is_finite() => frame.players[start + i].x,
+        _ => goal_x,
+    }
+}
+
+/// The offside line of the Laws for the team attacking in `frame`, as
+/// `(defending side, x)`: an attacker beyond it is in an offside position.
+/// It is the nearest to the defended goal of the second-last defender, the
+/// ball and the halfway line — so never past halfway nor behind the ball.
+/// (The engine's line is the second-last defender alone: it whistles
+/// nothing and only aims its runs with it.) `None` when the snapshot does
+/// not tell who attacks.
+#[must_use]
+pub fn offside_line(frame: &Frame) -> Option<(Side, f32)> {
+    let defending = match attacking_side(frame)? {
+        Side::Home => Side::Away,
+        Side::Away => Side::Home,
+    };
+    let goal = defended_goal(frame, defending);
+    let depth = |x: f32| (x - goal.goal_line_x()) * -goal.direction();
+    let mut x = second_last_defender_x(frame, defending);
+    for other in [frame.ball.x, pitch::HALF_LENGTH] {
+        if depth(other) < depth(x) {
+            x = other;
+        }
+    }
+    Some((defending, x))
+}
+
+/// Dashes of the offside line: 17 across the 68 m.
+const DASH: f32 = 2.5;
+const DASH_PERIOD: f32 = 4.0;
+
+fn offside_shapes(frame: &Frame, out: &mut Vec<Shape>) {
+    let Some((defending, x)) = offside_line(frame) else {
+        return;
+    };
+    let color = match defending {
+        Side::Home => Rgba(1.0, 0.45, 0.42, 0.95),
+        Side::Away => Rgba(0.35, 0.75, 1.0, 0.95),
+    };
+    let mut y = (DASH_PERIOD - DASH) / 2.0;
+    while y < pitch::WIDTH {
+        out.push(Shape::Line {
+            a: Vec2::new(x, y),
+            b: Vec2::new(x, (y + DASH).min(pitch::WIDTH)),
+            width: 0.35,
+            color,
+        });
+        y += DASH_PERIOD;
+    }
+}
+
 /// The whole frame (pitch, players, ball) for a `width_px` × `height_px`
-/// canvas. Players sent off are not drawn. With `velocities` (m/s, one per
-/// player) each moving player also gets an arrow along its velocity.
+/// canvas, with the `overlays` asked for. Players sent off are not drawn.
 ///
 /// # Panics
 /// Never: shirt numbers are 1..=11.
 #[must_use]
-pub fn frame_mesh(
-    frame: &Frame,
-    velocities: Option<&[Vec2; 22]>,
-    width_px: u32,
-    height_px: u32,
-) -> Mesh {
-    let mut shapes = Vec::with_capacity(230);
+pub fn frame_mesh(frame: &Frame, overlays: &Overlays, width_px: u32, height_px: u32) -> Mesh {
+    let mut shapes = Vec::with_capacity(250);
     pitch_shapes(&mut shapes);
-    // Arrows first, so the player discs sit on top of their tails.
-    if let Some(velocities) = velocities {
+    // Overlays first, so the players sit on top of them.
+    if overlays.offside {
+        offside_shapes(frame, &mut shapes);
+    }
+    if let Some(velocities) = overlays.velocities {
         let color = Rgba(1.0, 1.0, 1.0, 0.8);
         for (i, (&pos, &v)) in frame.players.iter().zip(velocities).enumerate() {
             if frame.sent_off >> i & 1 == 1 || v.length() < ARROW_MIN_SPEED {
@@ -222,9 +341,11 @@ pub const fn role_code(role: fm_match::Role) -> u8 {
 }
 
 /// A frame from what the main thread holds after interpolating: `xy` is
-/// x0, y0, x1, y1, … for the 22 players (missing values read as 0).
+/// x0, y0, x1, y1, … for the 22 players (missing values read as 0);
+/// `phases` is the snapshot's phase word (home | away << 8 | half << 16).
 #[must_use]
-pub fn frame_from_parts(xy: &[f32], ball: [f32; 3], sent_off: u32) -> Frame {
+pub fn frame_from_parts(xy: &[f32], ball: [f32; 3], sent_off: u32, phases: u32) -> Frame {
+    let byte = |shift: u32| (phases >> shift & 0xFF) as u8;
     let mut players = [Vec2::ZERO; 22];
     for (i, p) in players.iter_mut().enumerate() {
         let at = |k: usize| xy.get(2 * i + k).copied().unwrap_or(0.0);
@@ -234,11 +355,11 @@ pub fn frame_from_parts(xy: &[f32], ball: [f32; 3], sent_off: u32) -> Frame {
         tick: 0,
         t_ms: 0,
         score: [0, 0],
-        phases: [0, 0],
+        phases: [byte(0), byte(8)],
         sent_off,
         ball: fm_core::Vec3::new(ball[0], ball[1], ball[2]),
         players,
-        half: 0,
+        half: byte(16),
         cards: [0; 4],
         held: [0; 2],
         stats: [crate::sab::TeamStats::default(); 2],
@@ -251,6 +372,11 @@ mod tests {
     use crate::sab::{decode, encode, Hud};
     use fm_match::demo::demo_match;
     use fm_match::{LodLevel, MatchEngine};
+
+    const PLAIN: Overlays = Overlays {
+        velocities: None,
+        offside: false,
+    };
 
     fn frame_at(ticks: u32) -> Frame {
         let (db, setup) = demo_match(7);
@@ -266,7 +392,7 @@ mod tests {
 
     #[test]
     fn frame_mesh_stays_in_clip_space() {
-        let mesh = frame_mesh(&frame_at(6_000), None, 1280, 820);
+        let mesh = frame_mesh(&frame_at(6_000), &PLAIN, 1280, 820);
         assert!(mesh.vertex_count() > 5_000, "{}", mesh.vertex_count());
         assert!(mesh
             .verts
@@ -278,8 +404,12 @@ mod tests {
     #[test]
     fn frame_mesh_is_a_pure_function_of_the_frame() {
         let frame = frame_at(1_234);
-        let a = frame_mesh(&frame, None, 1280, 820);
-        let b = frame_mesh(&frame, None, 1280, 820);
+        let all = Overlays {
+            velocities: None,
+            offside: true,
+        };
+        let a = frame_mesh(&frame, &all, 1280, 820);
+        let b = frame_mesh(&frame, &all, 1280, 820);
         assert_eq!(a.verts, b.verts);
         // And the parts the main thread passes rebuild the same frame.
         let xy: Vec<f32> = frame.players.iter().flat_map(|p| [p.x, p.y]).collect();
@@ -287,8 +417,136 @@ mod tests {
             &xy,
             [frame.ball.x, frame.ball.y, frame.ball.z],
             frame.sent_off,
+            u32::from(frame.phases[0])
+                | u32::from(frame.phases[1]) << 8
+                | u32::from(frame.half) << 16,
         );
-        assert_eq!(frame_mesh(&rebuilt, None, 1280, 820).verts, a.verts);
+        assert_eq!(
+            (rebuilt.phases, rebuilt.half),
+            (frame.phases, frame.half),
+            "the phase word carries phases and half"
+        );
+        assert_eq!(frame_mesh(&rebuilt, &all, 1280, 820).verts, a.verts);
+    }
+
+    /// The "second-last defender" of the overlay is the engine's offside
+    /// line, bit for bit, on every tick the engine has one — whole matches,
+    /// both halves, with whoever was sent off.
+    #[test]
+    fn second_last_defender_is_the_engines_line_bit_for_bit() {
+        use fm_match::TickFrame;
+        let mut compared = [0_u32; 2];
+        for seed in [3, 7, 11] {
+            let (db, setup) = demo_match(seed);
+            let mut e = MatchEngine::new(&setup, &db);
+            let mut hud = Hud::default();
+            while !e.is_finished() {
+                e.tick_logic();
+                hud.observe(&e);
+                let state = e.state();
+                let mut tick = TickFrame::capture(state);
+                tick.observe_ball(state);
+                tick.compute_offside(state);
+                let snap = e.sample(LodLevel::Full, state.now_ms()).expect("snapshot");
+                let frame = decode(&encode(&snap, &hud));
+                for attacking in [Side::Home, Side::Away] {
+                    let Some(line) = tick.offside_line(attacking) else {
+                        continue;
+                    };
+                    let ours = second_last_defender_x(&frame, attacking.other());
+                    assert_eq!(
+                        ours.to_bits(),
+                        line.to_bits(),
+                        "seed {seed} tick {}: {ours} vs {line}",
+                        state.tick
+                    );
+                    compared[usize::from(frame.half)] += 1;
+                }
+            }
+        }
+        assert!(
+            compared[0] > 10_000 && compared[1] > 10_000,
+            "both halves compared: {compared:?}"
+        );
+    }
+
+    /// The line of the Laws: the second-last defender, unless the ball or
+    /// the halfway line is nearer the defended goal.
+    #[test]
+    fn offside_line_follows_the_laws() {
+        let mut frame = frame_at(0);
+        // Away (11..22) defends the right goal in the first half: keeper on
+        // his line, one defender at 80 m, the rest at 60 m.
+        frame.half = 0;
+        frame.sent_off = 0;
+        for p in &mut frame.players[11..] {
+            *p = Vec2::new(60.0, 30.0);
+        }
+        frame.players[11] = Vec2::new(104.0, 34.0);
+        frame.players[12] = Vec2::new(80.0, 30.0);
+        frame.ball = fm_core::Vec3::new(70.0, 34.0, 0.0);
+        frame.phases = [0, 1];
+        assert_eq!(offside_line(&frame), Some((Side::Away, 80.0)));
+        // Ball beyond the second-last defender: the ball is the line.
+        frame.ball.x = 90.0;
+        assert_eq!(offside_line(&frame), Some((Side::Away, 90.0)));
+        // Defence pushed into the attackers' half: never past halfway.
+        frame.ball.x = 30.0;
+        frame.players[12].x = 45.0;
+        for p in &mut frame.players[13..] {
+            p.x = 40.0;
+        }
+        assert_eq!(offside_line(&frame), Some((Side::Away, pitch::HALF_LENGTH)));
+        // The second-last man sent off: the next one holds the line.
+        frame.players[12].x = 80.0;
+        frame.ball.x = 50.0;
+        for p in &mut frame.players[13..] {
+            p.x = 60.0;
+        }
+        frame.sent_off = 1 << 12;
+        assert_eq!(offside_line(&frame), Some((Side::Away, 60.0)));
+        frame.sent_off = 0;
+        // Transition counts as attacking; the other team attacking mirrors.
+        frame.phases = [2, 3];
+        assert_eq!(offside_line(&frame), Some((Side::Away, 80.0)));
+        for p in &mut frame.players[..11] {
+            *p = Vec2::new(40.0, 30.0);
+        }
+        frame.players[0] = Vec2::new(1.0, 34.0);
+        frame.players[1] = Vec2::new(20.0, 30.0);
+        frame.ball.x = 30.0;
+        frame.phases = [1, 0];
+        assert_eq!(offside_line(&frame), Some((Side::Home, 20.0)));
+        // Second half: home defends the right goal.
+        frame.half = 1;
+        for p in &mut frame.players[..11] {
+            p.x = pitch::LENGTH - p.x;
+        }
+        frame.ball.x = 75.0;
+        assert_eq!(offside_line(&frame), Some((Side::Home, 85.0)));
+        // Set piece: the snapshot does not tell who attacks.
+        frame.phases = [4, 4];
+        assert_eq!(offside_line(&frame), None);
+    }
+
+    /// F3 adds the dashed line and nothing else; no line, no vertices.
+    #[test]
+    fn offside_overlay_is_a_dashed_line() {
+        let mut frame = frame_at(1_234);
+        let on = Overlays {
+            velocities: None,
+            offside: true,
+        };
+        frame.phases = [0, 1];
+        let plain = frame_mesh(&frame, &PLAIN, 1280, 820);
+        let with = frame_mesh(&frame, &on, 1280, 820);
+        assert_eq!(with.vertex_count(), plain.vertex_count() + 17 * 6);
+        assert!(with
+            .verts
+            .chunks(6)
+            .all(|v| v[0].abs() <= 1.0 && v[1].abs() <= 1.0));
+        frame.phases = [4, 4];
+        assert_eq!(frame_mesh(&frame, &on, 1280, 820).verts, plain.verts);
     }
 
     /// F2: moving players get an arrow, standing ones and sent-off ones do
@@ -296,17 +554,21 @@ mod tests {
     #[test]
     fn velocity_arrows_are_added_for_moving_players_only() {
         let mut frame = frame_at(1_234);
-        let plain = frame_mesh(&frame, None, 1280, 820);
+        let plain = frame_mesh(&frame, &PLAIN, 1280, 820);
         let still = [Vec2::ZERO; 22];
+        let arrows = |velocities| Overlays {
+            velocities: Some(velocities),
+            offside: false,
+        };
         assert_eq!(
-            frame_mesh(&frame, Some(&still), 1280, 820).verts,
+            frame_mesh(&frame, &arrows(&still), 1280, 820).verts,
             plain.verts,
             "nobody moving: no arrows"
         );
         let mut moving = still;
         moving[3] = Vec2::new(6.0, 0.0);
         moving[15] = Vec2::new(0.0, -4.0);
-        let with = frame_mesh(&frame, Some(&moving), 1280, 820);
+        let with = frame_mesh(&frame, &arrows(&moving), 1280, 820);
         let per_arrow = (with.vertex_count() - plain.vertex_count()) / 2;
         assert!(per_arrow > 6, "an arrow is a line and a tip");
         assert_eq!(with.vertex_count(), plain.vertex_count() + 2 * per_arrow);
@@ -316,9 +578,9 @@ mod tests {
             .all(|v| v[0].abs() <= 1.0 && v[1].abs() <= 1.0));
         // A sent-off player has no arrow either.
         frame.sent_off = 1 << 3;
-        let gone = frame_mesh(&frame, Some(&moving), 1280, 820);
+        let gone = frame_mesh(&frame, &arrows(&moving), 1280, 820);
         frame.sent_off = 0;
-        let nobody = frame_mesh(&frame, None, 1280, 820).vertex_count();
+        let nobody = frame_mesh(&frame, &PLAIN, 1280, 820).vertex_count();
         assert!(gone.vertex_count() < nobody + 2 * per_arrow);
         assert_eq!(velocities_from_parts(&[0.0; 44]), Some(still));
         assert_eq!(velocities_from_parts(&[]), None);
@@ -344,8 +606,8 @@ mod tests {
     #[test]
     fn players_sent_off_are_not_drawn() {
         let mut frame = frame_at(100);
-        let all = frame_mesh(&frame, None, 1280, 820).vertex_count();
+        let all = frame_mesh(&frame, &PLAIN, 1280, 820).vertex_count();
         frame.sent_off = 1 << 5;
-        assert!(frame_mesh(&frame, None, 1280, 820).vertex_count() < all);
+        assert!(frame_mesh(&frame, &PLAIN, 1280, 820).vertex_count() < all);
     }
 }

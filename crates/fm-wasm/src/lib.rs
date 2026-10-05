@@ -210,8 +210,10 @@ impl EngineHost {
 /// Triangle list of one frame (`[x, y, r, g, b, a]` per vertex, clip
 /// space) for a `width_px` × `height_px` canvas. Pure: the main thread
 /// passes what it read from the snapshot ring and interpolated — `xy` is
-/// x0, y0, x1, y1, … for the 22 players; `velocities` is vx0, vy0, … in m/s
-/// to draw velocity arrows, or empty for none.
+/// x0, y0, x1, y1, … for the 22 players; `phases` is the snapshot's phase
+/// word (home | away << 8 | half << 16); `velocities` is vx0, vy0, … in m/s
+/// to draw velocity arrows, or empty for none; `overlays` is a bit set
+/// (`OVERLAY_OFFSIDE`).
 #[wasm_bindgen]
 #[must_use]
 #[allow(clippy::too_many_arguments)] // a flat frame across the wasm boundary
@@ -221,14 +223,23 @@ pub fn frame_mesh_vertices(
     ball_y: f32,
     ball_z: f32,
     sent_off: u32,
+    phases: u32,
     velocities: &[f32],
+    overlays: u32,
     width_px: u32,
     height_px: u32,
 ) -> Vec<f32> {
-    let frame = mesh::frame_from_parts(xy, [ball_x, ball_y, ball_z], sent_off);
+    let frame = mesh::frame_from_parts(xy, [ball_x, ball_y, ball_z], sent_off, phases);
     let velocities = mesh::velocities_from_parts(velocities);
-    mesh::frame_mesh(&frame, velocities.as_ref(), width_px, height_px).verts
+    let overlays = mesh::Overlays {
+        velocities: velocities.as_ref(),
+        offside: overlays & OVERLAY_OFFSIDE != 0,
+    };
+    mesh::frame_mesh(&frame, &overlays, width_px, height_px).verts
 }
+
+/// Bit of `overlays` that draws the offside line (F3).
+pub const OVERLAY_OFFSIDE: u32 = 1;
 
 /// How the pitch is fitted into a `width_px` × `height_px` canvas, as
 /// `[centre x, centre y, scale x, scale y]`: pitch point `p` is drawn at
@@ -282,6 +293,7 @@ impl MatchCanvas {
     ///
     /// # Errors
     /// When drawing fails.
+    #[allow(clippy::too_many_arguments)] // a flat frame across the wasm boundary
     pub fn draw(
         &self,
         xy: &[f32],
@@ -289,14 +301,16 @@ impl MatchCanvas {
         ball_y: f32,
         ball_z: f32,
         sent_off: u32,
+        phases: u32,
         velocities: &[f32],
+        overlays: u32,
     ) -> Result<u32, String> {
         let (w, h) = self.renderer.size();
-        let frame = mesh::frame_from_parts(xy, [ball_x, ball_y, ball_z], sent_off);
-        let velocities = mesh::velocities_from_parts(velocities);
-        let mesh = mesh::frame_mesh(&frame, velocities.as_ref(), w, h);
-        self.renderer.draw(mesh::BACKGROUND, &mesh.verts)?;
-        u32::try_from(mesh.vertex_count()).map_err(|_| "mesh too large".into())
+        let verts = frame_mesh_vertices(
+            xy, ball_x, ball_y, ball_z, sent_off, phases, velocities, overlays, w, h,
+        );
+        self.renderer.draw(mesh::BACKGROUND, &verts)?;
+        u32::try_from(verts.len() / 6).map_err(|_| "mesh too large".into())
     }
 }
 
