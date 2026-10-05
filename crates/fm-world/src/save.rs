@@ -248,6 +248,58 @@ impl World {
     }
 }
 
+impl World {
+    /// Overwrites what changes from one day to the next with another
+    /// world's: the day, every player's dynamic state, and the clubs'
+    /// tactics and line-ups (the rest of `clubs` — names, strength — is not
+    /// read). A copy of a world kept in step like this plays any match of
+    /// the day exactly as the world it follows: `play` reads nothing else
+    /// that changes.
+    ///
+    /// # Errors
+    /// When the pieces are not this world's: a blob refused, the wrong
+    /// number of players or clubs, a code out of range, a line-up with
+    /// somebody from another club. The world may be left half updated.
+    pub fn sync_day(
+        &mut self,
+        day: u16,
+        dynamics: &[u8],
+        clubs: &[ClubRow],
+    ) -> Result<(), SaveError> {
+        if clubs.len() != CLUBS {
+            return Err(SaveError::Shape("the league has 20 clubs"));
+        }
+        if dynamics.len() != PLAYERS * fm_persistence::DYNAMIC_BYTES {
+            return Err(SaveError::Shape("the world has 500 players"));
+        }
+        for (id, state) in self
+            .players
+            .ids()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .zip(dynamics.chunks_exact(fm_persistence::DYNAMIC_BYTES))
+        {
+            *self.players.dynamic_mut(id) = fm_persistence::decode_dynamic(state)?;
+        }
+        for (club, row) in self.clubs.iter_mut().zip(clubs) {
+            let lineup = decode_lineup(&row.lineup)?;
+            if !lineup.iter().all(|p| club.squad.contains(p)) {
+                return Err(SaveError::Shape("a line-up has a player from another club"));
+            }
+            club.formation = from_code(&Formation::ALL, row.formation, "unknown formation")?;
+            club.tactics = Tactics {
+                mentality: from_code(&MENTALITIES, row.mentality, "unknown mentality")?,
+                pressing: from_code(&PRESSINGS, row.pressing, "unknown pressing")?,
+                width: from_code(&WIDTHS, row.width, "unknown width")?,
+                line_height: from_code(&LINE_HEIGHTS, row.line_height, "unknown line height")?,
+            };
+            club.lineup = lineup;
+        }
+        self.day = day;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

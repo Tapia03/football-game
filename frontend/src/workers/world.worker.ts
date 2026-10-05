@@ -272,9 +272,13 @@ async function liveDay(h: WorldHost, daysLeft: number, pace: Pace): Promise<DayT
   const matches = h.matches_today();
   const started = performance.now();
   let simulating = 0;
+  // The results of the day, as they come (`RESULT_ROW` words a match). The
+  // host keeps nothing of a match played: abandoning the day is dropping
+  // this.
+  const results: number[] = [];
   for (const [index, id] of matches.entries()) {
     const before = performance.now();
-    h.play(id);
+    results.push(...h.play(id));
     const took = performance.now() - before;
     simulating += took;
     pace.matches += 1;
@@ -295,13 +299,9 @@ async function liveDay(h: WorldHost, daysLeft: number, pace: Pace): Promise<DayT
     await yieldTurn();
     // After the last match the day is ended all the same: cancelling on the
     // eve of the commit would save a few milliseconds and nothing else.
-    if (cancelRequested && done < matches.length) {
-      h.abandon_day();
-      return 'cancelled';
-    }
+    if (cancelRequested && done < matches.length) return 'cancelled';
   }
-  const simulated = started + simulating;
-  h.finish_day();
+  h.finish_day(Uint32Array.from(results));
   const { commit, transfer } = commitOf(h);
   const committing = performance.now();
   try {

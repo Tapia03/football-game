@@ -44,11 +44,40 @@ fn narrow<T: TryFrom<u32>>(value: u32, what: &str) -> Result<T, String> {
     T::try_from(value).map_err(|_| format!("{what} out of range: {value}"))
 }
 
+/// The clubs of a save from their rows (`CLUB_ROW` bytes each) and their
+/// line-ups (44 bytes each).
+fn club_rows_of(club_rows: &[u8], lineups: &[u8]) -> Result<Vec<ClubRow>, String> {
+    if club_rows.len() != CLUBS * CLUB_ROW || lineups.len() != CLUBS * 44 {
+        return Err("the league has 20 clubs".into());
+    }
+    Ok(club_rows
+        .chunks_exact(CLUB_ROW)
+        .zip(lineups.chunks_exact(44))
+        .zip(CLUB_NAMES)
+        .map(|((row, lineup), (name, short_name))| {
+            let mut eleven = [0_u8; 44];
+            eleven.copy_from_slice(lineup);
+            ClubRow {
+                name: name.to_owned(),
+                short_name: short_name.to_owned(),
+                strength: row[0],
+                formation: row[1],
+                mentality: row[2],
+                pressing: row[3],
+                width: row[4],
+                line_height: row[5],
+                lineup: eleven,
+            }
+        })
+        .collect())
+}
+
+/// The world, as one worker holds it. The world worker's host owns the
+/// world; the hosts of the match workers (the pool) are copies kept in
+/// step with `sync_day`, which only ever `play`.
 #[wasm_bindgen]
 pub struct WorldHost {
     world: World,
-    /// Today's matches already played and not yet applied.
-    pending: Vec<(usize, Played)>,
     /// The results `finish_day` applied last (`RESULT_ROW` words each).
     last_results: Vec<u32>,
 }
@@ -61,7 +90,6 @@ impl WorldHost {
     pub fn new(seed: u64, user_club: u8) -> WorldHost {
         Self {
             world: World::new(seed, user_club),
-            pending: Vec::new(),
             last_results: Vec::new(),
         }
     }
@@ -88,28 +116,10 @@ impl WorldHost {
         fixture_rows: &[u32],
         match_seeds: &[u8],
     ) -> Result<WorldHost, String> {
-        if club_rows.len() != CLUBS * CLUB_ROW || lineups.len() != CLUBS * 44 {
-            return Err("the league has 20 clubs".into());
-        }
+        let clubs = club_rows_of(club_rows, lineups)?;
         if fixture_rows.len() != MATCHES * FIXTURE_ROW || match_seeds.len() != MATCHES * 8 {
             return Err("the season has 380 matches".into());
         }
-        let clubs = club_rows
-            .chunks_exact(CLUB_ROW)
-            .zip(lineups.chunks_exact(44))
-            .zip(CLUB_NAMES)
-            .map(|((row, lineup), (name, short_name))| ClubRow {
-                name: name.to_owned(),
-                short_name: short_name.to_owned(),
-                strength: row[0],
-                formation: row[1],
-                mentality: row[2],
-                pressing: row[3],
-                width: row[4],
-                line_height: row[5],
-                lineup: lineup.try_into().expect("chunks of 44 bytes"),
-            })
-            .collect();
         let mut fixtures = Vec::with_capacity(MATCHES);
         for (row, seed_bytes) in fixture_rows
             .chunks_exact(FIXTURE_ROW)
@@ -151,7 +161,6 @@ impl WorldHost {
         let world = World::from_save(&save).map_err(|e| e.to_string())?;
         Ok(Self {
             world,
-            pending: Vec::new(),
             last_results: Vec::new(),
         })
     }
@@ -205,13 +214,14 @@ impl WorldHost {
             .collect()
     }
 
-    /// Plays match `id` of today in LOD `Abstract` and keeps its result
-    /// until `finish_day`. The world is only read: nothing changes yet.
-    /// Returns the result row (`RESULT_ROW` words).
+    /// Plays match `id` of today in LOD `Abstract` and returns its result
+    /// row (`RESULT_ROW` words). The world is only read: nothing is kept
+    /// and nothing changes, so any host holding the same day gives the same
+    /// row — which is what lets the matches of a day be played elsewhere.
     ///
     /// # Errors
-    /// When `id` is not a match of today, or was already played today.
-    pub fn play(&mut self, id: u32) -> Result<Vec<u32>, String> {
+    /// When `id` is not a match of today.
+    pub fn play(&self, id: u32) -> Result<Vec<u32>, String> {
         let at = id as usize;
         if !self.world.matches_today().contains(&at) {
             return Err(format!(
@@ -219,33 +229,56 @@ impl WorldHost {
                 self.world.day
             ));
         }
-        if self.pending.iter().any(|&(played, _)| played == at) {
-            return Err(format!("match {id} was already played today"));
-        }
-        let played = self.world.play(at);
-        self.pending.push((at, played));
         let mut row = vec![id];
-        row.extend(result_words(&played.result));
+        row.extend(result_words(&self.world.play(at).result));
         Ok(row)
     }
 
-    /// Ends the day with the matches played: results and minutes applied,
-    /// the weekly update when a week closes, the day moved on. The results
-    /// kept by `play` are consumed (see `day_results`).
+    /// Ends the day with `results` (`RESULT_ROW` words a match, in any
+    /// order, wherever they were played): results and minutes applied in
+    /// id order, the weekly update when a week closes, the day moved on.
     ///
     /// # Errors
-    /// When not every match of today was played. Nothing changes.
-    pub fn finish_day(&mut self) -> Result<(), String> {
+    /// When `results` is not exactly the matches of today, each once, or a
+    /// number does not fit. Nothing changes.
+    pub fn finish_day(&mut self, results: &[u32]) -> Result<(), String> {
         let today = self.world.matches_today();
-        if self.pending.len() != today.len() {
+        if results.len() != today.len() * RESULT_ROW {
             return Err(format!(
-                "day {} has {} matches; {} were played",
+                "day {} has {} matches; {} results came",
                 self.world.day,
                 today.len(),
-                self.pending.len()
+                results.len() / RESULT_ROW
             ));
         }
-        let mut played = core::mem::take(&mut self.pending);
+        let mut played = Vec::with_capacity(today.len());
+        for row in results.chunks_exact(RESULT_ROW) {
+            let id = row[0] as usize;
+            if !today.contains(&id) || played.iter().any(|&(seen, _)| seen == id) {
+                return Err(format!(
+                    "match {} is not a match of day {} (or came twice)",
+                    row[0], self.world.day
+                ));
+            }
+            let fixture = &self.world.fixtures[id];
+            played.push((
+                id,
+                Played {
+                    result: MatchResult {
+                        home_goals: narrow(row[1], "home goals")?,
+                        away_goals: narrow(row[2], "away goals")?,
+                        home_shots: narrow(row[3], "home shots")?,
+                        away_shots: narrow(row[4], "away shots")?,
+                        home_on_target: narrow(row[5], "home shots on target")?,
+                        away_on_target: narrow(row[6], "away shots on target")?,
+                    },
+                    // Who started: the same line-ups `play` used, since the
+                    // world has not changed since the day began.
+                    home_lineup: self.world.lineup_today(fixture.home),
+                    away_lineup: self.world.lineup_today(fixture.away),
+                },
+            ));
+        }
         played.sort_unstable_by_key(|&(id, _)| id);
         self.world.finish_day(&played);
         self.last_results = played
@@ -259,10 +292,27 @@ impl WorldHost {
         Ok(())
     }
 
-    /// Forgets the matches played today and not applied: the day starts
-    /// over (played again they give the same results).
-    pub fn abandon_day(&mut self) {
-        self.pending.clear();
+    /// Overwrites what changes from one day to the next — the day, every
+    /// player's dynamic state, the clubs' tactics and line-ups — with
+    /// another host's (`day`, `dynamics`, `club_rows`, `lineups`). A host
+    /// kept in step like this plays any match of the day exactly as the
+    /// host it follows would.
+    ///
+    /// # Errors
+    /// When the pieces are not this world's (sizes, codes, a line-up with
+    /// somebody from another club). The host may be left half updated: it
+    /// must be loaded again.
+    pub fn sync_day(
+        &mut self,
+        day: u16,
+        dynamics: &[u8],
+        club_rows: &[u8],
+        lineups: &[u8],
+    ) -> Result<(), String> {
+        let clubs = club_rows_of(club_rows, lineups)?;
+        self.world
+            .sync_day(day, dynamics, &clubs)
+            .map_err(|e| e.to_string())
     }
 
     /// The results the last `finish_day` applied, `RESULT_ROW` words each,
@@ -434,12 +484,18 @@ mod tests {
         )
     }
 
+    /// The rows of today's matches, played by `host` itself.
+    fn play_day(host: &WorldHost) -> Vec<u32> {
+        host.matches_today()
+            .into_iter()
+            .flat_map(|id| host.play(id).expect("a match of today"))
+            .collect()
+    }
+
     fn live(host: &mut WorldHost, days: u16) {
         for _ in 0..days {
-            for id in host.matches_today() {
-                host.play(id).expect("a match of today");
-            }
-            host.finish_day().expect("every match played");
+            let results = play_day(host);
+            host.finish_day(&results).expect("today's matches");
         }
     }
 
@@ -455,25 +511,37 @@ mod tests {
         assert!(host.day_results().is_empty(), "six days off");
         assert_eq!(host.matches_today(), (0..10).collect::<Vec<u32>>());
 
-        // A round: each match reports its result; the day ends with all ten.
+        // `play` only reads: twice, the same row; a match of another day, no.
         let first = host.play(3).expect("match 3 is today");
         assert_eq!((first.len(), first[0]), (RESULT_ROW, 3));
-        assert!(host.play(3).is_err(), "not twice");
+        assert_eq!(host.play(3).expect("again"), first);
         assert!(host.play(10).is_err(), "next week's match");
-        assert!(host.finish_day().is_err(), "nine matches missing");
-        assert_eq!(host.day(), 6, "nothing changed");
-        for id in [0, 1, 2, 4, 5, 6, 7, 8, 9] {
-            host.play(id).expect("a match of today");
-        }
-        host.finish_day().expect("all ten played");
-        assert_eq!((host.day(), host.next_round()), (7, 1));
-        let results = host.day_results();
-        assert_eq!(results.len(), 10 * RESULT_ROW);
-        assert_eq!(
-            results[3 * RESULT_ROW..4 * RESULT_ROW],
-            first[..],
-            "in id order"
+        assert_eq!(host.day(), 6);
+
+        // The day ends with exactly today's results, whatever their order.
+        let mut results = play_day(&host);
+        assert!(
+            host.finish_day(&results[RESULT_ROW..]).is_err(),
+            "one missing"
         );
+        let mut twice = results.clone();
+        twice[RESULT_ROW] = 0; // match 0 where match 1 was
+        assert!(host.finish_day(&twice).is_err(), "one twice");
+        let mut alien = results.clone();
+        alien[0] = 10;
+        assert!(host.finish_day(&alien).is_err(), "next week's match");
+        assert_eq!(host.day(), 6, "nothing changed");
+        // Reversed: the order results arrive in does not matter.
+        let reversed: Vec<u32> = results
+            .chunks(RESULT_ROW)
+            .rev()
+            .flatten()
+            .copied()
+            .collect();
+        host.finish_day(&reversed).expect("all ten");
+        assert_eq!((host.day(), host.next_round()), (7, 1));
+        results.truncate(10 * RESULT_ROW);
+        assert_eq!(host.day_results(), results, "kept in id order");
 
         // The same as the world living its days by itself.
         let mut world = World::new(7, 4);
@@ -493,19 +561,72 @@ mod tests {
         assert_eq!(host.day(), 14);
     }
 
-    /// Abandoning a day forgets what was played; played again, the matches
-    /// give the same results.
+    /// The pool: hosts loaded once and kept in step with `sync_day` play
+    /// every match of every day exactly as the host that owns the world —
+    /// so a season lived with its matches played elsewhere, in any split
+    /// and any order, is the season lived alone.
     #[test]
-    fn an_abandoned_day_starts_over() {
-        let mut host = WorldHost::new(11, 0);
-        live(&mut host, 6);
-        let before = host.fixture_rows();
-        let first: Vec<Vec<u32>> = [0, 1, 2].map(|id| host.play(id).expect("today")).to_vec();
-        host.abandon_day();
-        assert_eq!(host.fixture_rows(), before, "nothing was applied");
-        assert_eq!(host.day(), 6);
-        let again: Vec<Vec<u32>> = [0, 1, 2].map(|id| host.play(id).expect("today")).to_vec();
-        assert_eq!(again, first);
+    fn hosts_kept_in_step_play_the_same_matches() {
+        let mut owner = WorldHost::new(11, 0);
+        // Two players, loaded when the world was new.
+        let mut players = [
+            reloaded(&owner).expect("a world"),
+            reloaded(&owner).expect("a world"),
+        ];
+        let mut alone = WorldHost::new(11, 0);
+        let mut rounds = 0;
+        for _ in 0..21 {
+            let today = owner.matches_today();
+            for player in &mut players {
+                player
+                    .sync_day(
+                        owner.day(),
+                        &owner.dynamics(),
+                        &owner.club_rows(),
+                        &owner.lineups(),
+                    )
+                    .expect("this world's day");
+            }
+            // Dealt out in turns, collected back to front.
+            let mut results: Vec<Vec<u32>> = Vec::new();
+            for (turn, &id) in today.iter().enumerate() {
+                let row = players[turn % 2].play(id).expect("a match of today");
+                assert_eq!(row, owner.play(id).expect("a match of today"), "match {id}");
+                results.push(row);
+            }
+            results.reverse();
+            owner
+                .finish_day(&results.concat())
+                .expect("today's matches");
+            live(&mut alone, 1);
+            rounds += usize::from(!today.is_empty());
+        }
+        assert_eq!(rounds, 3);
+        assert_eq!(owner.world, alone.world);
+        assert_eq!(owner.day(), 21);
+        // The players never ended a day themselves: only what changes was
+        // overwritten, and their calendar still has no result.
+        assert!(players[0]
+            .fixture_rows()
+            .chunks(FIXTURE_ROW)
+            .all(|r| r[4] == 0));
+
+        // A day that is not this world's is refused.
+        let (dynamics, clubs, lineups) = (owner.dynamics(), owner.club_rows(), owner.lineups());
+        let player = &mut players[0];
+        assert!(player
+            .sync_day(21, &dynamics[14..], &clubs, &lineups)
+            .is_err());
+        assert!(player
+            .sync_day(21, &dynamics, &clubs[6..], &lineups)
+            .is_err());
+        let mut wrong = clubs.clone();
+        wrong[1] = 9; // a formation that does not exist
+        assert!(player.sync_day(21, &dynamics, &wrong, &lineups).is_err());
+        let mut stolen = lineups.clone();
+        stolen[..4].copy_from_slice(&30_u32.to_le_bytes()); // club 1's player in club 0
+        assert!(player.sync_day(21, &dynamics, &clubs, &stolen).is_err());
+        assert!(player.sync_day(21, &dynamics, &clubs, &lineups).is_ok());
     }
 
     /// The rows have the shape the worker counts on.
