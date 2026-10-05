@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 fm-core.workspace = true
+fm-entities.workspace = true
 
 [lints]
 workspace = true

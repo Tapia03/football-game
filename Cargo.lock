@@ -219,6 +219,7 @@ name = "fm-persistence"
 version = "0.1.0"
 dependencies = [
  "fm-core",
+ "fm-entities",
 ]
 
 [[package]]
