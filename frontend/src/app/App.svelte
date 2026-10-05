@@ -14,6 +14,7 @@
     STATE_FINISHED,
     STATE_PAUSED,
     STATE_RUNNING,
+    copyStats,
     newFrame,
   } from '../engine-bridge/sab';
   import { FrameInterpolator } from '../render/interpolate';
@@ -38,6 +39,20 @@
   let cards = $state({ homeYellows: 0, homeReds: 0, awayYellows: 0, awayReds: 0 });
   /** Home share of the held-ball time so far, 0..100 (50 before any). */
   let possession = $state(50);
+  // Statistics panel (6B-2): the team counters of the snapshot.
+  const noStats = { shots: 0, onTarget: 0, xg: 0, passes: 0, passesCompleted: 0, tackles: 0, fouls: 0 };
+  let stats = $state({ home: { ...noStats }, away: { ...noStats } });
+  const passing = (s: typeof noStats): string =>
+    s.passes === 0
+      ? '0 / 0'
+      : `${s.passesCompleted} / ${s.passes} (${Math.round((100 * s.passesCompleted) / s.passes)}%)`;
+  const rows = $derived([
+    { id: 'shots', label: 'Chutes (no alvo)', value: (s: typeof noStats) => `${s.shots} (${s.onTarget})` },
+    { id: 'xg', label: 'xG', value: (s: typeof noStats) => s.xg.toFixed(2) },
+    { id: 'passes', label: 'Passes certos / tentados', value: passing },
+    { id: 'tackles', label: 'Botes', value: (s: typeof noStats) => String(s.tackles) },
+    { id: 'fouls', label: 'Faltas', value: (s: typeof noStats) => String(s.fouls) },
+  ].map((row) => ({ id: row.id, label: row.label, home: row.value(stats.home), away: row.value(stats.away) })));
   let status = $state('carregando…');
   let match: MatchHandle | undefined = $state();
   let canvasEl: HTMLCanvasElement | undefined = $state();
@@ -58,7 +73,7 @@
     let interpolator: FrameInterpolator | undefined;
     // Tick-to-draw latency (spec Fase 6, 6A): the frame drawn is one sample
     // interval behind the worker's clock, plus however stale that clock is.
-    const latency = { frames: 0, sumMs: 0, maxMs: 0 };
+    const latency = { frames: 0, sumMs: 0, maxMs: 0, over50: 0 };
     (globalThis as { fmLatency?: typeof latency }).fmLatency = latency;
     // The canvas holds WebGL2 objects only; the match is not here. Without
     // WebGL2 the match still runs and the page says why nothing is drawn.
@@ -91,6 +106,8 @@
         cards.awayReds = frame.awayReds;
         const held = frame.homeHeld + frame.awayHeld;
         possession = held === 0 ? 50 : Math.round((100 * frame.homeHeld) / held);
+        copyStats(frame.homeStats, stats.home);
+        copyStats(frame.awayStats, stats.away);
         if (canvas !== undefined) {
           try {
             canvas.draw(frame.xy, frame.ballX, frame.ballY, frame.ballZ, frame.sentOff);
@@ -105,6 +122,7 @@
           latency.frames += 1;
           latency.sumMs += ms;
           latency.maxMs = Math.max(latency.maxMs, ms);
+          if (ms >= 50) latency.over50 += 1;
         }
       }
       status = s === STATE_FINISHED ? 'fim de jogo' : s === STATE_PAUSED ? 'pausado' : 'ao vivo';
@@ -186,7 +204,30 @@
     <span class="bar"><span class="home" style:width="{possession}%"></span></span>
     <span data-testid="hud-possession-away">{100 - possession}%</span>
   </div>
-  <canvas id="match-canvas" bind:this={canvasEl}></canvas>
+  <div class="stage">
+    <canvas id="match-canvas" bind:this={canvasEl}></canvas>
+    <aside class="stats" data-testid="stats">
+      <h2>Estatísticas</h2>
+      <table>
+        <thead>
+          <tr>
+            <th class="home" scope="col">Casa</th>
+            <td></td>
+            <th class="away" scope="col">Visitante</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each rows as row (row.id)}
+            <tr>
+              <td class="home" data-testid="stats-{row.id}-home">{row.home}</td>
+              <th scope="row">{row.label}</th>
+              <td class="away" data-testid="stats-{row.id}-away">{row.away}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </aside>
+  </div>
   <footer>
     <span>
       <span data-testid="match-status">{status}</span>
@@ -229,15 +270,80 @@
   .match {
     /* The pitch plus its margin is 113 × 76 m: as wide as fits with the
        score bar and the controls still inside the viewport. */
-    width: min(100% - 2rem, calc((100vh - 11rem) * 113 / 76));
+    width: min(100% - 2rem, calc((100vh - 11rem) * 113 / 76 + 16rem));
     margin: 0 auto;
     padding: 1rem;
+  }
+  /* The pitch and, to its right, the statistics panel. */
+  .stage {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 15rem;
+    gap: 1rem;
+    align-items: start;
+    margin-top: 0.5rem;
   }
   canvas {
     display: block;
     width: 100%;
     aspect-ratio: 113 / 76;
-    margin-top: 0.5rem;
+  }
+  .stats h2 {
+    margin: 0 0 0.5rem;
+    font-size: 0.875rem;
+    font-weight: 700;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .stats table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8125rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .stats thead th {
+    padding-bottom: 0.25rem;
+    font-weight: 700;
+  }
+  .stats tbody tr {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    padding: 0.375rem 0;
+    border-top: 1px solid rgb(255 255 255 / 12%);
+  }
+  .stats thead tr {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+  .stats thead td {
+    display: none;
+  }
+  .stats tbody th {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    font-weight: 400;
+    color: var(--muted);
+    text-align: center;
+    font-size: 0.75rem;
+  }
+  .stats .home {
+    color: #ff6b6b;
+    text-align: left;
+    font-weight: 700;
+  }
+  .stats .away {
+    color: #4dabf7;
+    text-align: right;
+    font-weight: 700;
+  }
+  /* Narrow screens: the panel goes under the pitch. */
+  @media (max-width: 56rem) {
+    .match {
+      width: min(100% - 2rem, calc((100vh - 11rem) * 113 / 76));
+    }
+    .stage {
+      grid-template-columns: minmax(0, 1fr);
+    }
   }
   .match footer {
     display: flex;

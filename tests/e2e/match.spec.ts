@@ -9,7 +9,7 @@ type Reader = {
 };
 type Hooks = {
   fmMatch: { reader: Reader; pause(): void; runTo(tick: number): void };
-  fmLatency: { frames: number; sumMs: number; maxMs: number };
+  fmLatency: { frames: number; sumMs: number; maxMs: number; over50: number };
   fmReferenceSlot(seed: number, tick: number): Promise<Uint32Array>;
 };
 
@@ -160,6 +160,48 @@ test.describe('Fase 6 (6A): the match runs in the engine worker', () => {
     await expect(page.getByTestId('hud-possession-away')).toHaveText(`${100 - share}%`);
   });
 
+  test('statistics panel shows the team counters of the snapshot', async ({ page }) => {
+    await page.goto('/?seed=3');
+    await expect(page.getByTestId('match-status')).toHaveText('ao vivo');
+    await page.evaluate(() => (globalThis as unknown as Hooks).fmMatch.runTo(30_000));
+    await expect(page.getByTestId('match-status')).toHaveText('pausado');
+
+    // Words 56..63 (home) and 63..70 (away) of the newest snapshot: shots,
+    // on target, xG (f32), passes, passes completed, tackles, fouls.
+    const ring = await page.evaluate(() => {
+      const { reader } = (globalThis as unknown as Hooks).fmMatch;
+      const words = reader.rawSlot(reader.sequence() - 1);
+      if (words === undefined) return undefined;
+      const floats = new Float32Array(words.buffer);
+      const team = (at: number) => ({
+        shots: words[at] ?? 0,
+        onTarget: words[at + 1] ?? 0,
+        xg: floats[at + 2] ?? 0,
+        passes: words[at + 3] ?? 0,
+        completed: words[at + 4] ?? 0,
+        tackles: words[at + 5] ?? 0,
+        fouls: words[at + 6] ?? 0,
+      });
+      return { home: team(56), away: team(63) };
+    });
+    expect(ring).toBeDefined();
+    if (ring === undefined) return;
+    for (const side of ['home', 'away'] as const) {
+      const s = ring[side];
+      expect(s.shots).toBeGreaterThan(0);
+      expect(s.passes).toBeGreaterThan(50);
+      expect(s.xg).toBeGreaterThan(0);
+      await expect(page.getByTestId(`stats-shots-${side}`)).toHaveText(`${s.shots} (${s.onTarget})`);
+      await expect(page.getByTestId(`stats-xg-${side}`)).toHaveText(s.xg.toFixed(2));
+      const pct = Math.round((100 * s.completed) / s.passes);
+      await expect(page.getByTestId(`stats-passes-${side}`)).toHaveText(
+        `${s.completed} / ${s.passes} (${pct}%)`,
+      );
+      await expect(page.getByTestId(`stats-tackles-${side}`)).toHaveText(String(s.tackles));
+      await expect(page.getByTestId(`stats-fouls-${side}`)).toHaveText(String(s.fouls));
+    }
+  });
+
   test('golden: the match at a fixed tick (pixels, Chromium only)', async ({ page, browserName }) => {
     // Pixel goldens only where rendering is deterministic: the software
     // renderer of headless Chromium (docs/SPEC.md, Fase 6). Firefox and
@@ -180,7 +222,7 @@ test.describe('Fase 6 (6A): the match runs in the engine worker', () => {
     await expect(page).toHaveScreenshot('match-hud.png', { maxDiffPixelRatio: 0.01 });
   });
 
-  test('tick-to-draw latency stays under 50 ms at 1×', async ({ page }, testInfo) => {
+  test('tick-to-draw latency stays under 50 ms at 1× (95% of the frames)', async ({ page }, testInfo) => {
     await openMatch(page);
     await page.getByRole('button', { name: '1×', exact: true }).click();
     await page.evaluate(() => {
@@ -188,6 +230,7 @@ test.describe('Fase 6 (6A): the match runs in the engine worker', () => {
       stats.frames = 0;
       stats.sumMs = 0;
       stats.maxMs = 0;
+      stats.over50 = 0;
     });
     await page.waitForTimeout(3_000);
     const stats = await page.evaluate(() => ({ ...(globalThis as unknown as Hooks).fmLatency }));
@@ -200,6 +243,8 @@ test.describe('Fase 6 (6A): the match runs in the engine worker', () => {
     console.log(
       `[6A latency ${testInfo.project.name}] mean ${mean.toFixed(1)} ms, max ${stats.maxMs.toFixed(1)} ms, ${stats.frames} frames`,
     );
-    expect(mean).toBeLessThan(50);
+    // Frame by frame, not on the mean: one stalled frame on a busy machine
+    // (seconds of staleness) would swamp an average of 20 ms.
+    expect(stats.over50 / stats.frames).toBeLessThan(0.05);
   });
 });
