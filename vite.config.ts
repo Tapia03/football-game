@@ -14,6 +14,9 @@ export default defineConfig({
   plugins: [svelte()],
   // The engine worker is an ES module (it imports the wasm-bindgen glue).
   worker: { format: 'es' },
+  // The SQLite WASM build finds its `.wasm` next to its own module
+  // (`import.meta.url`): pre-bundling would move the module away from it.
+  optimizeDeps: { exclude: ['@sqlite.org/sqlite-wasm'] },
   build: {
     outDir: '../dist',
     emptyOutDir: true,

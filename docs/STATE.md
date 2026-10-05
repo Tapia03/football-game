@@ -2,7 +2,7 @@
 
 Resumo de uma tela que sobrevive a compactações de sessão. A fonte de verdade
 de arquitetura e regras é o [`docs/SPEC.md`](SPEC.md); este arquivo só diz
-*onde estamos*. Atualizado em **2026-10-05** (Fase 6 completa — 6A, 6B, 6C, 6D — em PR para a `main`).
+*onde estamos*. Atualizado em **2026-10-05** (Fase 6 mergeada; Fase 7A — persistência local — pronta, em PR).
 
 ## Ordem geral (redefinida pelo usuário em 2026-10-05)
 Fases 0–6 fechadas. A ordem nova, que **substitui** a anterior ("Bola
@@ -15,7 +15,8 @@ longa" antes da UI):
 3. **Fase 9 — Resto do gerenciamento:** mercado, contratos, finanças,
    ligas múltiplas, copas — e o que o SPEC chamava de "Fase 7" (UI da
    partida, botão simular, painel tático só do clube do usuário, zoom e
-   pan).
+   pan). **PWA e Demo + Deploy foram movidas explicitamente para cá**
+   (depois do MVP).
 4. **Fase 10 — Polimento e comunidade:** packs, auth, sync.
 
 **Motivo:** depois das Fases 0–6 o projeto é um motor de partida com um
@@ -27,11 +28,26 @@ código é pequeno, e (3) ter feedback visual do motor no contexto real,
 para orientar a próxima rodada de refinamento.
 
 **Fase 7 em quatro sub-fases, um PR cada, CI verde antes da próxima:**
-- **7A — Persistência local:** SQLite em WASM num Web Worker dedicado,
-  OPFS com fallback para IndexedDB, schema mínimo (players, clubs,
-  competitions, matches, saves, tactics), escrita atômica, export/import
-  do save, `navigator.storage.persist()`, protocolo entre Workers.
-  Desenho antes do código.
+- **7A — Persistência local (desenho aprovado em 2026-10-05, no SPEC):**
+  SQLite em WASM (build oficial) num Worker dedicado, VFS `opfs-sahpool`,
+  fallback para blob no IndexedDB; um arquivo por save + catálogo;
+  colunas para as telas e blobs bit a bit para o motor; migração de
+  schema em cadeia no open (`user_version` + tabela `migrations`);
+  escrita atômica por troca de ponteiro no catálogo + limpeza de órfãos
+  no boot; export/import; `navigator.storage.persist()`; protocolo de
+  domínio por `MessagePort`. **A fonte de verdade local passou a ser o
+  SQLite em OPFS** (era IndexedDB); o sync por chunk será redesenhado na
+  Fase 10. Branch `fase-7a`, da `main` depois do merge do PR #7.
+  **Feita (2026-10-05), em PR.** O que o CI mostrou: Chromium e Firefox
+  têm OPFS; o WebKit do Playwright não tem `navigator.storage` e roda só
+  no fallback. Tela mínima em `?view=saves` (`&storage=idb` força o
+  fallback). Detalhes e achados no SPEC.
+  - **A verificar no Safari real** (não há como no CI): se o OPFS
+    funciona, e se o Worker carrega logo depois de recarregar a página (no
+    WebKit do Playwright falha por ~1 s; o cliente tenta de novo).
+  - **Para a 7B:** o Worker de mundo fala com o banco por `MessagePort`
+    (`connect()`); entram `world.load` e `world.commitDay` (uma transação
+    por dia) e o teste de determinismo por `save.digest`.
 - **7B — Mundo mínimo e calendário:** bootstrap determinístico (1 liga,
   20 clubes, ~500 jogadores sintéticos — sem a base FM real), round-robin
   de 38 rodadas / 380 partidas, `WorldSimulator` num Worker com LOD
