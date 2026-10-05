@@ -2,7 +2,7 @@
 
 Resumo de uma tela que sobrevive a compactações de sessão. A fonte de verdade
 de arquitetura e regras é o [`docs/SPEC.md`](SPEC.md); este arquivo só diz
-*onde estamos*. Atualizado em **2026-10-05** (Fases 6 e 7A mergeadas; Fase 7B — mundo mínimo e calendário — **em implementação**, branch `fase-7b`: commits 1 (SPEC), 2 (`fm-world` nativo) e 3 (`fm-persistence`, migração v2, operações `world.*`) feitos; próximo: commit 4, `WorldHost` + Worker de mundo + progresso, com a medição no WASM do CI que decide o pool).
+*onde estamos*. Atualizado em **2026-10-05** (Fases 6 e 7A mergeadas; Fase 7B — mundo mínimo e calendário — **em implementação**, branch `fase-7b`: commits 1 a 4 feitos (SPEC, `fm-world`, persistência do mundo, Worker de mundo com progresso e cancelamento). **A medição decidiu: rodada de 1.453 ms no Chromium do CI, acima de 1 s — o pool de Workers de partida é obrigatório.** Próximo: desenho do pool, a aprovar; só depois o commit 5 (tela)).
 
 **Para quem chega agora:** comece por [`docs/handoff/`](handoff/00-LEIA-PRIMEIRO.md).
 As seções deste arquivo abaixo de "Fase anterior — Fase 5 (c1)" são o
@@ -80,6 +80,17 @@ para orientar a próxima rodada de refinamento.
     operações `world.create` / `load` / `commitDay` / `standings` /
     `round`. Save com mundo: **160 kB**. Save da 7A migra e responde
     `no-world`.
+  - **7B.4 feito:** `WorldHost`, Worker de mundo (`world.new`, `world.open`,
+    `world.advance` dia a dia), progresso por partida, cancelamento entre
+    partidas, recarga, prazo do banco. **Medição no CI (4 núcleos, um
+    Worker de mundo):** rodada de 1.453 ms no Chromium, 1.536 ms no
+    WebKit, 8.784 ms no Firefox; 141 / 152 / 871 ms por partida; o
+    `commitDay` custa 10–57 ms. **Pool obrigatório pela regra (> 1 s).**
+  - **Dívida — Firefox ~6× mais lento neste WASM** (871 contra 141 ms
+    por partida no CI). Causa não investigada; o dono vai conferir num
+    Firefox real. Se confirmado, item da Fase 8, junto com o WASM 3,4×
+    mais lento que o nativo. Um pool não leva o Firefox abaixo do tempo
+    de uma partida (~0,9 s por rodada, no melhor caso).
   - **Fica para o commit 5:** comparar a classificação do Rust com a do
     banco (precisa do `WorldHost`); a tela `?view=world` e a navegação
     saves ↔ mundo; os testes de determinismo e de crash com o mundo de

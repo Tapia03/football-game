@@ -3135,6 +3135,35 @@ depois. O jogo ainda não tem nome ("o jogo", "o projeto").
   - **O número que decide o pool continua sendo o do CI** (sub-commit
     5); o da máquina do dono é contexto.
   - O WASM cresceu de 322 para 408 kB com `fm-world` e `fm-persistence`.
+- **7B.4 implementado (2026-10-05) — a medição que decide o pool.** Passo
+  próprio do CI, um Worker do Playwright, sozinho; cinco rodadas seguidas
+  de um mundo novo (seed 2026); runner de 4 núcleos:
+
+  | Navegador (CI) | Rodada inteira (mediana) | Por partida (mediana) | `commitDay` (média) | Resto da rodada | Temporada (38 × mediana) |
+  |---|---|---|---|---|---|
+  | **Chromium** | **1.453 ms** | 141 ms | 45,6 ms (OPFS) | 0,7 ms | 55 s |
+  | WebKit | 1.536 ms | 152 ms | 9,4 ms (IndexedDB) | 5,1 ms | 58 s |
+  | Firefox | 8.784 ms | 871 ms | 56,6 ms (OPFS) | 2,5 ms | 334 s |
+
+  - As cinco rodadas de cada navegador ficaram a ±2% da mediana
+    (Chromium: 1.431–1.467 ms).
+  - **Decisão pela regra: 1.453 ms > 1 s no Chromium do CI — o pool de
+    Workers de partida é obrigatório.** Parar antes do commit 5 e trazer
+    o desenho do pool.
+  - O custo é a simulação (97% da rodada no Chromium). Progresso,
+    `finish_day` e mensagens somam menos de 1 ms por rodada; o
+    `commitDay` custa 10–57 ms.
+  - Na máquina do dono (16 núcleos), mesma medição: Chromium 1.044 ms,
+    WebKit 1.230 ms, Firefox 7.554 ms.
+  - **O que entrou no commit 4:** `WorldHost` (4 testes nativos); Worker
+    de mundo com `world.new`, `world.open`, `world.advance`; progresso por
+    partida; cancelamento entre partidas (o dia em curso é abandonado e,
+    jogado de novo, dá o mesmo save); recarga da página; prazo de 10 s
+    para o banco (`db-timeout`); 6 testes e2e por armazenamento.
+  - **Não testado:** o cancelamento na janela entre a última partida e o
+    `commitDay` (ignorado por decisão; não há como acertar essa janela de
+    milissegundos num teste). A temporada inteira no CI (só por disparo
+    manual; não disparada ainda).
 
 ## FASE 7 (numeração antiga; agora parte da Fase 9) — UI + Overlays Táticos
 - **Ordem (2026-10-05):** vem depois da fase "Bola longa + contraparte

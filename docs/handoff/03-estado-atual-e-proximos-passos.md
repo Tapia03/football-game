@@ -63,6 +63,13 @@ pendente** (abaixo).
 > mundo de 160 kB). O próximo passo é o **commit 4**: `WorldHost`, Worker
 > de mundo e progresso, com a medição no WASM do CI que decide o pool. O
 > STATE e o SPEC (seção 7B) têm o registro completo.
+>
+> Atualização seguinte, mesmo dia: o **commit 4 foi feito** e a medição
+> saiu: uma rodada leva **1.453 ms no Chromium do CI** (4 núcleos, um
+> Worker de mundo), acima do limite de 1 s. Pela regra do dono, o **pool
+> de Workers de partida é obrigatório**: o próximo passo é o desenho do
+> pool, a aprovar, e só depois o commit 5 (tela). No Firefox a rodada leva
+> 8,8 s (dívida registrada, causa não investigada).
 
 Simulando temporadas inteiras (380 partidas, nativo):
 
