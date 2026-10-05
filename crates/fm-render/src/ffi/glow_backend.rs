@@ -5,9 +5,23 @@
 use glow::HasContext;
 use wasm_bindgen::JsCast;
 
-/// Colour the smoke shader writes; `0.5` reads back as 128 on every browser
-/// we target (round-to-nearest on 8-bit unorm).
+/// Colour the smoke shader writes. `0.5` is 127.5 on an 8-bit channel:
+/// most GPUs read it back as 128, some as 127 (seen on a real machine,
+/// 2026-10-05), so the comparison allows `SMOKE_TOLERANCE` a channel.
 pub const SMOKE_EXPECTED_RGBA: [u8; 4] = [255, 128, 0, 255];
+/// Largest difference per channel that still is the smoke colour: rounding
+/// of the 8-bit conversion, not a wrong shader.
+pub const SMOKE_TOLERANCE: u8 = 2;
+
+/// Whether `pixel` is the smoke colour, to `SMOKE_TOLERANCE` a channel.
+#[must_use]
+pub fn smoke_pixel_matches(pixel: &[u8]) -> bool {
+    pixel.len() == SMOKE_EXPECTED_RGBA.len()
+        && pixel
+            .iter()
+            .zip(SMOKE_EXPECTED_RGBA)
+            .all(|(&got, want)| got.abs_diff(want) <= SMOKE_TOLERANCE)
+}
 
 const VS: &str = "#version 300 es
 void main() {

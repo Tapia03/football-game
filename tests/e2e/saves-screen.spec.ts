@@ -163,3 +163,19 @@ test.describe('Fase 7A: saves screen, one tab and persistence', () => {
     await expectPersistence(page, false);
   });
 });
+
+test.describe('Fase 7A: which screen a URL opens', () => {
+  test('?view=saves is the saves screen; a view nobody knows says so instead of showing the match', async ({
+    page,
+  }) => {
+    await page.goto('/?view=save');
+    await expect(page.getByTestId('unknown-view')).toContainText('Tela "save" não existe');
+    await expect(page.locator('#match-canvas')).toHaveCount(0);
+    await page.goto('/?view=saves');
+    await expect(page.getByTestId('saves-storage')).toBeVisible();
+    await expect(page.locator('#match-canvas')).toHaveCount(0);
+    // And from the saves screen back to the match.
+    await page.getByTestId('saves-to-match').click();
+    await expect(page.locator('#match-canvas')).toBeVisible();
+  });
+});

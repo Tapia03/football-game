@@ -3,6 +3,7 @@ import init, {
   libm_golden_mismatches,
   webgl2_smoke,
   webgl2_smoke_expected,
+  webgl2_smoke_matches,
 } from './pkg/fm_wasm.js';
 
 /** Result of drawing one shader pixel through glow/WebGL2 in this browser. */
@@ -27,12 +28,15 @@ function ensureInit(): Promise<void> {
 
 function probeWebGl2(): WebGl2Status {
   try {
-    const pixel = Array.from(webgl2_smoke());
-    const expected = Array.from(webgl2_smoke_expected());
-    const same = pixel.length === expected.length && pixel.every((v, i) => v === expected[i]);
-    return same
+    const drawn = webgl2_smoke();
+    const pixel = Array.from(drawn);
+    // To ±2 a channel: 0.5 reads back as 127 or 128 depending on the GPU.
+    return webgl2_smoke_matches(drawn)
       ? { ok: true, pixel }
-      : { ok: false, detail: `pixel ${pixel.join(',')} != esperado ${expected.join(',')}` };
+      : {
+          ok: false,
+          detail: `pixel ${pixel.join(',')} != esperado ${Array.from(webgl2_smoke_expected()).join(',')} (±2)`,
+        };
   } catch (err: unknown) {
     return { ok: false, detail: err instanceof Error ? err.message : String(err) };
   }

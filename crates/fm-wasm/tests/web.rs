@@ -64,7 +64,17 @@ fn weekly_update_matches_native_digest() {
 #[wasm_bindgen_test]
 fn webgl2_smoke_draws_expected_pixel() {
     let px = fm_wasm::webgl2_smoke().expect("WebGL2 smoke failed");
-    assert_eq!(px, fm_wasm::webgl2_smoke_expected());
+    assert!(
+        fm_wasm::webgl2_smoke_matches(&px),
+        "{px:?} vs {:?}",
+        fm_wasm::webgl2_smoke_expected()
+    );
+    // The tolerance is rounding of the 8-bit conversion, nothing wider.
+    assert!(fm_wasm::webgl2_smoke_matches(&[255, 127, 0, 255]));
+    assert!(fm_wasm::webgl2_smoke_matches(&[253, 130, 2, 255]));
+    assert!(!fm_wasm::webgl2_smoke_matches(&[255, 125, 0, 255]));
+    assert!(!fm_wasm::webgl2_smoke_matches(&[255, 128, 0, 0]));
+    assert!(!fm_wasm::webgl2_smoke_matches(&[255, 128, 0]));
 }
 
 #[wasm_bindgen_test]

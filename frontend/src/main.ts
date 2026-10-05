@@ -25,8 +25,19 @@ function blank(into: HTMLElement): void {
   into.append(note);
 }
 
+/** A `view` nobody knows is said so, not answered with the match. */
+function unknown(into: HTMLElement, name: string): void {
+  const note = document.createElement('p');
+  note.dataset['testid'] = 'unknown-view';
+  note.style.padding = '2rem';
+  note.textContent = `Tela "${name}" não existe. Telas: ?view=saves (saves) ou sem "view" (partida).`;
+  into.append(note);
+}
+
 export default view === 'saves'
   ? mount(Saves, { target })
   : view === 'blank'
     ? blank(target)
-    : mount(App, { target });
+    : view === null
+      ? mount(App, { target })
+      : unknown(target, view);

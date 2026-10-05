@@ -162,6 +162,7 @@
 
 <main class="saves">
   <h1>Saves</h1>
+  <p class="nav"><a href="/" data-testid="saves-to-match">← Partida (demo da Fase 6)</a></p>
 
   {#if phase === 'starting'}
     <p data-testid="saves-status">Abrindo o armazenamento…</p>
@@ -260,6 +261,13 @@
     margin: 0 0 0.5rem;
   }
   .muted {
+    color: var(--muted);
+  }
+  .nav {
+    font-size: 0.875rem;
+    margin: -0.5rem 0 1rem;
+  }
+  .nav a {
     color: var(--muted);
   }
   .warning {

@@ -32,7 +32,7 @@ pub fn libm_golden_mismatches() -> u32 {
 }
 
 /// WebGL2 smoke test through glow: RGBA of the drawn pixel, or an error
-/// message. The page compares it with `webgl2_smoke_expected()`.
+/// message. The page checks it with `webgl2_smoke_matches()`.
 ///
 /// # Errors
 /// When WebGL2 is unavailable or the smoke shader fails.
@@ -48,6 +48,15 @@ pub fn webgl2_smoke() -> Result<Vec<u8>, String> {
 #[must_use]
 pub fn webgl2_smoke_expected() -> Vec<u8> {
     fm_render::ffi::glow_backend::SMOKE_EXPECTED_RGBA.to_vec()
+}
+
+/// Whether `pixel` is the smoke colour, to ±2 a channel: `0.5` reads back
+/// as 127 or 128 depending on the GPU's rounding.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+#[must_use]
+pub fn webgl2_smoke_matches(pixel: &[u8]) -> bool {
+    fm_render::ffi::glow_backend::smoke_pixel_matches(pixel)
 }
 
 /// The match, living in the engine worker (spec Fase 6, 6A): the only
