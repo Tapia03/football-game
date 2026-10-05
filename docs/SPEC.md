@@ -2291,6 +2291,24 @@ recalibrar contra a coluna "Real". As constantes estão em `AnchorTuning`,
     ligados, seed 7, tick 6.000). Os dois existentes não mudam.
   - **Limites:** bench de instruções em +0,00% (nada no tick); custo de
     F3 + F4 abaixo de 1 ms por quadro no Chromium, medido pelo `fmPerf`.
+  - **6B-3 implementado (2026-10-05), medido no CI:**
+    - Bench de instruções: 590.430.506 (**+0,00%**) nos quatro commits.
+    - Latência tick → desenho a 1×: Chromium 18,2 ms (máx. 19,7), WebKit
+      18,6 ms (máx. 21,7), Firefox 18,6 ms (máx. 20,7) — igual ao 6A.
+    - **Custo de F3 + F4 por quadro** (`fmPerf`, partida pausada no tick
+      6.000 da seed 7): +186 vértices (5.754 → 5.940: 17 traços + 14
+      segmentos, 6 vértices cada). Chromium: malha + desenho 0,225 →
+      0,219 ms (diferença dentro do ruído; limite: 1 ms). WebKit: 0,908 →
+      0,947 ms (+0,04 ms). O e2e falha se a diferença passar de 1 ms.
+    - **Bit a bit com o motor:** o penúltimo defensor do overlay é igual
+      ao `TickFrame::offside_line` em todos os ticks com linha de três
+      partidas inteiras (seeds 3, 7 e 11; mais de 10.000 comparações em
+      cada tempo).
+    - **Golden (Chromium):** `match-overlays.png` novo (F3 + F4 ligados,
+      tick 6.000 da seed 7). `match-hud.png` e `match-toggles.png` saíram
+      do CI idênticos byte a byte aos commitados.
+    - A malha e o desenho passaram a receber a palavra de fases do
+      snapshot (fases + período), os bits dos overlays e o elenco.
 - `MatchSnapshot` POD em `SharedArrayBuffer`, com ring buffer duplo
   (`ffi/sab.rs`).
 - `fm-wasm` expõe `init_engine(seed)`, `tick_logic()`,

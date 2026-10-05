@@ -24,8 +24,20 @@ TS, malha como função WASM pura. Latência tick → desenho a 1×: média
   time, com o xG relido de fora do tick e testado bit a bit contra o
   motor), painel lateral, toggles F1 (rótulos: número + posição; o projeto
   ainda não tem nomes) e F2 (vetores de velocidade), dois goldens.
-- **Próximo: 6B-3** overlays geométricos (linha de impedimento, linhas de
-  formação). Desenho aprovado antes do código.
+- **6B-3 feito:** overlays geométricos como funções WASM puras do
+  snapshot (SAB continua na versão 3): F3 linha de impedimento pela regra
+  (penúltimo defensor, bola e meio-campo; o motor usa só o penúltimo
+  defensor, testado bit a bit) e F4 linhas de formação por setor; terceiro
+  golden (`match-overlays.png`). Custo de F3 + F4: +186 vértices, sem
+  diferença mensurável por quadro no Chromium.
+- **Próximo: 6C** (painel de mentalidade/tempo/pressão; o motor hoje só
+  tem mentalidade, largura e altura da linha). Desenho aprovado antes do
+  código.
+
+**Piso do teste de latência:** mais de 15 quadros em 3 s (amostra mínima,
+não taxa de quadros); o WebKit do CI desenha 27–46 quando divide o runner
+com o teste de F1/F2. Se a intermitência voltar: dividir o job do WebKit
+(latência isolada + resto) — registrado no SPEC, não implementado.
 
 **Cuidado ao rodar os e2e localmente:** se uma aba (inclusive o painel de
 navegador do Claude) estiver aberta numa página da partida, ela disputa a
