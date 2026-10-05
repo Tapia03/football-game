@@ -27,6 +27,8 @@ function copy(from: Frame, out: Frame): void {
   out.awayReds = from.awayReds;
   out.homeHeld = from.homeHeld;
   out.awayHeld = from.awayHeld;
+  out.homeTactics = from.homeTactics;
+  out.awayTactics = from.awayTactics;
   copyStats(from.homeStats, out.homeStats);
   copyStats(from.awayStats, out.awayStats);
   out.ballX = from.ballX;

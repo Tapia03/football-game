@@ -16,7 +16,10 @@
 //!                    [52] cards (home yellow | home red << 8
 //!                                | away yellow << 16 | away red << 24)
 //!                    [53] home held-ball ticks  [54] away held-ball ticks
-//!                    [55] reserved (0)
+//!                    [55] tactics (home | away << 16), each 16 bits:
+//!                         mentality (bits 0–3, 0 Defensive … 4 Attacking),
+//!                         bits 4–7 reserved (tempo), pressing (bits 8–11,
+//!                         0 Low … 3 UltraHigh)
 //!                    [56..63] home stats  [63..70] away stats, each:
 //!                             shots, on target, xG (f32), passes,
 //!                             passes completed, tackles, fouls committed
@@ -24,17 +27,21 @@
 //! ```
 //!
 //! Version 2 (6B-1) appended words 52..56 and the half; version 3 (6B-2)
-//! appended the team statistics. Nothing ever moved.
+//! appended the team statistics; version 4 (6C) put the tactics in word 55.
+//! Nothing ever moved.
 //!
 //! Safe code: the engine fills a `[u32; SLOT_WORDS]` and the bindings copy
 //! it into a typed-array view of the buffer. Nothing here touches memory.
 
 use fm_core::{Vec2, Vec3};
 use fm_match::state::BallState;
-use fm_match::{CardKind, EventKind, LodLevel, MatchEngine, MatchSnapshot, Phase, Side};
+use fm_match::{
+    CardKind, EventKind, LodLevel, MatchEngine, MatchSnapshot, Mentality, Phase, Pressing, Side,
+    Tactics,
+};
 
 /// `"FM"` and the layout version (bump on any layout change).
-pub const MAGIC: u32 = 0x464D_0003;
+pub const MAGIC: u32 = 0x464D_0004;
 /// Words of one slot (the length of the encoded array).
 pub const SLOT_WORDS: usize = 72;
 // Sizes and indices as `u32`: that is what the typed-array API takes.
@@ -68,6 +75,7 @@ const S_BALL: usize = 5;
 const S_PLAYERS: usize = 8;
 const S_CARDS: usize = 52;
 const S_HELD: usize = 53;
+const S_TACTICS: usize = 55;
 const S_STATS: usize = 56;
 /// Words of one team's statistics block.
 const STATS_WORDS: usize = 7;
@@ -198,7 +206,79 @@ const fn phase_code(p: Phase) -> u32 {
     }
 }
 
-/// One snapshot as it sits in a ring slot.
+/// Levels in code order: the panel sends and reads these indices.
+const MENTALITIES: [Mentality; 5] = [
+    Mentality::Defensive,
+    Mentality::Cautious,
+    Mentality::Balanced,
+    Mentality::Positive,
+    Mentality::Attacking,
+];
+const PRESSINGS: [Pressing; 4] = [
+    Pressing::Low,
+    Pressing::Medium,
+    Pressing::High,
+    Pressing::UltraHigh,
+];
+
+/// The 16 bits of one team's tactics in a slot.
+#[must_use]
+pub fn tactics_code(t: Tactics) -> u16 {
+    let mentality = MENTALITIES.iter().position(|&m| m == t.mentality);
+    let pressing = PRESSINGS.iter().position(|&p| p == t.pressing);
+    // Both tables are exhaustive, so the positions exist and fit 4 bits.
+    u16::try_from(mentality.unwrap_or(0) | pressing.unwrap_or(0) << 8).unwrap_or(0)
+}
+
+/// A tactical command of the panel (spec Fase 6, 6C): `side` 0 home, 1
+/// away, with the level codes of the slot. In force from the engine's next
+/// tick. Returns false, changing nothing, when a code is out of range.
+pub fn apply_tactics(engine: &mut MatchEngine, side: u32, mentality: u32, pressing: u32) -> bool {
+    let side = match side {
+        0 => Side::Home,
+        1 => Side::Away,
+        _ => return false,
+    };
+    let (Some(&mentality), Some(&pressing)) = (
+        MENTALITIES.get(mentality as usize),
+        PRESSINGS.get(pressing as usize),
+    ) else {
+        return false;
+    };
+    let tactics = Tactics {
+        mentality,
+        pressing,
+        ..engine.state().team(side).tactics
+    };
+    engine.set_tactics(side, tactics);
+    true
+}
+
+/// Words of one command in a command list: tick it was applied at, side,
+/// mentality, pressing.
+pub const COMMAND_WORDS: usize = 4;
+
+/// The first ring slot of tick `tick` as a fresh engine produces it for
+/// demo match `seed`, given the tactical commands applied on the way
+/// (`COMMAND_WORDS` each, each one before the tick it names is run). The
+/// match is a pure function of the seed and of this list.
+#[must_use]
+pub fn reference_words(seed: u32, tick: u32, commands: &[u32]) -> [u32; SLOT_WORDS] {
+    let (db, setup) = fm_match::demo::demo_match(u64::from(seed));
+    let mut engine = MatchEngine::new(&setup, &db);
+    let mut hud = Hud::default();
+    for t in 0..tick {
+        for c in commands.chunks_exact(COMMAND_WORDS).filter(|c| c[0] == t) {
+            apply_tactics(&mut engine, c[1], c[2], c[3]);
+        }
+        engine.tick_logic();
+        hud.observe(&engine);
+    }
+    tick_frames(&engine, &hud)[0]
+}
+
+/// One snapshot as it sits in a ring slot (the tactics word is filled by
+/// `tick_frames`, from the engine).
 #[must_use]
 pub fn encode(s: &MatchSnapshot, hud: &Hud) -> [u32; SLOT_WORDS] {
     let mut w = [0_u32; SLOT_WORDS];
@@ -239,6 +319,8 @@ pub fn tick_frames(engine: &MatchEngine, hud: &Hud) -> [[u32; SLOT_WORDS]; SAMPL
     for (slot, off) in out.iter_mut().zip(LodLevel::Full.sample_offsets_ms()) {
         if let Some(snap) = engine.sample(LodLevel::Full, now + off) {
             *slot = encode(&snap, hud);
+            let [home, away] = engine.state().teams.map(|t| tactics_code(t.tactics));
+            slot[S_TACTICS] = u32::from(home) | u32::from(away) << 16;
         }
     }
     out
@@ -262,6 +344,8 @@ pub struct Frame {
     pub cards: [u8; 4],
     /// Ticks with the ball held by `[home, away]`.
     pub held: [u32; 2],
+    /// Tactics of `[home, away]` (`tactics_code`).
+    pub tactics: [u16; 2],
     /// Statistics of `[home, away]`.
     pub stats: [TeamStats; 2],
 }
@@ -291,6 +375,7 @@ pub fn decode(w: &[u32; SLOT_WORDS]) -> Frame {
         half: byte(w[S_PHASES], 16),
         cards: w[S_CARDS].to_le_bytes(),
         held: [w[S_HELD], w[S_HELD + 1]],
+        tactics: [(w[S_TACTICS] & 0xFFFF) as u16, (w[S_TACTICS] >> 16) as u16],
         stats: [
             TeamStats::from_words(&w[S_STATS..S_STATS + STATS_WORDS]),
             TeamStats::from_words(&w[S_STATS + STATS_WORDS..S_STATS + 2 * STATS_WORDS]),
@@ -312,7 +397,7 @@ mod tests {
         assert_eq!(S_PLAYERS + 2 * PLAYERS, S_CARDS);
         assert_eq!(S_HELD + 3, S_STATS);
         assert_eq!(S_STATS + 2 * STATS_WORDS + 2, SLOT_WORDS);
-        assert_eq!(MAGIC & 0xFFFF, 3);
+        assert_eq!(MAGIC & 0xFFFF, 4);
     }
 
     #[test]
@@ -368,6 +453,52 @@ mod tests {
             [u32::from(f.phases[0]), u32::from(f.phases[1])],
             [phase_code(snap.phases[0]), phase_code(snap.phases[1])]
         );
+    }
+
+    /// 6C: a tactical command shows in the slots from the next tick on, the
+    /// match with it is another match, and both are pure functions of the
+    /// seed and the command list.
+    #[test]
+    fn tactics_travel_in_the_slot_and_commands_are_deterministic() {
+        // Defaults: Balanced (2), Medium (1).
+        let plain = decode(&reference_words(7, 400, &[]));
+        assert_eq!(plain.tactics, [2 | 1 << 8; 2]);
+        // Home to Attacking + UltraHigh before tick 300 is run.
+        let commands = [300, 0, 4, 3];
+        let before = decode(&reference_words(7, 300, &commands));
+        assert_eq!(before.tactics, [2 | 1 << 8; 2], "not yet in force");
+        assert_eq!(
+            reference_words(7, 300, &commands),
+            reference_words(7, 300, &[]),
+            "same match up to the command"
+        );
+        let after = reference_words(7, 400, &commands);
+        assert_eq!(decode(&after).tactics, [4 | 3 << 8, 2 | 1 << 8]);
+        assert_eq!(after, reference_words(7, 400, &commands), "deterministic");
+        assert_ne!(
+            decode(&after).players,
+            plain.players,
+            "the command changed the match"
+        );
+        // Width and line height are not the panel's: a command keeps them.
+        let (db, setup) = demo_match(7);
+        let mut e = MatchEngine::new(&setup, &db);
+        let wide = Tactics {
+            width: fm_match::Width::Wide,
+            ..Tactics::default()
+        };
+        e.set_tactics(Side::Away, wide);
+        assert!(apply_tactics(&mut e, 1, 0, 0));
+        let t = e.state().team(Side::Away).tactics;
+        assert_eq!(
+            (t.width, t.mentality, t.pressing),
+            (fm_match::Width::Wide, Mentality::Defensive, Pressing::Low)
+        );
+        // Codes out of range change nothing.
+        for (side, mentality, pressing) in [(2, 0, 0), (0, 5, 0), (0, 0, 4)] {
+            assert!(!apply_tactics(&mut e, side, mentality, pressing));
+        }
+        assert_eq!(e.state().team(Side::Away).tactics, t);
     }
 
     /// The HUD counters agree with the engine over a whole match: cards with
@@ -479,8 +610,11 @@ mod tests {
             let at_tick = e
                 .sample(LodLevel::Reduced, e.state().now_ms())
                 .expect("snapshot");
-            let w = encode(&at_tick, &hud);
-            assert_eq!(decode(&w), frames[0]);
+            // …plus the tactics, which `tick_frames` reads from the engine.
+            let mut expected = decode(&encode(&at_tick, &hud));
+            assert_eq!(expected.tactics, [0; 2]);
+            expected.tactics = [tactics_code(Tactics::default()); 2];
+            assert_eq!(expected, frames[0]);
             moved |= frames[0].players != frames[5].players;
             stamps.extend(frames.iter().map(|f| f.t_ms));
         }

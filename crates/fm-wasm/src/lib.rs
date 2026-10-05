@@ -62,6 +62,9 @@ pub struct EngineHost {
     seq: u32,
     /// Cards and held-ball ticks so far (the HUD words of each snapshot).
     hud: sab::Hud,
+    /// Tactical commands applied so far (`sab::COMMAND_WORDS` each): with
+    /// the seed, the whole match.
+    commands: Vec<u32>,
     ints: js_sys::Int32Array,
     words: js_sys::Uint32Array,
 }
@@ -90,6 +93,7 @@ impl EngineHost {
             match_ms: 0.0,
             seq: 0,
             hud: sab::Hud::default(),
+            commands: Vec::new(),
             ints: js_sys::Int32Array::new(buffer),
             words: js_sys::Uint32Array::new(buffer),
         };
@@ -133,6 +137,31 @@ impl EngineHost {
         }
         self.match_ms = f64::from(self.engine.state().now_ms());
         self.publish_clock();
+    }
+
+    /// A tactical command of the panel (6C): `side` 0 home, 1 away;
+    /// `mentality` 0 Defensive … 4 Attacking; `pressing` 0 Low … 3
+    /// `UltraHigh`. In force from the next logical tick, and visible in the
+    /// snapshots from then on.
+    ///
+    /// # Errors
+    /// When a code is out of range (nothing changes).
+    pub fn set_tactics(&mut self, side: u32, mentality: u32, pressing: u32) -> Result<(), String> {
+        if !sab::apply_tactics(&mut self.engine, side, mentality, pressing) {
+            return Err(format!(
+                "invalid tactics: side {side}, mentality {mentality}, pressing {pressing}"
+            ));
+        }
+        self.commands
+            .extend([self.engine.state().tick, side, mentality, pressing]);
+        Ok(())
+    }
+
+    /// The commands applied so far, `[tick, side, mentality, pressing]`
+    /// each: what `reference_slot_with` takes to replay the match.
+    #[must_use]
+    pub fn commands(&self) -> Vec<u32> {
+        self.commands.clone()
     }
 
     #[must_use]
@@ -265,14 +294,16 @@ pub fn pitch_view(width_px: u32, height_px: u32) -> Vec<f32> {
 #[wasm_bindgen]
 #[must_use]
 pub fn reference_slot(seed: u32, tick: u32) -> Vec<u32> {
-    let (db, setup) = fm_match::demo::demo_match(u64::from(seed));
-    let mut engine = fm_match::MatchEngine::new(&setup, &db);
-    let mut hud = sab::Hud::default();
-    for _ in 0..tick {
-        engine.tick_logic();
-        hud.observe(&engine);
-    }
-    sab::tick_frames(&engine, &hud)[0].to_vec()
+    sab::reference_words(seed, tick, &[]).to_vec()
+}
+
+/// Like `reference_slot`, for a match that received tactical commands:
+/// `commands` is `[tick, side, mentality, pressing]` for each one
+/// (`EngineHost::commands`).
+#[wasm_bindgen]
+#[must_use]
+pub fn reference_slot_with(seed: u32, tick: u32, commands: &[u32]) -> Vec<u32> {
+    sab::reference_words(seed, tick, commands).to_vec()
 }
 
 /// The canvas the match is drawn on (main thread). It owns the WebGL2

@@ -5,12 +5,18 @@ type Reader = {
   header(index: number): number;
   ready(): boolean;
   sequence(): number;
+  clockMs(): number;
   rawSlot(n: number): Uint32Array | undefined;
 };
 type Hooks = {
-  fmMatch: { reader: Reader; pause(): void; runTo(tick: number): void };
+  fmMatch: {
+    reader: Reader;
+    pause(): void;
+    runTo(tick: number): void;
+    setTactics(side: number, mentality: number, pressing: number): void;
+  };
   fmLatency: { frames: number; sumMs: number; maxMs: number; over50: number };
-  fmReferenceSlot(seed: number, tick: number): Promise<Uint32Array>;
+  fmReferenceSlot(seed: number, tick: number, commands?: number[]): Promise<Uint32Array>;
   fmPerf: { frames: number; labelsMs: number; drawMs: number; verts: number };
 };
 
@@ -80,7 +86,7 @@ test.describe('Fase 6 (6A): the match runs in the engine worker', () => {
       };
     });
     expect(header).toEqual({
-      magic: 0x464d_0003,
+      magic: 0x464d_0004,
       slots: 16,
       slotBytes: 288,
       seed: 7,
@@ -118,6 +124,47 @@ test.describe('Fase 6 (6A): the match runs in the engine worker', () => {
       published.tick,
     );
     expect(reference).toEqual(published.words);
+  });
+
+  test('a tactical command is part of the match: same seed + same command, same bits', async ({
+    page,
+  }) => {
+    await openMatch(page);
+    // Home to Attacking (4) + UltraHigh (3) exactly at tick 3,000, then on
+    // to tick 3,300.
+    const published = await page.evaluate(async () => {
+      const match = (globalThis as unknown as Hooks).fmMatch;
+      const reached = async (ms: number): Promise<void> => {
+        while (match.reader.clockMs() !== ms) await new Promise((resolve) => setTimeout(resolve, 20));
+      };
+      match.runTo(3_000);
+      await reached(300_000);
+      match.setTactics(0, 4, 3);
+      match.runTo(3_300);
+      await reached(330_000);
+      const seq = match.reader.sequence();
+      for (let n = seq - 1; n >= Math.max(0, seq - 15); n -= 1) {
+        const words = match.reader.rawSlot(n);
+        if (words !== undefined && words[0] === 3_300 && (words[1] ?? 1) % 100 === 0) {
+          return Array.from(words);
+        }
+      }
+      return undefined;
+    });
+    expect(published).toBeDefined();
+    if (published === undefined) return;
+    // Word 55: home Attacking + UltraHigh, away the defaults (Balanced, Medium).
+    expect(published[55]).toBe((4 | (3 << 8) | ((2 | (1 << 8)) << 16)) >>> 0);
+    const [replayed, untouched] = await page.evaluate(async () => {
+      const reference = (globalThis as unknown as Hooks).fmReferenceSlot;
+      return [
+        Array.from(await reference(7, 3_300, [3_000, 0, 4, 3])),
+        Array.from(await reference(7, 3_300)),
+      ];
+    });
+    expect(replayed).toEqual(published);
+    // And the command did change the match (positions, words 8..52).
+    expect(untouched?.slice(8, 52)).not.toEqual(published.slice(8, 52));
   });
 
   test('HUD shows what the snapshot carries: half, cards, possession', async ({ page }) => {

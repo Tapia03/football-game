@@ -418,6 +418,7 @@ pub fn frame_from_parts(xy: &[f32], ball: [f32; 3], sent_off: u32, phases: u32) 
         half: byte(16),
         cards: [0; 4],
         held: [0; 2],
+        tactics: [0; 2],
         stats: [crate::sab::TeamStats::default(); 2],
     }
 }

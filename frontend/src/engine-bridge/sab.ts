@@ -3,10 +3,10 @@
 // same bytes through an Int32Array and a Float32Array.
 
 /**
- * "FM" + layout version 3 (6B-1 added half, cards and held-ball ticks;
- * 6B-2 added the team statistics).
+ * "FM" + layout version 4 (6B-1 added half, cards and held-ball ticks;
+ * 6B-2 the team statistics; 6C the tactics word).
  */
-export const MAGIC = 0x464d_0003;
+export const MAGIC = 0x464d_0004;
 export const HEADER_WORDS = 16;
 export const RING_SLOTS = 16;
 export const SLOT_WORDS = 72;
@@ -50,6 +50,7 @@ const S_BALL = 5;
 const S_PLAYERS = 8;
 const S_CARDS = 52;
 const S_HELD = 53;
+const S_TACTICS = 55;
 const S_STATS = 56;
 const STATS_WORDS = 7;
 
@@ -104,9 +105,26 @@ export type Frame = {
   /** Logical ticks with the ball held by each side so far. */
   homeHeld: number;
   awayHeld: number;
+  /**
+   * Tactics in force (6C), 16 bits a team: mentality in bits 0–3
+   * (0 Defensive … 4 Attacking), pressing in bits 8–11 (0 Low … 3
+   * UltraHigh). See `mentalityOf` / `pressingOf`.
+   */
+  homeTactics: number;
+  awayTactics: number;
   readonly homeStats: TeamStats;
   readonly awayStats: TeamStats;
 };
+
+/** Mentality code (0 Defensive … 4 Attacking) of a team's tactics word. */
+export function mentalityOf(tactics: number): number {
+  return tactics & 0xf;
+}
+
+/** Pressing code (0 Low … 3 UltraHigh) of a team's tactics word. */
+export function pressingOf(tactics: number): number {
+  return (tactics >> 8) & 0xf;
+}
 
 export function newFrame(): Frame {
   return {
@@ -128,6 +146,8 @@ export function newFrame(): Frame {
     awayReds: 0,
     homeHeld: 0,
     awayHeld: 0,
+    homeTactics: 0,
+    awayTactics: 0,
     homeStats: newStats(),
     awayStats: newStats(),
   };
@@ -233,6 +253,9 @@ export class SnapshotReader {
     out.awayReds = (cards >>> 24) & 0xff;
     out.homeHeld = i[at + S_HELD] ?? 0;
     out.awayHeld = i[at + S_HELD + 1] ?? 0;
+    const tactics = i[at + S_TACTICS] ?? 0;
+    out.homeTactics = tactics & 0xffff;
+    out.awayTactics = (tactics >>> 16) & 0xffff;
     this.readStats(at + S_STATS, out.homeStats);
     this.readStats(at + S_STATS + STATS_WORDS, out.awayStats);
     out.sentOff = i[at + S_SENT_OFF] ?? 0;

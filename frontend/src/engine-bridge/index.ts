@@ -64,6 +64,12 @@ export type MatchHandle = {
   resume(): void;
   /** Runs the match to logical tick `tick` exactly and pauses there. */
   runTo(tick: number): void;
+  /**
+   * Sets one team's tactics (6C), in force from the next logical tick:
+   * `side` 0 home, 1 away; `mentality` 0 Defensive … 4 Attacking;
+   * `pressing` 0 Low … 3 UltraHigh. The snapshots show what is in force.
+   */
+  setTactics(side: number, mentality: number, pressing: number): void;
   stop(): void;
 };
 
@@ -83,6 +89,7 @@ export function startMatch(seed: number, speed: number): Promise<MatchHandle> {
     pause: () => send({ type: 'pause' }),
     resume: () => send({ type: 'resume' }),
     runTo: (tick) => send({ type: 'runTo', tick }),
+    setTactics: (side, mentality, pressing) => send({ type: 'tactics', side, mentality, pressing }),
     stop: () => worker.terminate(),
   };
   return new Promise((resolve, reject) => {
@@ -101,7 +108,7 @@ export type { Frame } from './sab';
 // The canvas side (main thread): WebGL2 objects only. Every frame drawn is
 // read from the snapshot ring and handed in — no match state lives here.
 
-import { MatchCanvas, pitch_view, reference_slot } from './pkg/fm_wasm.js';
+import { MatchCanvas, pitch_view, reference_slot, reference_slot_with } from './pkg/fm_wasm.js';
 
 /**
  * How the pitch is fitted into a `width` × `height` canvas, as
@@ -133,7 +140,15 @@ export type { MatchCanvas };
  * One ring slot as a fresh engine produces it for `seed` after `tick` ticks:
  * a pure reference the e2e tests compare the worker's snapshot against.
  */
-export async function referenceSlot(seed: number, tick: number): Promise<Uint32Array> {
+export async function referenceSlot(
+  seed: number,
+  tick: number,
+  commands?: readonly number[],
+): Promise<Uint32Array> {
   await ensureInit();
-  return reference_slot(seed, tick);
+  // `commands`: `[tick, side, mentality, pressing]` for each tactical
+  // command the match received.
+  return commands === undefined
+    ? reference_slot(seed, tick)
+    : reference_slot_with(seed, tick, Uint32Array.from(commands));
 }

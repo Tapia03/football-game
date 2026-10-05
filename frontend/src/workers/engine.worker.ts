@@ -20,7 +20,18 @@ export type EngineCommand =
   | { readonly type: 'pause' }
   | { readonly type: 'resume' }
   /** Runs the match to logical tick `tick` exactly and pauses there. */
-  | { readonly type: 'runTo'; readonly tick: number };
+  | { readonly type: 'runTo'; readonly tick: number }
+  /**
+   * Tactics of one team (6C), in force from the next logical tick: `side`
+   * 0 home, 1 away; `mentality` 0 Defensive … 4 Attacking; `pressing`
+   * 0 Low … 3 UltraHigh.
+   */
+  | {
+      readonly type: 'tactics';
+      readonly side: number;
+      readonly mentality: number;
+      readonly pressing: number;
+    };
 
 export type EngineEvent =
   /** `roster`: role code of each of the 22 players, fixed for the match. */
@@ -97,6 +108,13 @@ addEventListener('message', (e: MessageEvent<EngineCommand>) => {
         host.run_to(msg.tick);
         if (header !== undefined) Atomics.store(header, H_STEP_WALL, wallClockMs());
         setRunning(false);
+      }
+      break;
+    case 'tactics':
+      try {
+        host?.set_tactics(msg.side, msg.mentality, msg.pressing);
+      } catch (err: unknown) {
+        send({ type: 'error', message: err instanceof Error ? err.message : String(err) });
       }
       break;
   }
