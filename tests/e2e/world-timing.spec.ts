@@ -14,7 +14,16 @@ import { expect, test } from '@playwright/test';
 // `FM_WORLD_SEASON=1` adds the whole season (minutes; the CI sets it only
 // when the workflow is dispatched by hand).
 
-type Timing = { day: number; round: number; matches: number; simulateMs: number; commitMs: number; totalMs: number };
+type Timing = {
+  day: number;
+  round: number;
+  matches: number;
+  simulateMs: number;
+  matchMs: number;
+  players: number;
+  commitMs: number;
+  totalMs: number;
+};
 type Advance = { summary: { day: number; finished: boolean }; daysLived: number; timing: Timing[] };
 type TimingHooks = {
   fmSave: { startDatabase(options?: unknown): Promise<{ client: { request(op: string, args: unknown): Promise<unknown> } }> };

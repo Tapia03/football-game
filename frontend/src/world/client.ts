@@ -1,9 +1,13 @@
-// The page's side of the world worker (spec Fase 7B, 7B.4).
+// The page's side of the world worker (spec Fase 7B, 7B.4) and of its pool
+// of match workers (7B.4b). The page creates every worker; the world
+// worker gets a port to the database and one to each match worker.
 
 import type { Database } from '../save/client';
+import type { MatchControl, MatchReady } from './match-protocol';
 import type {
   WorldControl,
   WorldError,
+  WorldLoaded,
   WorldOp,
   WorldOps,
   WorldProgress,
@@ -26,35 +30,67 @@ export type WorldHandle = {
   request<O extends WorldOp>(op: O, args: WorldOps[O]['args']): Promise<WorldOps[O]['result']>;
   /** Calls `listener` after every match of an advance; returns how to stop listening. */
   onProgress(listener: (progress: WorldProgress) => void): () => void;
-  /** Stops the advance under way after the match being played. */
+  /** Stops the advance under way after the matches being played. */
   cancel(): void;
-  /** Kills the worker (what a crash or a closed tab does). */
+  /** Match workers started for the pool (0: the world worker plays alone). */
+  readonly players: number;
+  /** Kills match worker `index` (what a crash does): the pool must go on without it. */
+  killPlayer(index: number): void;
+  /** Kills the world worker and its pool (what a crash or a closed tab does). */
   terminate(): void;
 };
 
 export type WorldOptions = {
   /** How long the database may take to answer the world worker (ms; 10 s by default). */
   readonly dbTimeoutMs?: number;
+  /**
+   * Match workers in the pool. By default one for each core, ten at most,
+   * and none on a single core — there the world worker plays the matches
+   * itself, as it does whenever the pool is empty.
+   */
+  readonly players?: number;
+  /** How long a match worker may take to answer before it is dropped (ms; 30 s by default). */
+  readonly matchTimeoutMs?: number;
 };
 
-/** How many times the worker is started before giving up, and the pause. */
+/** The size of the pool on this machine. */
+export function defaultPlayers(): number {
+  const cores = navigator.hardwareConcurrency || 1;
+  return cores <= 1 ? 0 : Math.min(cores, 10);
+}
+
+/** How many times a worker is started before giving up, and the pause. */
 const START_ATTEMPTS = 5;
 const START_RETRY_MS = 250;
 
 /**
- * Starts the world worker and hands it a line to `database`. Resolves once
- * the worker has its WASM module up.
+ * Starts a worker and waits for the `loaded` it posts as its script runs.
  *
  * The start is retried, like the database worker's: WebKit refuses to load
  * a worker script ("blocked by Cross-Origin-Embedder-Policy") when the same
- * script was loaded a moment before, and loads it fine a second later.
+ * script was loaded a moment before — a reload, a worker just terminated,
+ * or simply the other workers of the pool — and loads it fine a moment
+ * later. Nothing is handed to a worker before it has said `loaded`: a port
+ * transferred to a worker that never loads is lost.
  */
-export async function startWorld(database: Database, options: WorldOptions = {}): Promise<WorldHandle> {
+async function spawn(create: () => Worker, what: string): Promise<Worker> {
   let failure: unknown;
   for (let attempt = 0; attempt < START_ATTEMPTS; attempt += 1) {
     if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, START_RETRY_MS * attempt));
     try {
-      return await startOnce(database, options);
+      return await new Promise<Worker>((resolve, reject) => {
+        const worker = create();
+        const loaded = (e: MessageEvent<WorldLoaded>): void => {
+          if (e.data.type !== 'loaded') return;
+          worker.removeEventListener('message', loaded);
+          resolve(worker);
+        };
+        worker.addEventListener('message', loaded);
+        worker.addEventListener('error', (e) => {
+          worker.terminate();
+          reject(new Error(e.message || `${what} não carregou`));
+        });
+      });
     } catch (err: unknown) {
       failure = err;
     }
@@ -62,10 +98,41 @@ export async function startWorld(database: Database, options: WorldOptions = {})
   throw failure;
 }
 
-function startOnce(database: Database, options: WorldOptions): Promise<WorldHandle> {
-  const worker = new Worker(new URL('../workers/world.worker.ts', import.meta.url), {
-    type: 'module',
+/** A match worker, started and holding its end of a line to the world worker. */
+async function startPlayer(): Promise<{ worker: Worker; port: MessagePort }> {
+  const worker = await spawn(
+    () => new Worker(new URL('../workers/match.worker.ts', import.meta.url), { type: 'module' }),
+    'o Worker de partida',
+  );
+  const channel = new MessageChannel();
+  await new Promise<void>((resolve, reject) => {
+    worker.addEventListener('message', (e: MessageEvent<MatchReady>) => {
+      if (e.data.type === 'ready') resolve();
+    });
+    worker.addEventListener('error', (e) => reject(new Error(e.message || 'o Worker de partida falhou')));
+    const start: MatchControl = { type: 'start', port: channel.port1 };
+    worker.postMessage(start, [channel.port1]);
   });
+  return { worker, port: channel.port2 };
+}
+
+/**
+ * Starts the world worker — with a line to `database` and to each match
+ * worker of its pool — and resolves once it has its WASM module up. A
+ * match worker that does not start is left out: the pool is smaller, or
+ * empty, and the world is lived all the same.
+ */
+export async function startWorld(database: Database, options: WorldOptions = {}): Promise<WorldHandle> {
+  const worker = await spawn(
+    () => new Worker(new URL('../workers/world.worker.ts', import.meta.url), { type: 'module' }),
+    'o Worker de mundo',
+  );
+  const wanted = Math.max(0, Math.floor(options.players ?? defaultPlayers()));
+  const started = await Promise.all(
+    Array.from({ length: wanted }, () => startPlayer().catch(() => undefined)),
+  );
+  const players = started.filter((p) => p !== undefined);
+
   let nextId = 1;
   const pending = new Map<number, { resolve: (value: never) => void; reject: (reason: WorldOpError) => void }>();
   const listeners = new Set<(progress: WorldProgress) => void>();
@@ -87,14 +154,19 @@ function startOnce(database: Database, options: WorldOptions): Promise<WorldHand
       const cancel: WorldControl = { type: 'cancel' };
       worker.postMessage(cancel);
     },
-    terminate: () => worker.terminate(),
+    players: players.length,
+    killPlayer: (index) => players[index]?.worker.terminate(),
+    terminate: () => {
+      worker.terminate();
+      for (const player of players) player.worker.terminate();
+    },
   };
   return new Promise((resolve, reject) => {
     worker.addEventListener('message', (e: MessageEvent<WorldResponse | WorldReady | WorldProgress>) => {
       const message = e.data;
       if ('type' in message) {
         if (message.type === 'ready') resolve(handle);
-        else for (const listener of listeners) listener(message);
+        else if (message.type === 'progress') for (const listener of listeners) listener(message);
         return;
       }
       const waiting = pending.get(message.id);
@@ -104,14 +176,18 @@ function startOnce(database: Database, options: WorldOptions): Promise<WorldHand
       else waiting.reject(new WorldOpError(message.error));
     });
     worker.addEventListener('error', (e) => {
-      worker.terminate();
-      reject(new Error(e.message || 'o Worker de mundo não carregou'));
+      handle.terminate();
+      reject(new Error(e.message || 'o Worker de mundo falhou'));
     });
-    const port = database.connect();
-    const start: WorldControl =
-      options.dbTimeoutMs === undefined
-        ? { type: 'start', db: port }
-        : { type: 'start', db: port, dbTimeoutMs: options.dbTimeoutMs };
-    worker.postMessage(start, [port]);
+    const db = database.connect();
+    const ports = players.map((p) => p.port);
+    const start: WorldControl = {
+      type: 'start',
+      db,
+      players: ports,
+      ...(options.dbTimeoutMs === undefined ? {} : { dbTimeoutMs: options.dbTimeoutMs }),
+      ...(options.matchTimeoutMs === undefined ? {} : { matchTimeoutMs: options.matchTimeoutMs }),
+    };
+    worker.postMessage(start, [db, ...ports]);
   });
 }

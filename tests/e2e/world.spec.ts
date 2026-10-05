@@ -15,28 +15,48 @@ type Summary = {
   matchesToday: number;
   finished: boolean;
 };
-type Timing = { day: number; round: number; matches: number; simulateMs: number; commitMs: number; totalMs: number };
+type Timing = {
+  day: number;
+  round: number;
+  matches: number;
+  simulateMs: number;
+  matchMs: number;
+  players: number;
+  commitMs: number;
+  totalMs: number;
+};
+type WorldOptions = { dbTimeoutMs?: number; players?: number; matchTimeoutMs?: number };
+type Stats = { players: number; dropped: string[]; wasmBytes: { world: number; players: number[] } };
 type Advance = { summary: Summary; daysLived: number; cancelled: boolean; timing: Timing[] };
 type Progress = { type: 'progress'; day: number; round: number; done: number; total: number; daysLeft: number; etaMs: number };
 type WorldHandle = {
   request(op: string, args: unknown): Promise<unknown>;
   onProgress(listener: (progress: Progress) => void): () => void;
   cancel(): void;
+  players: number;
+  killPlayer(index: number): void;
   terminate(): void;
 };
 type WorldHooks = Hooks & {
-  fmWorld: { startWorld(db: Hooks['db'], options?: { dbTimeoutMs?: number }): Promise<WorldHandle> };
+  fmWorld: { startWorld(db: Hooks['db'], options?: WorldOptions): Promise<WorldHandle> };
   /** The world worker the test is talking to. */
   world: WorldHandle;
 };
 
-/** Starts (or restarts, after killing it) the world worker over the page's database. */
-async function startWorld(page: Page, options: { dbTimeoutMs?: number } = {}): Promise<void> {
-  await page.evaluate(async (o) => {
-    const hooks = globalThis as unknown as Partial<WorldHooks> & Pick<WorldHooks, 'fmWorld' | 'db'>;
-    hooks.world?.terminate();
-    hooks.world = await hooks.fmWorld.startWorld(hooks.db, o);
-  }, options);
+/**
+ * Starts (or restarts, after killing it) the world worker over the page's
+ * database. Without a pool unless `players` says otherwise: the tests of the
+ * pool ask for one, the others are about the world worker itself.
+ */
+async function startWorld(page: Page, options: WorldOptions = {}): Promise<void> {
+  await page.evaluate(
+    async (o) => {
+      const hooks = globalThis as unknown as Partial<WorldHooks> & Pick<WorldHooks, 'fmWorld' | 'db'>;
+      hooks.world?.terminate();
+      hooks.world = await hooks.fmWorld.startWorld(hooks.db, o);
+    },
+    { players: 0, ...options },
+  );
 }
 
 /** One request to the world worker; a failed one comes back as `{ error, message }`. */
@@ -148,6 +168,66 @@ for (const backend of ['opfs', 'idb'] as const) {
       expect(table.reduce((sum, row) => sum + row.goalsFor, 0)).toBe(goals);
       expect(table.reduce((sum, row) => sum + row.goalsAgainst, 0)).toBe(goals);
       expect(await ask<SaveInfo[]>(page, 'save.list')).toMatchObject([{ id: save.id, day: 7 }]);
+    });
+
+    test('the pool: 1, 2 and 4 match workers, or none, give the same save', async ({ page }, testInfo) => {
+      await open(page, testInfo.project.name);
+      // Two weeks — two rounds — of the same world, played by pools of
+      // different sizes. What is compared is the content of the save.
+      const digests: Record<string, string> = {};
+      const used: Record<string, number[]> = {};
+      for (const players of [0, 1, 2, 4]) {
+        await openSave(page, `Pool de ${players}`);
+        await startWorld(page, { players });
+        const started = await page.evaluate(() => (globalThis as unknown as WorldHooks).world.players);
+        expect(started).toBe(players);
+        await world(page, 'world.new', { seed: '2026', userClub: 3 });
+        const lived = await world<Advance>(page, 'world.advance', { days: 14 });
+        expect(lived.summary.day).toBe(14);
+        expect(lived.timing.map((t) => [t.round, t.matches, t.players])).toEqual([
+          [0, 10, players],
+          [1, 10, players],
+        ]);
+        // Nobody was dropped on the way, and every copy of the world is up.
+        const stats = await world<Stats>(page, 'world.stats');
+        expect(stats.dropped).toEqual([]);
+        expect(stats.players).toBe(players);
+        expect(stats.wasmBytes.players).toHaveLength(players);
+        expect(stats.wasmBytes.players.every((bytes) => bytes > 0)).toBe(true);
+        // The saves differ only by their names.
+        await ask(page, 'meta.set', { key: 'name', value: 'o mesmo' });
+        digests[`${players}`] = await ask<string>(page, 'save.digest');
+        used[`${players}`] = lived.timing.map((t) => Math.round(t.totalMs));
+      }
+      console.log(
+        `[7B pool ${testInfo.project.name} ${backend}] round ms by pool size (tests in parallel): ${Object.entries(used)
+          .map(([n, ms]) => `${n}: ${ms.join('/')}`)
+          .join(' | ')}`,
+      );
+      expect(digests['0']).toMatch(/^[0-9a-f]{64}$/);
+      expect(digests['1']).toBe(digests['0']);
+      expect(digests['2']).toBe(digests['0']);
+      expect(digests['4']).toBe(digests['0']);
+    });
+
+    test('the pool: progress counts the matches as they end, whoever played them', async ({ page }, testInfo) => {
+      await open(page, testInfo.project.name);
+      await openSave(page, 'Progresso com pool');
+      await startWorld(page, { players: 3 });
+      await world(page, 'world.new', { seed: '2026', userClub: 0 });
+      const heard = await page.evaluate(async () => {
+        const hooks = globalThis as unknown as WorldHooks;
+        const events: Progress[] = [];
+        const stop = hooks.world.onProgress((p) => events.push(p));
+        await hooks.world.request('world.advance', { days: 7 });
+        stop();
+        return events;
+      });
+      expect(heard.map((e) => [e.day, e.round, e.done, e.total])).toEqual(
+        Array.from({ length: 10 }, (_, i) => [6, 0, i + 1, 10]),
+      );
+      expect(heard.every((e) => e.etaMs >= 0)).toBe(true);
+      expect(heard[9]!.etaMs).toBe(0);
     });
 
     test('progress: one message for each match, in order, while the day is lived', async ({ page }, testInfo) => {

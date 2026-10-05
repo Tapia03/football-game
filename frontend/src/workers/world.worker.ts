@@ -5,13 +5,14 @@
 // database is always the truth: what this worker holds is the world as last
 // committed, plus the day being lived.
 
-import init, { WorldHost } from '../engine-bridge/pkg/fm_wasm.js';
+import init, { WorldHost, type InitOutput } from '../engine-bridge/pkg/fm_wasm.js';
 import { DbClient, DbOpError } from '../save/client';
 import type { DayCommit, WorldSave } from '../save/protocol';
 import type {
   DayTiming,
   WorldControl,
   WorldError,
+  WorldLoaded,
   WorldOp,
   WorldOps,
   WorldProgress,
@@ -20,6 +21,7 @@ import type {
   WorldResponse,
   WorldSummary,
 } from '../world/protocol';
+import { MatchPool } from '../world/pool';
 
 // Row layouts of `WorldHost` (crates/fm-wasm/src/world.rs).
 const CLUB_ROW = 6;
@@ -39,9 +41,11 @@ class WorldOpError extends Error {
   }
 }
 
-let wasm: Promise<unknown> | undefined;
+let wasm: Promise<InitOutput> | undefined;
 let db: DbClient | undefined;
 let host: WorldHost | undefined;
+/** The match workers (none: this worker plays the matches itself). */
+let pool = new MatchPool([], 30_000);
 /** How long the database may take to answer a request (ms). */
 let dbTimeoutMs = 10_000;
 /** An advance is under way; a cancel was asked for during it. */
@@ -247,14 +251,19 @@ function yieldTurn(): Promise<void> {
   });
 }
 
-/** Matches played and time spent playing them in the advance under way. */
-type Pace = { matches: number; ms: number };
+/**
+ * Matches played in the advance under way and the time spent on days with
+ * matches (`since`: when the day being lived started, shifted back by the
+ * time already spent on the earlier ones).
+ */
+type Pace = { matches: number; ms: number; since: number };
 
 /** Loads the world of the open save from the database. */
 async function open(): Promise<WorldHost> {
   const loaded = hostOf(await database().request('world.load', {}));
   host?.free();
   host = loaded;
+  pool.markStale();
   return loaded;
 }
 
@@ -271,37 +280,38 @@ async function liveDay(h: WorldHost, daysLeft: number, pace: Pace): Promise<DayT
   const round = h.next_round();
   const matches = h.matches_today();
   const started = performance.now();
-  let simulating = 0;
-  // The results of the day, as they come (`RESULT_ROW` words a match). The
-  // host keeps nothing of a match played: abandoning the day is dropping
-  // this.
-  const results: number[] = [];
-  for (const [index, id] of matches.entries()) {
-    const before = performance.now();
-    results.push(...h.play(id));
-    const took = performance.now() - before;
-    simulating += took;
-    pace.matches += 1;
-    pace.ms += took;
-    const done = index + 1;
-    const progress: WorldProgress = {
-      type: 'progress',
-      day,
-      round,
-      done,
-      total: matches.length,
-      daysLeft,
-      etaMs: (pace.ms / pace.matches) * (matches.length - done),
-    };
-    postMessage(progress);
-    // One match at a time: the page hears about each as it ends, and a
-    // cancel sent meanwhile is heard here.
-    await yieldTurn();
-    // After the last match the day is ended all the same: cancelling on the
-    // eve of the commit would save a few milliseconds and nothing else.
-    if (cancelRequested && done < matches.length) return 'cancelled';
-  }
-  h.finish_day(Uint32Array.from(results));
+  pace.since = started - pace.ms;
+  const players = pool.size;
+  // The matches are played wherever there is a free player — the pool, or
+  // this worker's own host when there is none. The host keeps nothing of a
+  // match played: a day left incomplete is simply dropped.
+  const played = await pool.playDay(
+    h,
+    matches,
+    (done) => {
+      // The page hears about each match as it ends. The estimate is the
+      // pace matches have been coming in at, whoever plays them.
+      pace.matches += 1;
+      pace.ms = performance.now() - pace.since;
+      const progress: WorldProgress = {
+        type: 'progress',
+        day,
+        round,
+        done,
+        total: matches.length,
+        daysLeft,
+        etaMs: (pace.ms / pace.matches) * (matches.length - done),
+      };
+      postMessage(progress);
+    },
+    () => cancelRequested,
+    yieldTurn,
+  );
+  if (played === undefined) return 'cancelled';
+  const simulating = performance.now() - started;
+  const results = new Uint32Array(played.rows.length * RESULT_ROW);
+  played.rows.forEach((row, i) => results.set(row, i * RESULT_ROW));
+  h.finish_day(results);
   const { commit, transfer } = commitOf(h);
   const committing = performance.now();
   try {
@@ -319,6 +329,8 @@ async function liveDay(h: WorldHost, daysLeft: number, pace: Pace): Promise<DayT
     round,
     matches: matches.length,
     simulateMs: simulating,
+    matchMs: played.matchMs,
+    players,
     commitMs: ended - committing,
     totalMs: ended - started,
   };
@@ -340,6 +352,7 @@ const handlers: { [O in WorldOp]: (args: WorldOps[O]['args']) => Promise<WorldOp
     }
     host?.free();
     host = made;
+    pool.markStale();
     return summary(made);
   },
 
@@ -348,7 +361,7 @@ const handlers: { [O in WorldOp]: (args: WorldOps[O]['args']) => Promise<WorldOp
   'world.advance': async ({ days }) => {
     if (!Number.isInteger(days) || days < 1) throw new WorldOpError('invalid', 'avançar pede ao menos um dia');
     const timing: DayTiming[] = [];
-    const pace: Pace = { matches: 0, ms: 0 };
+    const pace: Pace = { matches: 0, ms: 0, since: 0 };
     let daysLived = 0;
     cancelRequested = false;
     advancing = true;
@@ -366,6 +379,12 @@ const handlers: { [O in WorldOp]: (args: WorldOps[O]['args']) => Promise<WorldOp
     cancelRequested = false;
     return { summary: summary(world()), daysLived, cancelled, timing };
   },
+
+  'world.stats': async () => ({
+    players: pool.size,
+    dropped: [...pool.dropped],
+    wasmBytes: { world: (await wasm)?.memory.buffer.byteLength ?? 0, players: pool.wasmBytes() },
+  }),
 };
 
 function toError(err: unknown): WorldError {
@@ -377,6 +396,9 @@ function toError(err: unknown): WorldError {
 
 /** Operations are served one at a time, in the order they arrive. */
 let queue: Promise<unknown> = Promise.resolve();
+
+// The script loaded: the page may hand over the ports now.
+postMessage({ type: 'loaded' } satisfies WorldLoaded);
 
 async function serve<O extends WorldOp>(request: WorldRequest<O>): Promise<WorldResponse<O>> {
   try {
@@ -398,6 +420,7 @@ addEventListener('message', (e: MessageEvent<WorldControl | WorldRequest>) => {
     }
     db = new DbClient(message.db);
     if (message.dbTimeoutMs !== undefined) dbTimeoutMs = message.dbTimeoutMs;
+    pool = new MatchPool(message.players ?? [], message.matchTimeoutMs ?? 30_000);
     wasm ??= init();
     void wasm.then(
       () => postMessage({ type: 'ready' } satisfies WorldReady),

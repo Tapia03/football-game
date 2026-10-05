@@ -30,8 +30,15 @@ export type DayTiming = {
   readonly day: number;
   readonly round: number;
   readonly matches: number;
-  /** The calls that play the matches, nothing else. */
+  /** The matches being played, from the first dealt to the last back. */
   readonly simulateMs: number;
+  /**
+   * The time the matches took, each as whoever played it measured it,
+   * summed: with a pool this is more than `simulateMs`.
+   */
+  readonly matchMs: number;
+  /** Match workers that played the day (0: the world worker played alone). */
+  readonly players: number;
   /** Ending the day in the database (`world.commitDay`), round trip. */
   readonly commitMs: number;
   /** The whole day: matches, ending it, the commit. */
@@ -69,6 +76,18 @@ export type WorldOps = {
       readonly timing: readonly DayTiming[];
     };
   };
+  /** The pool and the memory, as they are now. */
+  'world.stats': { args: Record<string, never>; result: WorldStats };
+};
+
+/** What the world worker and its pool are made of, for measurement. */
+export type WorldStats = {
+  /** Match workers in the pool right now. */
+  readonly players: number;
+  /** Match workers dropped since the start, and why. */
+  readonly dropped: readonly string[];
+  /** Size of the WASM memory of the world worker and of each match worker (bytes). */
+  readonly wasmBytes: { readonly world: number; readonly players: readonly number[] };
 };
 
 export type WorldOp = keyof WorldOps;
@@ -99,7 +118,18 @@ export type WorldControl =
    * `dbTimeoutMs`: how long a request to the database may take before the
    * operation fails with `db-timeout` (10 s when not given).
    */
-  | { readonly type: 'start'; readonly db: MessagePort; readonly dbTimeoutMs?: number }
+  | {
+      readonly type: 'start';
+      readonly db: MessagePort;
+      readonly dbTimeoutMs?: number;
+      /**
+       * The pool: a port to each match worker (none: the world worker plays
+       * the matches itself). `matchTimeoutMs`: how long a match worker may
+       * take to answer before it is dropped (30 s when not given).
+       */
+      readonly players?: readonly MessagePort[];
+      readonly matchTimeoutMs?: number;
+    }
   /**
    * Stops the advance under way after the match being played. Between the
    * last match of a day and the commit of that day it is not honoured for
@@ -109,6 +139,13 @@ export type WorldControl =
   | { readonly type: 'cancel' };
 
 export type WorldReady = { readonly type: 'ready' };
+
+/**
+ * Posted by a worker of the world (the world worker, a match worker) as its
+ * script runs, before anything is asked of it: the script loaded. Only then
+ * is the worker handed its ports.
+ */
+export type WorldLoaded = { readonly type: 'loaded' };
 
 /**
  * Sent after every match of a `world.advance`, outside the request /
