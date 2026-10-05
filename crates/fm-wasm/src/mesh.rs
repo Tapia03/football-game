@@ -120,6 +120,9 @@ pub struct Overlays<'a> {
     pub velocities: Option<&'a [Vec2; 22]>,
     /// F3: the offside line (`offside_line`).
     pub offside: bool,
+    /// F4: the formation lines, from the role code of each player
+    /// (`role_code`, engine order).
+    pub formation: Option<&'a [u8; 22]>,
 }
 
 /// Phase codes of a team that has the ball (`sab` layout): in possession,
@@ -233,6 +236,56 @@ fn offside_shapes(frame: &Frame, out: &mut Vec<Shape>) {
     }
 }
 
+/// Sector of a role code (`role_code`): 0 defence, 1 midfield, 2 attack —
+/// `Role::line`. The keeper belongs to none.
+const fn sector(code: u8) -> Option<u8> {
+    match code {
+        1..=3 => Some(0),
+        4..=7 => Some(1),
+        8 | 9 => Some(2),
+        _ => None,
+    }
+}
+
+/// One broken line per team and sector, joining the sector's players in
+/// order across the width of the pitch. A sector with one player has none.
+fn formation_shapes(frame: &Frame, roster: &[u8; 22], out: &mut Vec<Shape>) {
+    for side in [Side::Home, Side::Away] {
+        let start = first_of(side);
+        let color = match side {
+            Side::Home => Rgba(1.0, 0.45, 0.42, 0.6),
+            Side::Away => Rgba(0.35, 0.75, 1.0, 0.6),
+        };
+        for s in 0..3 {
+            let mut line = [Vec2::ZERO; SIDE];
+            let mut n = 0;
+            for (i, &code) in roster.iter().enumerate().skip(start).take(SIDE) {
+                if frame.sent_off >> i & 1 == 0 && sector(code) == Some(s) {
+                    line[n] = frame.players[i];
+                    n += 1;
+                }
+            }
+            // Stable: players level across the pitch keep the engine order.
+            line[..n].sort_by(|a, b| a.y.total_cmp(&b.y));
+            for pair in line[..n].windows(2) {
+                out.push(Shape::Line {
+                    a: pair[0],
+                    b: pair[1],
+                    width: 0.3,
+                    color,
+                });
+            }
+        }
+    }
+}
+
+/// The 22 role codes from what the main thread holds; `None` when the
+/// slice is not 22 values (no formation lines asked for).
+#[must_use]
+pub fn roster_from_parts(roster: &[u8]) -> Option<[u8; 22]> {
+    roster.try_into().ok()
+}
+
 /// The whole frame (pitch, players, ball) for a `width_px` × `height_px`
 /// canvas, with the `overlays` asked for. Players sent off are not drawn.
 ///
@@ -243,6 +296,9 @@ pub fn frame_mesh(frame: &Frame, overlays: &Overlays, width_px: u32, height_px: 
     let mut shapes = Vec::with_capacity(250);
     pitch_shapes(&mut shapes);
     // Overlays first, so the players sit on top of them.
+    if let Some(roster) = overlays.formation {
+        formation_shapes(frame, roster, &mut shapes);
+    }
     if overlays.offside {
         offside_shapes(frame, &mut shapes);
     }
@@ -376,6 +432,7 @@ mod tests {
     const PLAIN: Overlays = Overlays {
         velocities: None,
         offside: false,
+        formation: None,
     };
 
     fn frame_at(ticks: u32) -> Frame {
@@ -407,6 +464,7 @@ mod tests {
         let all = Overlays {
             velocities: None,
             offside: true,
+            formation: None,
         };
         let a = frame_mesh(&frame, &all, 1280, 820);
         let b = frame_mesh(&frame, &all, 1280, 820);
@@ -536,6 +594,7 @@ mod tests {
         let on = Overlays {
             velocities: None,
             offside: true,
+            formation: None,
         };
         frame.phases = [0, 1];
         let plain = frame_mesh(&frame, &PLAIN, 1280, 820);
@@ -559,6 +618,7 @@ mod tests {
         let arrows = |velocities| Overlays {
             velocities: Some(velocities),
             offside: false,
+            formation: None,
         };
         assert_eq!(
             frame_mesh(&frame, &arrows(&still), 1280, 820).verts,
@@ -584,6 +644,87 @@ mod tests {
         assert!(gone.vertex_count() < nobody + 2 * per_arrow);
         assert_eq!(velocities_from_parts(&[0.0; 44]), Some(still));
         assert_eq!(velocities_from_parts(&[]), None);
+    }
+
+    /// F4: one segment between neighbours of each sector, in the order they
+    /// stand across the pitch; nobody sent off, and never the keeper.
+    #[test]
+    fn formation_lines_join_each_sector_across_the_pitch() {
+        let (db, setup) = demo_match(7);
+        let e = MatchEngine::new(&setup, &db);
+        let mut roster = [0_u8; 22];
+        for (code, p) in roster.iter_mut().zip(&e.state().players) {
+            *code = role_code(p.role);
+        }
+        assert_eq!(roster_from_parts(&roster), Some(roster));
+        assert_eq!(roster_from_parts(&roster[..21]), None);
+        let mut frame = frame_at(1_234);
+        let on = Overlays {
+            formation: Some(&roster),
+            ..PLAIN
+        };
+        let plain = frame_mesh(&frame, &PLAIN, 1280, 820).vertex_count();
+        let segments = |sent_off: u32| {
+            let mut total = 0;
+            for start in [0, SIDE] {
+                for s in 0..3 {
+                    let n = (start..start + SIDE)
+                        .filter(|&i| sent_off >> i & 1 == 0 && sector(roster[i]) == Some(s))
+                        .count();
+                    total += n.saturating_sub(1);
+                }
+            }
+            total
+        };
+        // Ten outfielders in three sectors: seven segments a team.
+        assert_eq!(segments(0), 14);
+        let with = frame_mesh(&frame, &on, 1280, 820);
+        assert_eq!(with.vertex_count(), plain + 14 * 6);
+        assert!(with
+            .verts
+            .chunks(6)
+            .all(|v| v[0].abs() <= 1.0 && v[1].abs() <= 1.0));
+        // A defender sent off leaves his line (and is not drawn himself).
+        let defender = roster.iter().position(|&c| c == 1).expect("a centre-back");
+        frame.sent_off = 1 << defender;
+        let gone = frame_mesh(&frame, &PLAIN, 1280, 820).vertex_count();
+        assert_eq!(
+            frame_mesh(&frame, &on, 1280, 820).vertex_count(),
+            gone + 13 * 6
+        );
+        // The keeper is in no line: moving him moves no line.
+        frame.sent_off = 0;
+        let mut shapes = Vec::new();
+        formation_shapes(&frame, &roster, &mut shapes);
+        frame.players[0] = Vec2::new(50.0, 1.0);
+        frame.players[11] = Vec2::new(50.0, 67.0);
+        let mut moved = Vec::new();
+        formation_shapes(&frame, &roster, &mut moved);
+        assert_eq!(shapes, moved);
+        // Neighbours across the pitch: every line runs with y not falling.
+        for shape in &shapes {
+            let Shape::Line { a, b, .. } = shape else {
+                panic!("only lines");
+            };
+            assert!(a.y <= b.y);
+        }
+    }
+
+    /// The sectors are the engine's lines (`Role::line`).
+    #[test]
+    fn sectors_are_the_role_lines() {
+        use fm_match::{Formation, Line};
+        for f in Formation::ALL {
+            for slot in f.slots() {
+                let expected = match slot.role.line() {
+                    Line::Goalkeeper => None,
+                    Line::Defence => Some(0),
+                    Line::Midfield => Some(1),
+                    Line::Attack => Some(2),
+                };
+                assert_eq!(sector(role_code(slot.role)), expected, "{:?}", slot.role);
+            }
+        }
     }
 
     #[test]

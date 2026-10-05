@@ -61,6 +61,8 @@
   // has no player names yet), F2 draws velocity arrows. Keys and buttons.
   const ROLE_LABELS = ['GOL', 'ZAG', 'LAT', 'ALA', 'VOL', 'MC', 'ME', 'MEI', 'PTA', 'ATA'];
   const NO_VELOCITIES = new Float32Array(0);
+  /** Role code of each player (engine order), for the formation lines. */
+  let roster = new Uint8Array(0);
   let showLabels = $state(false);
   let showVectors = $state(false);
   let labelTexts: string[] = $state([]);
@@ -173,6 +175,7 @@
               frame.homePhase | (frame.awayPhase << 8) | (frame.half << 16),
               showVectors ? interpolator.velocity : NO_VELOCITIES,
               0,
+              roster,
             );
             perf.frames += 1;
             perf.labelsMs += t1 - t0;
@@ -206,6 +209,7 @@
         (globalThis as { fmMatch?: MatchHandle }).fmMatch = h;
         (globalThis as { fmReferenceSlot?: typeof referenceSlot }).fmReferenceSlot = referenceSlot;
         interpolator = new FrameInterpolator(h.reader);
+        roster = Uint8Array.from(h.roster);
         labelTexts = h.roster.map((code, i) => `${(i % 11) + 1} ${ROLE_LABELS[code] ?? '?'}`);
         raf = requestAnimationFrame(tick);
       },
