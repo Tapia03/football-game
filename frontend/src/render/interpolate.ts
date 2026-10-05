@@ -54,6 +54,12 @@ export function lerpFrames(a: Frame, b: Frame, alpha: number, out: Frame): void 
 export class FrameInterpolator {
   private readonly a = newFrame();
   private readonly b = newFrame();
+  /**
+   * Velocity of each player at the frame last returned by `at`, m/s as
+   * vx0, vy0, vx1, …: the difference between the two snapshots around it
+   * (zero when there was only one). Nothing extra comes from the ring.
+   */
+  readonly velocity = new Float32Array(PLAYERS * 2);
 
   constructor(private readonly reader: SnapshotReader) {}
 
@@ -87,12 +93,17 @@ export class FrameInterpolator {
       if (!reader.read(n, this.a)) continue;
       if (n + 1 >= seq) {
         copy(this.a, out);
+        this.velocity.fill(0);
         return true;
       }
       if (!reader.read(n + 1, this.b)) continue;
       const span = this.b.tMs - this.a.tMs;
       const alpha = span > 0 ? Math.min(1, Math.max(0, (tMs - this.a.tMs) / span)) : 0;
       lerpFrames(this.a, this.b, alpha, out);
+      const perSecond = span > 0 ? 1000 / span : 0;
+      for (let i = 0; i < PLAYERS * 2; i += 1) {
+        this.velocity[i] = ((this.b.xy[i] ?? 0) - (this.a.xy[i] ?? 0)) * perSecond;
+      }
       return true;
     }
     return reader.latest(out);

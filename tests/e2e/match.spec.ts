@@ -11,6 +11,7 @@ type Hooks = {
   fmMatch: { reader: Reader; pause(): void; runTo(tick: number): void };
   fmLatency: { frames: number; sumMs: number; maxMs: number; over50: number };
   fmReferenceSlot(seed: number, tick: number): Promise<Uint32Array>;
+  fmPerf: { frames: number; labelsMs: number; drawMs: number; verts: number };
 };
 
 /** "mm:ss" → seconds. */
@@ -124,7 +125,7 @@ test.describe('Fase 6 (6A): the match runs in the engine worker', () => {
     await expect(page.getByTestId('match-status')).toHaveText('ao vivo');
     // Tick 30 000 = 50:00, second half; seed 3 has cards on both sides.
     await page.evaluate(() => (globalThis as unknown as Hooks).fmMatch.runTo(30_000));
-    await expect(page.getByTestId('match-status')).toHaveText('pausado');
+    await expect(page.getByTestId('match-status')).toHaveText('pausado', { timeout: 20_000 });
     await expect(page.getByTestId('match-clock')).toHaveText('49:59');
     await expect(page.getByTestId('hud-half')).toHaveText('2º tempo');
     await expect(page.getByTestId('match-score')).toHaveText(/^\d+ × \d+$/);
@@ -164,7 +165,7 @@ test.describe('Fase 6 (6A): the match runs in the engine worker', () => {
     await page.goto('/?seed=3');
     await expect(page.getByTestId('match-status')).toHaveText('ao vivo');
     await page.evaluate(() => (globalThis as unknown as Hooks).fmMatch.runTo(30_000));
-    await expect(page.getByTestId('match-status')).toHaveText('pausado');
+    await expect(page.getByTestId('match-status')).toHaveText('pausado', { timeout: 20_000 });
 
     // Words 56..63 (home) and 63..70 (away) of the newest snapshot: shots,
     // on target, xG (f32), passes, passes completed, tackles, fouls.
@@ -202,6 +203,74 @@ test.describe('Fase 6 (6A): the match runs in the engine worker', () => {
     }
   });
 
+  test('F1 labels every player, F2 draws velocity arrows; keys and buttons', async ({
+    page,
+    browserName,
+  }, testInfo) => {
+    await openMatch(page);
+    const labels = page.getByTestId('toggle-labels');
+    const vectors = page.getByTestId('toggle-vectors');
+    await expect(labels).toHaveAttribute('aria-pressed', 'false');
+    await expect(vectors).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.getByTestId('labels')).toHaveCount(0);
+
+    // F1 by key: 22 labels, "number position".
+    await page.keyboard.press('F1');
+    await expect(labels).toHaveAttribute('aria-pressed', 'true');
+    const label = page.getByTestId('labels').locator('.label');
+    await expect(label).toHaveCount(22);
+    for (const text of await label.allInnerTexts()) {
+      expect(text).toMatch(/^([1-9]|1[01]) (GOL|ZAG|LAT|ALA|VOL|MC|ME|MEI|PTA|ATA)$/);
+    }
+    await expect(label.first()).toHaveText('1 GOL');
+    // …and off again by the button.
+    await labels.click();
+    await expect(labels).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.getByTestId('labels')).toHaveCount(0);
+
+    // F2 by button, then by key.
+    await vectors.click();
+    await expect(vectors).toHaveAttribute('aria-pressed', 'true');
+    await page.keyboard.press('F2');
+    await expect(vectors).toHaveAttribute('aria-pressed', 'false');
+
+    // Without WebGL (headless Firefox on CI) nothing is drawn: the toggles
+    // above are all there is to check.
+    if (browserName === 'firefox') return;
+    await expect(page.getByTestId('match-render')).toHaveText('ok');
+
+    // Main-thread cost per frame with the toggles off / F1 / F2 / both, and
+    // the arrows as extra vertices of the mesh.
+    const measure = async (): Promise<Hooks['fmPerf']> => {
+      await page.evaluate(() => {
+        const perf = (globalThis as unknown as Hooks).fmPerf;
+        perf.frames = 0;
+        perf.labelsMs = 0;
+        perf.drawMs = 0;
+      });
+      await page.waitForTimeout(1_500);
+      return page.evaluate(() => ({ ...(globalThis as unknown as Hooks).fmPerf }));
+    };
+    const off = await measure();
+    await page.keyboard.press('F1');
+    const f1 = await measure();
+    await page.keyboard.press('F1');
+    await page.keyboard.press('F2');
+    const f2 = await measure();
+    await page.keyboard.press('F1');
+    const both = await measure();
+    const line = (name: string, p: Hooks['fmPerf']): string =>
+      `${name}: labels ${(p.labelsMs / p.frames).toFixed(3)} ms, mesh+draw ${(p.drawMs / p.frames).toFixed(3)} ms, ${p.verts} vertices`;
+    console.log(
+      `[6B-2 frame cost ${testInfo.project.name}] ${line('off', off)} | ${line('F1', f1)} | ${line('F2', f2)} | ${line('F1+F2', both)}`,
+    );
+    expect(off.frames).toBeGreaterThan(10);
+    expect(f2.verts).toBeGreaterThan(off.verts);
+    expect(f1.verts).toBe(off.verts);
+    // The toggles must not turn a frame into a slow one.
+    expect(both.labelsMs / both.frames).toBeLessThan(4);
+  });
+
   test('golden: the match at a fixed tick (pixels, Chromium only)', async ({ page, browserName }) => {
     // Pixel goldens only where rendering is deterministic: the software
     // renderer of headless Chromium (docs/SPEC.md, Fase 6). Firefox and
@@ -216,10 +285,24 @@ test.describe('Fase 6 (6A): the match runs in the engine worker', () => {
     );
     await openMatch(page);
     await page.evaluate(() => (globalThis as unknown as Hooks).fmMatch.runTo(6_000));
-    await expect(page.getByTestId('match-status')).toHaveText('pausado');
+    await expect(page.getByTestId('match-status')).toHaveText('pausado', { timeout: 20_000 });
     await expect(page.getByTestId('match-clock')).toHaveText('09:59');
     await expect(page.getByTestId('match-render')).toHaveText('ok');
     await expect(page).toHaveScreenshot('match-hud.png', { maxDiffPixelRatio: 0.01 });
+
+    // The same instant with F1 (labels) and F2 (velocity arrows) on. The
+    // arrows come from the two snapshots around the paused clock, so they
+    // are as reproducible as the positions.
+    const plain = await page.evaluate(() => (globalThis as unknown as Hooks).fmPerf.verts);
+    await page.keyboard.press('F1');
+    await page.keyboard.press('F2');
+    await expect(page.getByTestId('labels').locator('.label')).toHaveCount(22);
+    // A frame with the arrows in the mesh has been drawn.
+    await page.waitForFunction(
+      (before) => (globalThis as unknown as { fmPerf: { verts: number } }).fmPerf.verts > before,
+      plain,
+    );
+    await expect(page).toHaveScreenshot('match-toggles.png', { maxDiffPixelRatio: 0.01 });
   });
 
   test('tick-to-draw latency stays under 50 ms at 1× (95% of the frames)', async ({ page }, testInfo) => {

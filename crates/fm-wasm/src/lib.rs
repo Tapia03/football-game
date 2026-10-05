@@ -151,6 +151,19 @@ impl EngineHost {
     pub fn sequence(&self) -> u32 {
         self.seq
     }
+
+    /// Role code of each of the 22 players (`mesh::role_code`), in engine
+    /// order. Fixed for the match: sent once to the main thread, outside
+    /// the snapshot ring.
+    #[must_use]
+    pub fn roster(&self) -> Vec<u8> {
+        self.engine
+            .state()
+            .players
+            .iter()
+            .map(|p| mesh::role_code(p.role))
+            .collect()
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -197,20 +210,34 @@ impl EngineHost {
 /// Triangle list of one frame (`[x, y, r, g, b, a]` per vertex, clip
 /// space) for a `width_px` × `height_px` canvas. Pure: the main thread
 /// passes what it read from the snapshot ring and interpolated — `xy` is
-/// x0, y0, x1, y1, … for the 22 players.
+/// x0, y0, x1, y1, … for the 22 players; `velocities` is vx0, vy0, … in m/s
+/// to draw velocity arrows, or empty for none.
 #[wasm_bindgen]
 #[must_use]
+#[allow(clippy::too_many_arguments)] // a flat frame across the wasm boundary
 pub fn frame_mesh_vertices(
     xy: &[f32],
     ball_x: f32,
     ball_y: f32,
     ball_z: f32,
     sent_off: u32,
+    velocities: &[f32],
     width_px: u32,
     height_px: u32,
 ) -> Vec<f32> {
     let frame = mesh::frame_from_parts(xy, [ball_x, ball_y, ball_z], sent_off);
-    mesh::frame_mesh(&frame, width_px, height_px).verts
+    let velocities = mesh::velocities_from_parts(velocities);
+    mesh::frame_mesh(&frame, velocities.as_ref(), width_px, height_px).verts
+}
+
+/// How the pitch is fitted into a `width_px` × `height_px` canvas, as
+/// `[centre x, centre y, scale x, scale y]`: pitch point `p` is drawn at
+/// clip `((p.x − cx) · sx, (p.y − cy) · sy)`. Pure; the same view as the
+/// mesh, for labels laid over the canvas.
+#[wasm_bindgen]
+#[must_use]
+pub fn pitch_view(width_px: u32, height_px: u32) -> Vec<f32> {
+    mesh::pitch_view(width_px, height_px).params().to_vec()
 }
 
 /// One ring slot as a fresh engine produces it for demo match `seed` after
@@ -262,10 +289,12 @@ impl MatchCanvas {
         ball_y: f32,
         ball_z: f32,
         sent_off: u32,
+        velocities: &[f32],
     ) -> Result<u32, String> {
         let (w, h) = self.renderer.size();
         let frame = mesh::frame_from_parts(xy, [ball_x, ball_y, ball_z], sent_off);
-        let mesh = mesh::frame_mesh(&frame, w, h);
+        let velocities = mesh::velocities_from_parts(velocities);
+        let mesh = mesh::frame_mesh(&frame, velocities.as_ref(), w, h);
         self.renderer.draw(mesh::BACKGROUND, &mesh.verts)?;
         u32::try_from(mesh.vertex_count()).map_err(|_| "mesh too large".into())
     }

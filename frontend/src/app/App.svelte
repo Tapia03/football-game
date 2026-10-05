@@ -3,6 +3,7 @@
     fitCanvas,
     loadEngineInfo,
     openCanvas,
+    pitchView,
     referenceSlot,
     startMatch,
     type EngineInfo,
@@ -56,6 +57,26 @@
   let status = $state('carregando…');
   let match: MatchHandle | undefined = $state();
   let canvasEl: HTMLCanvasElement | undefined = $state();
+  // Toggles (6B-2): F1 labels every player (number + position; the project
+  // has no player names yet), F2 draws velocity arrows. Keys and buttons.
+  const ROLE_LABELS = ['GOL', 'ZAG', 'LAT', 'ALA', 'VOL', 'MC', 'ME', 'MEI', 'PTA', 'ATA'];
+  const NO_VELOCITIES = new Float32Array(0);
+  let showLabels = $state(false);
+  let showVectors = $state(false);
+  let labelTexts: string[] = $state([]);
+  let labelEls: (HTMLSpanElement | undefined)[] = $state([]);
+
+  $effect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'F1') showLabels = !showLabels;
+      else if (e.key === 'F2') showVectors = !showVectors;
+      else return;
+      // F1 is the browser's help, F2 renames in some: keep them for the game.
+      e.preventDefault();
+    };
+    addEventListener('keydown', onKey);
+    return () => removeEventListener('keydown', onKey);
+  });
   /** 'ok' once a frame was drawn; the error when WebGL2 is unavailable. */
   let render = $state('…');
 
@@ -74,6 +95,36 @@
     // Tick-to-draw latency (spec Fase 6, 6A): the frame drawn is one sample
     // interval behind the worker's clock, plus however stale that clock is.
     const latency = { frames: 0, sumMs: 0, maxMs: 0, over50: 0 };
+    // Main-thread cost of a frame (6B-2): placing the labels and building
+    // + drawing the mesh, to compare with the toggles on and off.
+    const perf = { frames: 0, labelsMs: 0, drawMs: 0, verts: 0 };
+    (globalThis as { fmPerf?: typeof perf }).fmPerf = perf;
+    let view: Float32Array = new Float32Array(4);
+    let viewFor = '';
+    const placeLabels = (): void => {
+      if (el === undefined) return;
+      const key = `${el.width}x${el.height}`;
+      if (key !== viewFor) {
+        view = pitchView(el.width, el.height);
+        viewFor = key;
+      }
+      const [cx = 0, cy = 0, sx = 0, sy = 0] = view;
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+      for (let i = 0; i < labelEls.length; i += 1) {
+        const label = labelEls[i];
+        if (label === undefined) continue;
+        if ((frame.sentOff >> i) & 1) {
+          label.style.display = 'none';
+          continue;
+        }
+        // Clip space → CSS pixels of the canvas box (y grows downwards).
+        const x = (((frame.xy[2 * i] ?? 0) - cx) * sx + 1) * 0.5 * w;
+        const y = (1 - ((frame.xy[2 * i + 1] ?? 0) - cy) * sy) * 0.5 * h;
+        label.style.display = '';
+        label.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, 80%)`;
+      }
+    };
     (globalThis as { fmLatency?: typeof latency }).fmLatency = latency;
     // The canvas holds WebGL2 objects only; the match is not here. Without
     // WebGL2 the match still runs and the page says why nothing is drawn.
@@ -110,7 +161,20 @@
         copyStats(frame.awayStats, stats.away);
         if (canvas !== undefined) {
           try {
-            canvas.draw(frame.xy, frame.ballX, frame.ballY, frame.ballZ, frame.sentOff);
+            const t0 = performance.now();
+            if (showLabels) placeLabels();
+            const t1 = performance.now();
+            perf.verts = canvas.draw(
+              frame.xy,
+              frame.ballX,
+              frame.ballY,
+              frame.ballZ,
+              frame.sentOff,
+              showVectors ? interpolator.velocity : NO_VELOCITIES,
+            );
+            perf.frames += 1;
+            perf.labelsMs += t1 - t0;
+            perf.drawMs += performance.now() - t1;
             render = 'ok';
           } catch (err: unknown) {
             render = `FALHOU: ${err instanceof Error ? err.message : String(err)}`;
@@ -140,6 +204,7 @@
         (globalThis as { fmMatch?: MatchHandle }).fmMatch = h;
         (globalThis as { fmReferenceSlot?: typeof referenceSlot }).fmReferenceSlot = referenceSlot;
         interpolator = new FrameInterpolator(h.reader);
+        labelTexts = h.roster.map((code, i) => `${(i % 11) + 1} ${ROLE_LABELS[code] ?? '?'}`);
         raf = requestAnimationFrame(tick);
       },
       (err: unknown) => {
@@ -205,7 +270,16 @@
     <span data-testid="hud-possession-away">{100 - possession}%</span>
   </div>
   <div class="stage">
-    <canvas id="match-canvas" bind:this={canvasEl}></canvas>
+    <div class="pitch">
+      <canvas id="match-canvas" bind:this={canvasEl}></canvas>
+      {#if showLabels}
+        <div class="labels" data-testid="labels">
+          {#each labelTexts as text, i (i)}
+            <span class="label" bind:this={labelEls[i]}>{text}</span>
+          {/each}
+        </div>
+      {/if}
+    </div>
     <aside class="stats" data-testid="stats">
       <h2>Estatísticas</h2>
       <table>
@@ -237,6 +311,22 @@
       {#each speeds as s (s)}
         <button class:active={speed === s} onclick={() => setSpeed(s)}>{s}×</button>
       {/each}
+    </span>
+    <span class="speeds">
+      <button
+        data-testid="toggle-labels"
+        class:active={showLabels}
+        aria-pressed={showLabels}
+        title="Número e posição dos jogadores (F1)"
+        onclick={() => (showLabels = !showLabels)}>F1 rótulos</button
+      >
+      <button
+        data-testid="toggle-vectors"
+        class:active={showVectors}
+        aria-pressed={showVectors}
+        title="Vetores de velocidade (F2)"
+        onclick={() => (showVectors = !showVectors)}>F2 vetores</button
+      >
     </span>
     <span class="seed">seed {seed}</span>
   </footer>
@@ -282,10 +372,34 @@
     align-items: start;
     margin-top: 0.5rem;
   }
+  .pitch {
+    position: relative;
+  }
   canvas {
     display: block;
     width: 100%;
     aspect-ratio: 113 / 76;
+  }
+  /* Player labels: DOM over the canvas, moved by transform every frame. */
+  .labels {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .label {
+    position: absolute;
+    left: 0;
+    top: 0;
+    padding: 0 0.25rem;
+    border-radius: 3px;
+    background: rgb(0 0 0 / 55%);
+    color: #fff;
+    font-size: 0.625rem;
+    font-weight: 700;
+    line-height: 1.3;
+    white-space: nowrap;
+    will-change: transform;
   }
   .stats h2 {
     margin: 0 0 0.5rem;

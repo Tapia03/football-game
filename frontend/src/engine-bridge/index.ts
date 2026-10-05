@@ -57,6 +57,8 @@ import { SnapshotReader, newSnapshotBuffer } from './sab';
 
 export type MatchHandle = {
   readonly reader: SnapshotReader;
+  /** Role code of each of the 22 players (engine order), fixed for the match. */
+  readonly roster: readonly number[];
   setSpeed(speed: number): void;
   pause(): void;
   resume(): void;
@@ -75,7 +77,7 @@ export function startMatch(seed: number, speed: number): Promise<MatchHandle> {
     type: 'module',
   });
   const send = (command: EngineCommand): void => worker.postMessage(command);
-  const handle: MatchHandle = {
+  const handle: Omit<MatchHandle, 'roster'> = {
     reader: new SnapshotReader(buffer),
     setSpeed: (value) => send({ type: 'speed', speed: value }),
     pause: () => send({ type: 'pause' }),
@@ -85,7 +87,7 @@ export function startMatch(seed: number, speed: number): Promise<MatchHandle> {
   };
   return new Promise((resolve, reject) => {
     worker.addEventListener('message', (e: MessageEvent<EngineEvent>) => {
-      if (e.data.type === 'ready') resolve(handle);
+      if (e.data.type === 'ready') resolve({ ...handle, roster: e.data.roster });
       else reject(new Error(e.data.message));
     });
     worker.addEventListener('error', (e) => reject(new Error(e.message)));
@@ -99,7 +101,17 @@ export type { Frame } from './sab';
 // The canvas side (main thread): WebGL2 objects only. Every frame drawn is
 // read from the snapshot ring and handed in — no match state lives here.
 
-import { MatchCanvas, reference_slot } from './pkg/fm_wasm.js';
+import { MatchCanvas, pitch_view, reference_slot } from './pkg/fm_wasm.js';
+
+/**
+ * How the pitch is fitted into a `width` × `height` canvas, as
+ * `[centre x, centre y, scale x, scale y]`: pitch point `(x, y)` is drawn at
+ * clip `((x − cx) · sx, (y − cy) · sy)`. The mesh's own view (call after the
+ * canvas is open).
+ */
+export function pitchView(width: number, height: number): Float32Array {
+  return pitch_view(width, height);
+}
 
 /** Sizes `canvas` to its CSS box × devicePixelRatio (sharp on HiDPI). */
 export function fitCanvas(canvas: HTMLCanvasElement): void {

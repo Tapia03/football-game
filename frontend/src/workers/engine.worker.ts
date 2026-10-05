@@ -23,7 +23,8 @@ export type EngineCommand =
   | { readonly type: 'runTo'; readonly tick: number };
 
 export type EngineEvent =
-  | { readonly type: 'ready' }
+  /** `roster`: role code of each of the 22 players, fixed for the match. */
+  | { readonly type: 'ready'; readonly roster: readonly number[] }
   | { readonly type: 'error'; readonly message: string };
 
 /** How often the worker advances the match (ms of real time). */
@@ -71,7 +72,7 @@ async function start(seed: number, initialSpeed: number, buffer: SharedArrayBuff
   setSpeed(initialSpeed);
   setRunning(true);
   setInterval(step, STEP_MS);
-  send({ type: 'ready' });
+  send({ type: 'ready', roster: Array.from(host.roster()) });
 }
 
 addEventListener('message', (e: MessageEvent<EngineCommand>) => {

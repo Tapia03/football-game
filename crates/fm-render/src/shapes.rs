@@ -71,6 +71,14 @@ impl View {
         }
     }
 
+    /// `[centre x, centre y, scale x, scale y]`: a pitch point `p` lands at
+    /// clip `((p.x − cx) · sx, (p.y − cy) · sy)`. For whoever places things
+    /// over the canvas with the same arithmetic as the mesh (DOM labels).
+    #[must_use]
+    pub fn params(&self) -> [f32; 4] {
+        [self.centre.x, self.centre.y, self.sx, self.sy]
+    }
+
     fn clip(&self, p: Vec2) -> Vec2 {
         Vec2::new(
             (p.x - self.centre.x) * self.sx,

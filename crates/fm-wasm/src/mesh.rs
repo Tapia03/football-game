@@ -92,15 +92,61 @@ fn pitch_shapes(out: &mut Vec<Shape>) {
     }
 }
 
+/// How the pitch is fitted into a `width_px` × `height_px` canvas: the one
+/// view both the mesh and anything laid over the canvas use.
+#[must_use]
+pub fn pitch_view(width_px: u32, height_px: u32) -> View {
+    #[allow(clippy::cast_precision_loss)] // canvas sizes ≪ 2^24
+    let (w, h) = (width_px.max(1) as f32, height_px.max(1) as f32);
+    View::fit(
+        pitch::CENTRE,
+        Vec2::new(pitch::LENGTH + 8.0, pitch::WIDTH + 8.0),
+        w,
+        h,
+    )
+}
+
+/// A velocity arrow is this many seconds of travel long (a sprint at 8 m/s
+/// draws ~5 m), and players slower than `ARROW_MIN_SPEED` get none.
+const ARROW_SECONDS: f32 = 0.6;
+const ARROW_MIN_SPEED: f32 = 0.5;
+
 /// The whole frame (pitch, players, ball) for a `width_px` × `height_px`
-/// canvas. Players sent off are not drawn.
+/// canvas. Players sent off are not drawn. With `velocities` (m/s, one per
+/// player) each moving player also gets an arrow along its velocity.
 ///
 /// # Panics
 /// Never: shirt numbers are 1..=11.
 #[must_use]
-pub fn frame_mesh(frame: &Frame, width_px: u32, height_px: u32) -> Mesh {
-    let mut shapes = Vec::with_capacity(160);
+pub fn frame_mesh(
+    frame: &Frame,
+    velocities: Option<&[Vec2; 22]>,
+    width_px: u32,
+    height_px: u32,
+) -> Mesh {
+    let mut shapes = Vec::with_capacity(230);
     pitch_shapes(&mut shapes);
+    // Arrows first, so the player discs sit on top of their tails.
+    if let Some(velocities) = velocities {
+        let color = Rgba(1.0, 1.0, 1.0, 0.8);
+        for (i, (&pos, &v)) in frame.players.iter().zip(velocities).enumerate() {
+            if frame.sent_off >> i & 1 == 1 || v.length() < ARROW_MIN_SPEED {
+                continue;
+            }
+            let tip = pos + v * ARROW_SECONDS;
+            shapes.push(Shape::Line {
+                a: pos,
+                b: tip,
+                width: 0.25,
+                color,
+            });
+            shapes.push(Shape::Disc {
+                centre: tip,
+                radius: 0.3,
+                color,
+            });
+        }
+    }
     for (i, &pos) in frame.players.iter().enumerate() {
         if frame.sent_off >> i & 1 == 1 {
             continue;
@@ -140,15 +186,39 @@ pub fn frame_mesh(frame: &Frame, width_px: u32, height_px: u32) -> Mesh {
         radius: 0.45 + lift,
         color: Rgba(1.0, 1.0, 1.0, 1.0),
     });
-    #[allow(clippy::cast_precision_loss)] // canvas sizes ≪ 2^24
-    let (w, h) = (width_px.max(1) as f32, height_px.max(1) as f32);
-    let view = View::fit(
-        pitch::CENTRE,
-        Vec2::new(pitch::LENGTH + 8.0, pitch::WIDTH + 8.0),
-        w,
-        h,
-    );
-    tessellate(&shapes, &view)
+    tessellate(&shapes, &pitch_view(width_px, height_px))
+}
+
+/// The 22 velocities from what the main thread holds: `v` is vx0, vy0, vx1,
+/// … in m/s. `None` when the slice is not 44 values (no arrows asked for).
+#[must_use]
+pub fn velocities_from_parts(v: &[f32]) -> Option<[Vec2; 22]> {
+    (v.len() == 44).then(|| {
+        let mut out = [Vec2::ZERO; 22];
+        for (i, o) in out.iter_mut().enumerate() {
+            *o = Vec2::new(v[2 * i], v[2 * i + 1]);
+        }
+        out
+    })
+}
+
+/// Label code of each role (spec Fase 6, 6B-2): the main thread turns it
+/// into the abbreviation shown under a player with F1.
+#[must_use]
+pub const fn role_code(role: fm_match::Role) -> u8 {
+    use fm_match::Role;
+    match role {
+        Role::Goalkeeper => 0,
+        Role::CentreBack => 1,
+        Role::FullBack => 2,
+        Role::WingBack => 3,
+        Role::DefensiveMidfielder => 4,
+        Role::CentralMidfielder => 5,
+        Role::WideMidfielder => 6,
+        Role::AttackingMidfielder => 7,
+        Role::Winger => 8,
+        Role::Striker => 9,
+    }
 }
 
 /// A frame from what the main thread holds after interpolating: `xy` is
@@ -196,7 +266,7 @@ mod tests {
 
     #[test]
     fn frame_mesh_stays_in_clip_space() {
-        let mesh = frame_mesh(&frame_at(6_000), 1280, 820);
+        let mesh = frame_mesh(&frame_at(6_000), None, 1280, 820);
         assert!(mesh.vertex_count() > 5_000, "{}", mesh.vertex_count());
         assert!(mesh
             .verts
@@ -208,8 +278,8 @@ mod tests {
     #[test]
     fn frame_mesh_is_a_pure_function_of_the_frame() {
         let frame = frame_at(1_234);
-        let a = frame_mesh(&frame, 1280, 820);
-        let b = frame_mesh(&frame, 1280, 820);
+        let a = frame_mesh(&frame, None, 1280, 820);
+        let b = frame_mesh(&frame, None, 1280, 820);
         assert_eq!(a.verts, b.verts);
         // And the parts the main thread passes rebuild the same frame.
         let xy: Vec<f32> = frame.players.iter().flat_map(|p| [p.x, p.y]).collect();
@@ -218,14 +288,64 @@ mod tests {
             [frame.ball.x, frame.ball.y, frame.ball.z],
             frame.sent_off,
         );
-        assert_eq!(frame_mesh(&rebuilt, 1280, 820).verts, a.verts);
+        assert_eq!(frame_mesh(&rebuilt, None, 1280, 820).verts, a.verts);
+    }
+
+    /// F2: moving players get an arrow, standing ones and sent-off ones do
+    /// not, and the rest of the mesh is untouched.
+    #[test]
+    fn velocity_arrows_are_added_for_moving_players_only() {
+        let mut frame = frame_at(1_234);
+        let plain = frame_mesh(&frame, None, 1280, 820);
+        let still = [Vec2::ZERO; 22];
+        assert_eq!(
+            frame_mesh(&frame, Some(&still), 1280, 820).verts,
+            plain.verts,
+            "nobody moving: no arrows"
+        );
+        let mut moving = still;
+        moving[3] = Vec2::new(6.0, 0.0);
+        moving[15] = Vec2::new(0.0, -4.0);
+        let with = frame_mesh(&frame, Some(&moving), 1280, 820);
+        let per_arrow = (with.vertex_count() - plain.vertex_count()) / 2;
+        assert!(per_arrow > 6, "an arrow is a line and a tip");
+        assert_eq!(with.vertex_count(), plain.vertex_count() + 2 * per_arrow);
+        assert!(with
+            .verts
+            .chunks(6)
+            .all(|v| v[0].abs() <= 1.0 && v[1].abs() <= 1.0));
+        // A sent-off player has no arrow either.
+        frame.sent_off = 1 << 3;
+        let gone = frame_mesh(&frame, Some(&moving), 1280, 820);
+        frame.sent_off = 0;
+        let nobody = frame_mesh(&frame, None, 1280, 820).vertex_count();
+        assert!(gone.vertex_count() < nobody + 2 * per_arrow);
+        assert_eq!(velocities_from_parts(&[0.0; 44]), Some(still));
+        assert_eq!(velocities_from_parts(&[]), None);
+    }
+
+    #[test]
+    fn every_role_has_its_own_label_code() {
+        use fm_match::{Formation, Role};
+        let mut seen = [false; 10];
+        for f in Formation::ALL {
+            for slot in f.slots() {
+                seen[usize::from(role_code(slot.role))] = true;
+            }
+        }
+        assert_eq!(role_code(Role::Goalkeeper), 0);
+        assert_eq!(role_code(Role::Striker), 9);
+        assert!(
+            seen[0] && seen[1] && seen[9],
+            "the formations use the codes"
+        );
     }
 
     #[test]
     fn players_sent_off_are_not_drawn() {
         let mut frame = frame_at(100);
-        let all = frame_mesh(&frame, 1280, 820).vertex_count();
+        let all = frame_mesh(&frame, None, 1280, 820).vertex_count();
         frame.sent_off = 1 << 5;
-        assert!(frame_mesh(&frame, 1280, 820).vertex_count() < all);
+        assert!(frame_mesh(&frame, None, 1280, 820).vertex_count() < all);
     }
 }
