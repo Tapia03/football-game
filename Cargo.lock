@@ -253,6 +253,8 @@ name = "fm-world"
 version = "0.1.0"
 dependencies = [
  "fm-core",
+ "fm-entities",
+ "fm-match",
 ]
 
 [[package]]

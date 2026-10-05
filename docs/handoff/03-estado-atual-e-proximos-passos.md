@@ -54,7 +54,12 @@ pendente** (abaixo).
 - **`tests/season.rs`**: mede uma temporada inteira; só roda quando pedido
   (`cargo test --release -p fm-world --test season -- --ignored --nocapture`).
 
-## A decisão pendente
+## A decisão das formações (tomada: todos em 4-4-2)
+
+> Atualização de 2026-10-05: o dono escolheu a opção 1. O `fm-world` foi
+> ajustado (`LEAGUE_FORMATION`) e commitado; o trabalho listado acima como
+> "não commitado" já está no git. O próximo passo é o **desenho do commit
+> 3**, a aprovar antes de qualquer código.
 
 Simulando temporadas inteiras (380 partidas, nativo):
 

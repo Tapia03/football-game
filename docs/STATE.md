@@ -2,7 +2,7 @@
 
 Resumo de uma tela que sobrevive a compactações de sessão. A fonte de verdade
 de arquitetura e regras é o [`docs/SPEC.md`](SPEC.md); este arquivo só diz
-*onde estamos*. Atualizado em **2026-10-05** (Fases 6 e 7A mergeadas; Fase 7B — mundo mínimo e calendário — **em implementação**, branch `fase-7b`: desenho aprovado e no SPEC; `fm-world` escrito e ainda não commitado, à espera de uma decisão sobre as formações).
+*onde estamos*. Atualizado em **2026-10-05** (Fases 6 e 7A mergeadas; Fase 7B — mundo mínimo e calendário — **em implementação**, branch `fase-7b`: commits 1 (SPEC) e 2 (`fm-world` nativo) feitos; próximo: commit 3, `fm-persistence` + migração v2 + operações `world.*`, com desenho a aprovar antes).
 
 **Para quem chega agora:** comece por [`docs/handoff/`](handoff/00-LEIA-PRIMEIRO.md).
 As seções deste arquivo abaixo de "Fase anterior — Fase 5 (c1)" são o
@@ -70,6 +70,23 @@ para orientar a próxima rodada de refinamento.
   sem mundo recusado com mensagem clara, navegação saves ↔ mundo.
   "Avançar até a próxima partida" e o link da partida para os saves são
   da 7C.
+  - **7B.2 feito:** `fm-world` nativo (bootstrap, calendário, simulação do
+    dia, classificação; 13 testes). **Todos os clubes em 4-4-2**, por
+    decisão do usuário depois do achado abaixo. Temporada nativa em
+    17,4–18,9 s; rodada com mediana de 455–494 ms.
+- **Achado da 7B.2 — desequilíbrio entre formações (item da Fase 8):**
+  4-3-3 contra 4-3-3 dá 12,5 gols por partida; com as formações sorteadas
+  a formação decide a tabela (correlação força × posição final 0,19–0,65;
+  os clubes em 4-3-3 no topo, os em 3-5-2 no fundo); com todos em 4-4-2 a
+  correlação é 0,71–0,94 e os gols ficam em ~3,0 por partida. A Fase 8
+  corrige. Tabela completa no SPEC (7B).
+- **Nota para a 7C:** a tela de tática só oferece 4-4-2 habilitada; as
+  outras formações aparecem com o aviso "formação desbalanceada até a
+  Fase 8".
+- **Observações da temporada, não bloqueantes:** o motor não tem vantagem
+  de mando (162 vitórias em casa, 158 fora, ~50%); a distância entre
+  campeão e lanterna com todos em 4-4-2 foi larga (93 a 15 pontos) —
+  ajuste de `DRAFT_NOISE`, para (c2).
 - **Dívida de desempenho (Fase 8 ou 9, não mexer agora):** o WASM roda
   uma partida ~3,4× mais devagar que o nativo (169–182 ms contra ~51 ms).
   Alavanca conhecida: `wasm-opt`, desligado de propósito.
@@ -245,6 +262,10 @@ fechar (c1) no motor do 5D-2 (`f17b1d9`); PR #6 mergeado em `6ae001a`.
   número não fecha sozinho. Se passar de 3,5: PARAR e reescopar.
 - **3,5 é "aceitável", não "bom"** (real ~2,7): se fechar em ≤ 3,5, a
   diferença fica como dívida no backlog de refinamento.
+- **Também entra, vindo do MVP (7B.2):** o **desequilíbrio entre
+  formações** (4-3-3 × 4-3-3 com 12,5 gols por partida; a formação
+  decidindo a tabela) e a ausência de vantagem de mando. Enquanto isso
+  não for corrigido, o mundo usa só 4-4-2.
 - **Pré-requisito:** aplicar o patch acima.
 - **Escopo:** (1) goleiro saindo do gol (interceptar, cortar cruzamento,
   líbero) — o antigo passo 2.5; (2) impedimento apitado, com tiro livre;

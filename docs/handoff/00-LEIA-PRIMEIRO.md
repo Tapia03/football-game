@@ -42,23 +42,17 @@ próprio navegador, em SQLite. O jogo ainda **não tem nome**: nos documentos,
   - **7A (persistência local): feita e mergeada** (PR #9).
   - **7B (mundo mínimo e calendário): em andamento**, branch `fase-7b`.
   - 7C (telas de gerenciamento) e 7D (assistir a partida) não começaram.
-- **Há trabalho não commitado** na `fase-7b` (o crate `fm-world`) e **uma
-  decisão pendente do dono do projeto**. Ver o arquivo 03.
+- **Commits 1 e 2 da 7B feitos** (SPEC e `fm-world` nativo). O próximo é o
+  commit 3, com desenho a aprovar antes do código. Ver o arquivo 03.
 
-## A decisão que está aberta agora
+## A decisão das formações (tomada em 2026-10-05)
 
 A primeira temporada inteira simulada mostrou que **a formação tática decide
 o campeonato, não a qualidade do elenco**, e que 4-3-3 contra 4-3-3 dá 12,5
-gols por partida. Isso é defeito do motor (a corrigir na Fase 8), mas obriga
-a escolher como o mundo da 7B distribui as formações. A pergunta feita ao
-dono, ainda sem resposta:
-
-1. todos os clubes em 4-4-2 (recomendado);
-2. manter o sorteio entre as cinco formações;
-3. sortear só entre 4-4-2 e 5-3-2.
-
-**Não commitar o `fm-world` antes dessa resposta.** Detalhes e números no
-arquivo 03.
+gols por partida. É defeito do motor, a corrigir na Fase 8. O dono decidiu:
+**todos os clubes da 7B em 4-4-2**. A tela de tática da 7C só oferece 4-4-2
+habilitada, com as outras marcadas como "formação desbalanceada até a Fase
+8". Números no SPEC (seção 7B) e no arquivo 03.
 
 ## Três coisas que não se negociam
 

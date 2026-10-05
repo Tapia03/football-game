@@ -2759,8 +2759,9 @@ depois. O jogo ainda não tem nome ("o jogo", "o projeto").
     guarda os índices).
   - Overall: média dos atributos ponderada pela posição, em `fm-world`;
     é para a tela, o motor não usa.
-  - Tática inicial de cada clube: formação sorteada pela seed entre as
-    quatro do motor, táticas padrão, onze por aptidão de posição.
+  - Tática inicial de cada clube: **todos em 4-4-2** `[ALTERADO
+    2026-10-05]` (o desenho original sorteava a formação pela seed; ver
+    "Achado da 7B.2" abaixo), táticas padrão, onze por aptidão de posição.
 - **Calendário.** Round-robin pelo método do círculo: 19 rodadas de
   turno e as mesmas 19 com mando invertido — 38 rodadas, 380 partidas.
   Uma rodada por semana (dia 6 de cada semana); temporada de 266 dias. A
@@ -2827,6 +2828,65 @@ depois. O jogo ainda não tem nome ("o jogo", "o projeto").
   e progresso, **com a medição de uma rodada e de uma temporada no WASM
   do CI** — é aqui que o pool se decide; (5) tela mínima com a navegação
   e os testes de determinismo e crash pelo navegador.
+- **7B.2 implementado (2026-10-05): `fm-world` nativo.**
+  - **O que entrou:** bootstrap determinístico (500 jogadores por cotas
+    de posição, 20 clubes, draft por posição com ruído, nomes sintéticos,
+    overall por posição), calendário (380 partidas pelo método do círculo;
+    19 jogos em casa por clube, nunca quatro seguidos no mesmo mando),
+    simulação do dia (`matches_today` → `play`, que só lê o mundo →
+    `finish_day`), `weekly_update` no fim da semana, troca do lesionado
+    na escalação, classificação.
+  - **Testado:** 13 testes nativos (mesma seed, mesmo mundo; cotas; dois
+    dias de rodada simulados duas vezes dão o mesmo estado; a ordem das
+    partidas do dia não muda nada; a tabela bate com os resultados);
+    clippy limpo no nativo e no wasm32. A temporada inteira é um teste
+    que só roda quando pedido (`cargo test --release -p fm-world --test
+    season -- --ignored --nocapture`).
+  - **Custo nativo** (máquina de 16 núcleos, uma thread, todos em 4-4-2):
+    temporada em 17,4–18,9 s; rodada com mediana de 455–494 ms. O número
+    do WASM no CI sai no commit 4.
+- **Achado da 7B.2 — desequilíbrio entre formações (item da Fase 8).**
+  A primeira temporada inteira mostrou que, com o motor como está, **a
+  formação decide o campeonato, não o elenco.** Temporadas de 380
+  partidas, nativo:
+
+  | Formações dos clubes | Seed | Gols por partida | Correlação força do elenco × posição final |
+  |---|---|---|---|
+  | Sorteadas entre as cinco | 2026 | 4,56 | 0,19 |
+  | Sorteadas entre as cinco | 7 | 5,34 | 0,65 |
+  | Todos em 4-4-2 | 2026 | 2,98 | 0,94 |
+  | Todos em 4-4-2 | 7 | 3,29 | 0,71 |
+  | Todos em 5-3-2 | 2026 | 2,73 | 0,76 |
+  | Todos em 5-3-2 | 7 | 2,76 | 0,84 |
+  | Todos em 4-3-3 | 2026 | **12,64** | 0,79 |
+  | Todos em 4-3-3 | 7 | **12,45** | 0,73 |
+
+  - Na temporada sorteada da seed 2026: os três clubes em 4-3-3
+    terminaram em 1º, 2º e 4º (o 4º com o elenco mais fraco da liga, força
+    47; o 2º com 224 gols em 38 jogos), os três em 3-5-2 em 15º, 16º e
+    20º, e o elenco mais forte (força 69) em 7º.
+  - **4-3-3 contra 4-3-3 não defende** (12,5 gols por partida). Os 4,4
+    gols conhecidos desde a Fase 5 vinham da partida demo (4-4-2 × 4-3-3).
+  - **Com todos em 4-4-2 o motor fica perto do real** (~3,0 gols por
+    partida; real ~2,7) e a tabela segue a força dos elencos.
+  - O 5-3-2 sozinho também se comporta; o que afunda na temporada
+    sorteada é o 3-5-2. Os confrontos entre formações diferentes (por
+    exemplo 4-4-2 × 5-3-2) **não foram medidos** um a um.
+  - **Decisão (usuário, 2026-10-05):** todos os clubes da 7B em 4-4-2
+    (`fm_world::LEAGUE_FORMATION`). A 7B existe para provar o ciclo, não
+    para introduzir variedade; a variedade entra na Fase 8, quando o
+    motor estiver estável. `Formation::ALL` continua no motor.
+  - **Consequência para a 7C:** a tela de tática só oferece 4-4-2
+    habilitada; as outras aparecem com o aviso "formação desbalanceada
+    até a Fase 8".
+  - **A Fase 8 corrige.** O motor não foi tocado.
+- **Duas observações da mesma temporada, não bloqueantes:**
+  - **O motor não tem vantagem de mando:** na temporada sorteada, 162
+    vitórias em casa e 158 fora; com todos em 4-4-2, 152 em casa, 92
+    empates e 136 fora.
+  - **A distância entre campeão e lanterna ficou larga** com todos em
+    4-4-2: 93 a 15 pontos (seed 2026). É ajuste do ruído do draft
+    (`DRAFT_NOISE` em `fm-world`), para (c2).
 
 ## FASE 7 (numeração antiga; agora parte da Fase 9) — UI + Overlays Táticos
 - **Ordem (2026-10-05):** vem depois da fase "Bola longa + contraparte
