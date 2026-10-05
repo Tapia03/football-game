@@ -2183,6 +2183,46 @@ recalibrar contra a coluna "Real". As constantes estão em `AnchorTuning`,
     no lugar), ida-e-volta bit a bit com os campos novos, contadores do
     HUD. Playwright — HUD contra o snapshot lido do anel (cartões, posse,
     período), nos três navegadores; golden no Chromium.
+- **6B-2 — SAB versão 3 + painel de estatísticas + toggles
+  `[ALTERADO v2.1]` (desenho aprovado 2026-10-04):** quatro commits — (1)
+  SAB v3 + contadores do worker; (2) painel lateral em DOM; (3) toggles
+  F1/F2 + botões; (4) goldens.
+  - **Layout versão 3** (`magic = 0x464D0003`): a posição vai de 56 para
+    **72 palavras (288 bytes)**; buffer de 64 + 16 × 288 = **4.672
+    bytes**. Só acrescenta no fim.
+    - palavras 56–62 (casa) e 63–69 (visitante): chutes, chutes no alvo,
+      xG (f32), passes tentados, passes completos, botes, faltas
+      cometidas;
+    - palavras 70–71: reservadas (zero).
+  - **De onde vêm:** chutes, no alvo, passes e botes são os contadores do
+    próprio motor (`TeamState`), copiados pelo worker depois de cada
+    tick; as faltas vêm da lista de eventos.
+  - **xG fora do `tick_logic` (aprovado sob condição: bater bit a bit).**
+    O motor não acumula xG. `fm_match::xg::struck_shot_xg` relê o xG do
+    chute do tick que acabou de rodar: o ponto do chute é onde começa o
+    voo, que ainda é a bola logo depois do tick, então todas as entradas
+    do cálculo do resolver (ponto, gol atacado, atributos, tuning) são os
+    mesmos valores. **Teste (com a feature `diagnostics`, no CI):** somado
+    por time de fora do tick em 12 partidas inteiras, é idêntico **bit a
+    bit** à soma que o próprio motor guarda só para esse teste
+    (`TeamState::xg`, só com `diagnostics`), e nenhum chute fica de fora.
+    Se um dia deixar de bater, parar: acumular no motor mexe em
+    `MatchState`, nos goldens e na paridade — decisão do usuário.
+  - **Painel lateral (DOM):** à direita do campo (abaixo, em tela
+    estreita), tabela "Casa | métrica | Visitante": chutes (no alvo), xG,
+    passes completos / tentados (%), botes, faltas.
+  - **F1 — rótulos dos jogadores:** número + posição abreviada (o projeto
+    ainda não tem nomes: a ficha guarda só índices de tabelas que não
+    existem; nomes reais ficam para a fase de database). DOM sobre o
+    canvas; o elenco (posição de cada um) vai uma vez por mensagem do
+    worker, fora do SAB; a transformação campo → pixel é uma função WASM
+    pura, a mesma conta da malha.
+  - **F2 — vetores de velocidade:** setas no canvas. Nada novo no SAB: a
+    velocidade é a diferença entre os dois snapshots vizinhos que o
+    interpolador já lê. A malha recebe as 22 velocidades por parâmetro.
+  - **Input:** `keydown` de F1/F2 (com `preventDefault`) e dois botões
+    equivalentes junto aos de velocidade (toque, teste e navegadores que
+    não deixem interceptar o F1).
 - `MatchSnapshot` POD em `SharedArrayBuffer`, com ring buffer duplo
   (`ffi/sab.rs`).
 - `fm-wasm` expõe `init_engine(seed)`, `tick_logic()`,
