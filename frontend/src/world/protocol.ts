@@ -53,7 +53,9 @@ export type WorldOps = {
   /**
    * Lives `days` days, one at a time: the matches of the day, the end of
    * the day, its commit to the database, then the next day. Stops early
-   * when the season ends.
+   * when the season ends, or when cancelled (`WorldControl` `cancel`):
+   * the match being played ends, the day under way is abandoned — nothing
+   * of it was written — and the world stays on the last day committed.
    */
   'world.advance': {
     args: { readonly days: number };
@@ -61,6 +63,8 @@ export type WorldOps = {
       readonly summary: WorldSummary;
       /** Days lived by this call. */
       readonly daysLived: number;
+      /** Stopped by a cancel before living all the days asked for. */
+      readonly cancelled: boolean;
       /** One entry for each day lived that had matches. */
       readonly timing: readonly DayTiming[];
     };
@@ -75,9 +79,12 @@ export type WorldRequest<O extends WorldOp = WorldOp> = {
   readonly args: WorldOps[O]['args'];
 };
 
-/** `no-world-loaded`: an operation that needs a world before one was made or opened. */
+/**
+ * `no-world-loaded`: an operation that needs a world before one was made
+ * or opened. `db-timeout`: the database worker did not answer in time.
+ */
 export type WorldError = {
-  readonly code: DbError['code'] | 'no-world-loaded';
+  readonly code: DbError['code'] | 'no-world-loaded' | 'db-timeout';
   readonly message: string;
 };
 
@@ -87,8 +94,19 @@ export type WorldResponse<O extends WorldOp = WorldOp> =
 
 /** Control messages of the worker, besides requests. */
 export type WorldControl =
-  /** The line to the database worker (`Database.connect()`); sent first. */
-  { readonly type: 'start'; readonly db: MessagePort };
+  /**
+   * The line to the database worker (`Database.connect()`); sent first.
+   * `dbTimeoutMs`: how long a request to the database may take before the
+   * operation fails with `db-timeout` (10 s when not given).
+   */
+  | { readonly type: 'start'; readonly db: MessagePort; readonly dbTimeoutMs?: number }
+  /**
+   * Stops the advance under way after the match being played. Between the
+   * last match of a day and the commit of that day it is not honoured for
+   * that day (the window is a few milliseconds): the day ends, and the
+   * cancel holds from the next day on. Ignored when nothing is advancing.
+   */
+  | { readonly type: 'cancel' };
 
 export type WorldReady = { readonly type: 'ready' };
 

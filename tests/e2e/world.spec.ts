@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { ask, open, setBackend, type Hooks, type SaveInfo } from './support/db';
+import { ask, open, setBackend, start, type Hooks, type SaveInfo } from './support/db';
 
 // Fase 7B (7B.4): the world worker. The real world (the Rust `WorldHost`,
 // in WASM) lives in a worker of its own, simulates the days in LOD Abstract
@@ -16,26 +16,27 @@ type Summary = {
   finished: boolean;
 };
 type Timing = { day: number; round: number; matches: number; simulateMs: number; commitMs: number; totalMs: number };
-type Advance = { summary: Summary; daysLived: number; timing: Timing[] };
+type Advance = { summary: Summary; daysLived: number; cancelled: boolean; timing: Timing[] };
 type Progress = { type: 'progress'; day: number; round: number; done: number; total: number; daysLeft: number; etaMs: number };
 type WorldHandle = {
   request(op: string, args: unknown): Promise<unknown>;
   onProgress(listener: (progress: Progress) => void): () => void;
+  cancel(): void;
   terminate(): void;
 };
 type WorldHooks = Hooks & {
-  fmWorld: { startWorld(db: Hooks['db']): Promise<WorldHandle> };
+  fmWorld: { startWorld(db: Hooks['db'], options?: { dbTimeoutMs?: number }): Promise<WorldHandle> };
   /** The world worker the test is talking to. */
   world: WorldHandle;
 };
 
 /** Starts (or restarts, after killing it) the world worker over the page's database. */
-async function startWorld(page: Page): Promise<void> {
-  await page.evaluate(async () => {
+async function startWorld(page: Page, options: { dbTimeoutMs?: number } = {}): Promise<void> {
+  await page.evaluate(async (o) => {
     const hooks = globalThis as unknown as Partial<WorldHooks> & Pick<WorldHooks, 'fmWorld' | 'db'>;
     hooks.world?.terminate();
-    hooks.world = await hooks.fmWorld.startWorld(hooks.db);
-  });
+    hooks.world = await hooks.fmWorld.startWorld(hooks.db, o);
+  }, options);
 }
 
 /** One request to the world worker; a failed one comes back as `{ error, message }`. */
@@ -192,6 +193,101 @@ for (const backend of ['opfs', 'idb'] as const) {
       // after: the database was still on the day before for the early ones.
       expect(heard.events[0]!.storedDay).toBe(6);
       expect(heard.events[10]!.storedDay).toBe(13);
+    });
+
+    test('cancel: the match being played ends, the day is abandoned, nothing of it is written', async ({
+      page,
+    }, testInfo) => {
+      await open(page, testInfo.project.name);
+      const save = await openSave(page, 'Cancelado');
+      await startWorld(page);
+      await world(page, 'world.new', { seed: '2026', userClub: 0 });
+      // A cancel with nothing advancing is ignored: the next advance runs.
+      await page.evaluate(() => (globalThis as unknown as WorldHooks).world.cancel());
+      expect(await world<Advance>(page, 'world.advance', { days: 2 })).toMatchObject({ daysLived: 2, cancelled: false });
+
+      // Asked for two weeks; cancelled when the second match of the first
+      // round is reported.
+      const stopped = await page.evaluate(async () => {
+        const hooks = globalThis as unknown as WorldHooks;
+        const heard: number[] = [];
+        const stop = hooks.world.onProgress((p) => {
+          heard.push(p.done);
+          if (p.done === 2) hooks.world.cancel();
+        });
+        const result = (await hooks.world.request('world.advance', { days: 12 })) as Advance;
+        stop();
+        return { result, heard };
+      });
+      // Days 2 to 5 were lived and written; day 6, the round, was not.
+      expect(stopped.result).toMatchObject({ daysLived: 4, cancelled: true, timing: [] });
+      expect(stopped.result.summary).toMatchObject({ day: 6, nextRound: 0, matchesToday: 10 });
+      // The cancel is heard between matches: at most one more was played.
+      expect(stopped.heard.length).toBeGreaterThanOrEqual(2);
+      expect(stopped.heard.length).toBeLessThanOrEqual(3);
+      const stored = await ask<Loaded>(page, 'world.load');
+      expect(stored.day).toBe(6);
+      expect(stored.fixtures.every((f) => f.result === null)).toBe(true);
+      expect(await ask<SaveInfo[]>(page, 'save.list')).toMatchObject([{ id: save.id, day: 6 }]);
+
+      // The round played again, whole, is the round an uncancelled world
+      // plays: same save as seven days straight.
+      const again = await world<Advance>(page, 'world.advance', { days: 1 });
+      expect(again).toMatchObject({ daysLived: 1, cancelled: false });
+      expect(again.summary.day).toBe(7);
+      const cancelledThenPlayed = await ask<string>(page, 'save.digest');
+      await openSave(page, 'Direto');
+      await world(page, 'world.new', { seed: '2026', userClub: 0 });
+      await world(page, 'world.advance', { days: 7 });
+      await ask(page, 'meta.set', { key: 'name', value: 'Cancelado' });
+      expect(await ask<string>(page, 'save.digest')).toBe(cancelledThenPlayed);
+    });
+
+    test('reloading the page: the world comes back from the last day committed and goes on', async ({
+      page,
+    }, testInfo) => {
+      await open(page, testInfo.project.name);
+      const save = await openSave(page, 'Recarrega');
+      await startWorld(page);
+      await world(page, 'world.new', { seed: '9', userClub: 12 });
+      await world(page, 'world.advance', { days: 7 });
+      const digest = await ask<string>(page, 'save.digest');
+
+      // Everything in memory goes with the page: both workers.
+      await page.reload();
+      await expect(page.getByTestId('blank')).toBeVisible();
+      await start(page);
+      expect(await ask<SaveInfo[]>(page, 'save.list')).toMatchObject([{ id: save.id, day: 7 }]);
+      await ask(page, 'save.open', { id: save.id });
+      await startWorld(page);
+      expect(await world<Summary>(page, 'world.open')).toMatchObject({ seed: '9', day: 7, userClub: 12, nextRound: 1 });
+      expect(await ask<string>(page, 'save.digest')).toBe(digest);
+      expect((await world<Advance>(page, 'world.advance', { days: 1 })).summary.day).toBe(8);
+      expect(await ask(page, 'meta.get', { key: 'day' })).toBe(8);
+    });
+
+    test('a database that does not answer: the advance fails in time, saying so', async ({ page }, testInfo) => {
+      await open(page, testInfo.project.name);
+      // A database worker that writes the day and never answers.
+      await start(page, { test: { stopCommitDay: true } });
+      const save = await openSave(page, 'Banco mudo');
+      await startWorld(page, { dbTimeoutMs: 500 });
+      await world(page, 'world.new', { seed: '3', userClub: 0 });
+      const before = Date.now();
+      const failed = await world<{ error: string; message: string }>(page, 'world.advance', { days: 1 });
+      expect(failed.error).toBe('db-timeout');
+      expect(failed.message).toContain('o banco não respondeu a world.commitDay');
+      // In time: the deadline, and once more for the reload that follows.
+      expect(Date.now() - before).toBeLessThan(5_000);
+      // The world that was a day ahead of the database is gone.
+      expect(await world(page, 'world.advance', { days: 1 })).toMatchObject({ error: 'no-world-loaded' });
+
+      // With a database that answers, the world is where it was committed.
+      await start(page);
+      await ask(page, 'save.open', { id: save.id });
+      await startWorld(page);
+      expect(await world<Summary>(page, 'world.open')).toMatchObject({ day: 0 });
+      expect((await world<Advance>(page, 'world.advance', { days: 1 })).summary.day).toBe(1);
     });
 
     test('world.open loads the world back; a save without a world says no-world', async ({ page }, testInfo) => {

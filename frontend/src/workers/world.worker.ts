@@ -42,10 +42,39 @@ class WorldOpError extends Error {
 let wasm: Promise<unknown> | undefined;
 let db: DbClient | undefined;
 let host: WorldHost | undefined;
+/** How long the database may take to answer a request (ms). */
+let dbTimeoutMs = 10_000;
+/** An advance is under way; a cancel was asked for during it. */
+let advancing = false;
+let cancelRequested = false;
 
-function database(): DbClient {
-  if (db === undefined) throw new WorldOpError('internal', 'o Worker de mundo não recebeu a porta do banco');
-  return db;
+/**
+ * The line to the database, with a deadline on every request: a database
+ * worker that died never answers, and an advance must not hang on it.
+ */
+function database(): Pick<DbClient, 'request'> {
+  const client = db;
+  if (client === undefined) throw new WorldOpError('internal', 'o Worker de mundo não recebeu a porta do banco');
+  return {
+    request: (op, args, transfer) =>
+      new Promise((resolve, reject) => {
+        const deadline = setTimeout(() => {
+          reject(
+            new WorldOpError('db-timeout', `o banco não respondeu a ${op} em ${(dbTimeoutMs / 1000).toFixed(1)} s`),
+          );
+        }, dbTimeoutMs);
+        client.request(op, args, transfer).then(
+          (value) => {
+            clearTimeout(deadline);
+            resolve(value);
+          },
+          (err: unknown) => {
+            clearTimeout(deadline);
+            reject(err instanceof Error ? err : new Error(String(err)));
+          },
+        );
+      }),
+  };
 }
 
 function world(): WorldHost {
@@ -232,8 +261,12 @@ async function open(): Promise<WorldHost> {
 /**
  * Lives one day. If the database refuses the end of the day, the world in
  * memory is one day ahead of the truth: it is thrown away and loaded again.
+ *
+ * `'cancelled'`: a cancel arrived with matches of the day still to play.
+ * The day was abandoned — `play` only reads the world, so nothing changed
+ * and nothing went to the database.
  */
-async function liveDay(h: WorldHost, daysLeft: number, pace: Pace): Promise<DayTiming | undefined> {
+async function liveDay(h: WorldHost, daysLeft: number, pace: Pace): Promise<DayTiming | undefined | 'cancelled'> {
   const day = h.day();
   const round = h.next_round();
   const matches = h.matches_today();
@@ -257,8 +290,15 @@ async function liveDay(h: WorldHost, daysLeft: number, pace: Pace): Promise<DayT
       etaMs: (pace.ms / pace.matches) * (matches.length - done),
     };
     postMessage(progress);
-    // One match at a time: the page hears about each as it ends.
+    // One match at a time: the page hears about each as it ends, and a
+    // cancel sent meanwhile is heard here.
     await yieldTurn();
+    // After the last match the day is ended all the same: cancelling on the
+    // eve of the commit would save a few milliseconds and nothing else.
+    if (cancelRequested && done < matches.length) {
+      h.abandon_day();
+      return 'cancelled';
+    }
   }
   const simulated = started + simulating;
   h.finish_day();
@@ -310,12 +350,21 @@ const handlers: { [O in WorldOp]: (args: WorldOps[O]['args']) => Promise<WorldOp
     const timing: DayTiming[] = [];
     const pace: Pace = { matches: 0, ms: 0 };
     let daysLived = 0;
-    while (daysLived < days && !world().finished()) {
-      const lived = await liveDay(world(), days - daysLived - 1, pace);
-      if (lived !== undefined) timing.push(lived);
-      daysLived += 1;
+    cancelRequested = false;
+    advancing = true;
+    try {
+      while (daysLived < days && !world().finished() && !cancelRequested) {
+        const lived = await liveDay(world(), days - daysLived - 1, pace);
+        if (lived === 'cancelled') break;
+        if (lived !== undefined) timing.push(lived);
+        daysLived += 1;
+      }
+    } finally {
+      advancing = false;
     }
-    return { summary: summary(world()), daysLived, timing };
+    const cancelled = cancelRequested && daysLived < days && !world().finished();
+    cancelRequested = false;
+    return { summary: summary(world()), daysLived, cancelled, timing };
   },
 };
 
@@ -342,7 +391,13 @@ async function serve<O extends WorldOp>(request: WorldRequest<O>): Promise<World
 addEventListener('message', (e: MessageEvent<WorldControl | WorldRequest>) => {
   const message = e.data;
   if ('type' in message) {
+    if (message.type === 'cancel') {
+      // Heard between two matches; only an advance under way can be stopped.
+      if (advancing) cancelRequested = true;
+      return;
+    }
     db = new DbClient(message.db);
+    if (message.dbTimeoutMs !== undefined) dbTimeoutMs = message.dbTimeoutMs;
     wasm ??= init();
     void wasm.then(
       () => postMessage({ type: 'ready' } satisfies WorldReady),
