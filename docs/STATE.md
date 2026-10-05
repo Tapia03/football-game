@@ -17,10 +17,21 @@ snapshots por segundo publicados adiantados, a main lê e interpola em
 TS, malha como função WASM pura. Latência tick → desenho a 1×: média
 18,9 ms, máximo 22,7 ms.
 
-**6B em três commits visuais:** **6B-1** SAB versão 2 (224 bytes por
-posição: período, cartões, posse) + HUD em DOM + `run_to` + primeiro
-golden — em andamento; 6B-2 painel de estatísticas + toggles F1/F2; 6B-3
-overlays geométricos. Desenho de cada um aprovado antes do código.
+**6B em três commits visuais:**
+- **6B-1 feito:** SAB versão 2 (período, cartões, posse), HUD em DOM,
+  `run_to`, primeiro golden.
+- **6B-2 feito:** SAB versão 3 (288 bytes por posição: estatísticas de
+  time, com o xG relido de fora do tick e testado bit a bit contra o
+  motor), painel lateral, toggles F1 (rótulos: número + posição; o projeto
+  ainda não tem nomes) e F2 (vetores de velocidade), dois goldens.
+- **Próximo: 6B-3** overlays geométricos (linha de impedimento, linhas de
+  formação). Desenho aprovado antes do código.
+
+**Cuidado ao rodar os e2e localmente:** se uma aba (inclusive o painel de
+navegador do Claude) estiver aberta numa página da partida, ela disputa a
+CPU com o WebGL por software dos testes e os testes de tempo (latência,
+`runTo`) falham de forma intermitente. Fechar ou navegar essa aba para
+outra página antes de rodar.
 
 ## Fase anterior — Fase 5 (c1), mergeada
 **Fase 5 — Role Behaviors**, branch `fase-5`. O usuário decidiu (2026-10-04)

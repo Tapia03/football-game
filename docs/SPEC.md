@@ -2223,6 +2223,21 @@ recalibrar contra a coluna "Real". As constantes estão em `AnchorTuning`,
   - **Input:** `keydown` de F1/F2 (com `preventDefault`) e dois botões
     equivalentes junto aos de velocidade (toque, teste e navegadores que
     não deixem interceptar o F1).
+  - **6B-2 implementado (2026-10-04), medido no CI:**
+    - Bench de instruções: 590.430.506 (**+0,00%**).
+    - Latência tick → desenho a 1×: Chromium 18,9 ms (máx. 20,7), WebKit
+      18,7 ms (máx. 21,7), Firefox 18,8 ms (máx. 21,7) — igual ao 6A.
+    - **Custo por quadro na main** (`fmPerf`, Chromium do CI): rótulos do
+      F1 0,14 ms (22 posições em DOM por `transform`); malha + desenho
+      0,2–0,4 ms com ou sem F2; o F2 acrescenta ~1.000–1.700 vértices
+      (5.754 → 6.774–7.488) sem custo mensurável. No WebKit do CI:
+      rótulos 0,18–0,23 ms; malha + desenho 0,6–1,5 ms.
+    - **Goldens (Chromium):** `match-hud.png` refeito (o campo encolheu
+      para caber o painel) e `match-toggles.png` novo (F1 + F2 ligados),
+      ambos no tick 6.000 da seed 7.
+    - O teste de latência passou a contar os quadros acima de 50 ms
+      (limite: 5%) em vez da média, que um único quadro travado numa
+      máquina ocupada distorcia.
 - `MatchSnapshot` POD em `SharedArrayBuffer`, com ring buffer duplo
   (`ffi/sab.rs`).
 - `fm-wasm` expõe `init_engine(seed)`, `tick_logic()`,
