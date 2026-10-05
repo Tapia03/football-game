@@ -2461,6 +2461,36 @@ recalibrar contra a coluna "Real". As constantes estão em `AnchorTuning`,
   - **Goldens:** os três atuais refeitos (os botões entram no rodapé) e
     dois novos (HalfPitch e Tactical, seed 7, tick 6.000, câmera
     assentada).
+  - **6D implementado (2026-10-05), medido no CI:**
+    - Bench de instruções: 582.952.421 (**+0,00%**).
+    - **Tempo até o alvo exato** (partida pausada no tick 6.000, e2e):
+
+      | Troca | Chromium | WebKit | Firefox |
+      |---|---|---|---|
+      | FullPitch → HalfPitch | 796 ms | 741 ms | 800 ms |
+      | HalfPitch → Tactical | 786 ms | 768 ms | 805 ms |
+      | Tactical → FullPitch | 429 ms | 458 ms | 454 ms |
+
+      O e2e exige ≤ 1 s no Chromium; nos outros só reporta (o blend
+      corre em tempo real, e um quadro lento no fim se soma).
+    - **Custo por quadro contra o FullPitch** (`fmPerf`, Chromium):
+      HalfPitch +0,08 ms; Tactical +0,44 ms já com rótulos e linhas de
+      formação ligados (limite: 1 ms). WebKit: +0,26 e +0,03 ms (ruído).
+    - Latência tick → desenho a 1×: Chromium 18,8 ms (máx. 22,7), WebKit
+      19,0 ms (máx. 23,7), Firefox 18,8 ms (máx. 20,7).
+    - **Câmera cheia = vista antiga:** o 6D.1 passou com os três goldens
+      anteriores inalterados.
+    - **Rótulos:** ficam logo abaixo do disco do jogador em qualquer zoom
+      (o deslocamento passou a ser o raio do disco na tela + 3 px).
+    - **Goldens (Chromium):** cinco — `match-hud`, `match-toggles`,
+      `match-overlays` refeitos; `match-camera-half` e
+      `match-camera-tactical` novos.
+    - **Velocidades:** 1×, 2×, 5×, 10×, 30×, 60× (eram 1×, 10×, 30×, 60×;
+      de 1× para 10× era salto grande demais: 2× para assistir, 5× para
+      passar os olhos).
+    - **Corrida no e2e (WebKit do CI):** os rótulos existem assim que o
+      F1 liga, mas só são posicionados no quadro seguinte (100 ms no
+      WebKit do CI); o teste passou a esperar a posição (poll).
 - `MatchSnapshot` POD em `SharedArrayBuffer`, com ring buffer duplo
   (`ffi/sab.rs`).
 - `fm-wasm` expõe `init_engine(seed)`, `tick_logic()`,

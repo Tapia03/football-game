@@ -40,11 +40,15 @@ TS, malha como função WASM pura. Latência tick → desenho a 1×: média
   depois da troca 4,07 / 3,46 / 2,20 m (Low / Medium / UltraHigh; pela
   página: 2,37 → 1,39 m). Partida = função de (seed, comandos com tick),
   testado bit a bit pela página. Três goldens refeitos.
-- **Em andamento: 6D** câmera (desenho aprovado em 2026-10-05, no SPEC):
-  FullPitch, HalfPitch (2×, segue a bola com zona morta), Tactical
-  (zoom-out + rótulos e linhas de formação automáticos); tecla `C` e
-  `1`/`2`/`3`, botões; blend exponencial de ~150 ms; zoom/pan manuais
-  ficam para a Fase 7. **Pendente: 6C-2**
+- **6D feito (2026-10-05):** câmera como função WASM pura (vista
+  parametrizada, alvo com zona morta, blend exponencial de 100 ms que
+  assenta exato em ≤ 0,8 s): FullPitch, HalfPitch (2×, segue a bola),
+  Tactical (zoom-out + rótulos e linhas de formação automáticos, sem
+  mexer nos toggles); tecla `C` cicla, `1`/`2`/`3` direto, botões no
+  rodapé. Custo por quadro: +0,08 ms (HalfPitch), +0,44 ms (Tactical).
+  Velocidades 1×/2×/5×/10×/30×/60×. Cinco goldens. Aprovado visualmente
+  pelo usuário ("os 3 modos estão ótimos"). Zoom/pan manuais ficam para
+  a Fase 7. **Pendente: 6C-2**
   (overlays de zonas de pressing e opções de passe; trabalho de motor +
   render, desenho próprio).
 
