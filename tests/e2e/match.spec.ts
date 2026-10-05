@@ -18,6 +18,13 @@ type Hooks = {
   fmLatency: { frames: number; sumMs: number; maxMs: number; over50: number };
   fmReferenceSlot(seed: number, tick: number, commands?: number[]): Promise<Uint32Array>;
   fmPerf: { frames: number; labelsMs: number; drawMs: number; verts: number };
+  fmCamera: {
+    mode: number;
+    current: Float32Array;
+    goal: Float32Array;
+    settled: boolean;
+    settleMs: number;
+  };
 };
 
 /** "mm:ss" → seconds. */
@@ -509,6 +516,174 @@ test.describe('Fase 6 (6A): the match runs in the engine worker', () => {
     if (browserName === 'chromium') expect(cost(on) - cost(off)).toBeLessThan(1);
   });
 
+  test('camera: three modes by key and button, blended, settled within a second', async ({
+    page,
+    browserName,
+  }, testInfo) => {
+    await openMatch(page);
+    const button = (id: string) => page.getByTestId(`camera-${id}`);
+    const pressed = async (id: string): Promise<void> => {
+      for (const other of ['full', 'half', 'tactical']) {
+        await expect(button(other)).toHaveAttribute('aria-pressed', String(other === id));
+      }
+    };
+    // One fixed instant: with the match paused the ball stands still, so
+    // every camera has one place to settle.
+    await page.evaluate(() => (globalThis as unknown as Hooks).fmMatch.runTo(6_000));
+    await expect(page.getByTestId('match-status')).toHaveText('pausado', { timeout: 20_000 });
+    await expect(page.getByTestId('match-clock')).toHaveText('09:59');
+    /** The camera once it has landed on its goal, and how long that took. */
+    const settled = async (mode: number): Promise<{ camera: number[]; ms: number }> => {
+      await page.waitForFunction((m) => {
+        const cam = (globalThis as unknown as Hooks).fmCamera;
+        return cam.mode === m && cam.settled;
+      }, mode);
+      return page.evaluate(() => {
+        const cam = (globalThis as unknown as Hooks).fmCamera;
+        return { camera: Array.from(cam.current), ms: cam.settleMs };
+      });
+    };
+    const ball = await page.evaluate(() => {
+      const { reader } = (globalThis as unknown as Hooks).fmMatch;
+      const words = reader.rawSlot(reader.sequence() - 1);
+      const f = new Float32Array(words?.buffer ?? new ArrayBuffer(288));
+      return [f[5] ?? 0, f[6] ?? 0];
+    });
+
+    await pressed('full');
+    // C cycles: full → half → tactical → full.
+    await page.keyboard.press('c');
+    await pressed('half');
+    const half = await settled(1);
+    await page.keyboard.press('c');
+    await pressed('tactical');
+    const tactical = await settled(2);
+    await page.keyboard.press('c');
+    await pressed('full');
+    const full = await settled(0);
+    // 1/2/3 go straight to a mode; so do the buttons.
+    await page.keyboard.press('3');
+    await pressed('tactical');
+    await page.keyboard.press('2');
+    await pressed('half');
+    await button('full').click();
+    await pressed('full');
+    await button('half').click();
+    await pressed('half');
+    expect((await settled(1)).camera).toEqual(half.camera);
+    await page.keyboard.press('1');
+    await settled(0);
+
+    // Where each mode settles: exactly on its goal.
+    expect(full.camera).toEqual([52.5, 34, 1]);
+    expect(tactical.camera[0]).toBe(52.5);
+    expect(tactical.camera[1]).toBe(34);
+    expect(tactical.camera[2]).toBeCloseTo(113 / 125, 6);
+    // Half pitch: zoom 2, the ball inside the dead zone (±11.3 × ±7.6 m)
+    // and the 56.5 × 38 m window inside the full view.
+    const [hx = 0, hy = 0, hz = 0] = half.camera;
+    expect(hz).toBe(2);
+    expect(Math.abs((ball[0] ?? 0) - hx)).toBeLessThanOrEqual(11.3 + 0.5);
+    expect(Math.abs((ball[1] ?? 0) - hy)).toBeLessThanOrEqual(7.6 + 0.5);
+    expect(hx).toBeGreaterThanOrEqual(52.5 - 28.25 - 1e-3);
+    expect(hx).toBeLessThanOrEqual(52.5 + 28.25 + 1e-3);
+    expect(hy).toBeGreaterThanOrEqual(34 - 19 - 1e-3);
+    expect(hy).toBeLessThanOrEqual(34 + 19 + 1e-3);
+    console.log(
+      `[6D camera ${testInfo.project.name}] settle: full→half ${half.ms.toFixed(0)} ms, half→tactical ${tactical.ms.toFixed(0)} ms, tactical→full ${full.ms.toFixed(0)} ms | half at (${hx.toFixed(2)}, ${hy.toFixed(2)}), ball (${(ball[0] ?? 0).toFixed(2)}, ${(ball[1] ?? 0).toFixed(2)})`,
+    );
+    // Blended (not a cut), and on the goal within a second. The blend runs
+    // on real time, so one slow frame at the end adds itself: the limit is
+    // enforced where frames are regular (Chromium); elsewhere it is logged.
+    for (const s of [half, tactical, full]) {
+      expect(s.ms).toBeGreaterThan(100);
+      if (browserName === 'chromium') expect(s.ms).toBeLessThanOrEqual(1_000);
+    }
+
+    // The tactical camera turns labels and formation lines on by itself and
+    // gives them back: the F1/F4 toggles never change.
+    const labels = page.getByTestId('labels');
+    await expect(labels).toHaveCount(0);
+    await page.keyboard.press('3');
+    await settled(2);
+    await expect(labels.locator('.label')).toHaveCount(22);
+    await expect(page.getByTestId('toggle-labels')).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.getByTestId('toggle-formation')).toHaveAttribute('aria-pressed', 'false');
+
+    // Without WebGL (headless Firefox on CI) nothing is drawn: the rest is
+    // about the mesh and what lies over it.
+    if (browserName === 'firefox') return;
+    await expect(page.getByTestId('match-render')).toHaveText('ok');
+    const verts = async (): Promise<number> =>
+      page.evaluate(() => (globalThis as unknown as Hooks).fmPerf.verts);
+    const measure = async (): Promise<Hooks['fmPerf']> => {
+      await page.evaluate(() => {
+        const perf = (globalThis as unknown as Hooks).fmPerf;
+        perf.frames = 0;
+        perf.labelsMs = 0;
+        perf.drawMs = 0;
+      });
+      await page.waitForTimeout(1_500);
+      return page.evaluate(() => ({ ...(globalThis as unknown as Hooks).fmPerf }));
+    };
+    const tacticalVerts = await verts();
+    const tacticalCost = await measure();
+    await page.keyboard.press('1');
+    await settled(0);
+    await expect(labels).toHaveCount(0);
+    await expect.poll(verts).toBe(tacticalVerts - 14 * 6);
+    const fullCost = await measure();
+
+    // Half pitch with F1 on: a label sits right under its player, through
+    // the same view as the mesh (player 1 of the home side, the keeper,
+    // is in the window: the ball is in his half).
+    await page.keyboard.press('2');
+    await settled(1);
+    await expect.poll(verts).toBe(tacticalVerts - 14 * 6);
+    const halfCost = await measure();
+    await page.keyboard.press('F1');
+    await expect(labels.locator('.label')).toHaveCount(22);
+    const placed = await page.evaluate(() => {
+      const hooks = globalThis as unknown as Hooks;
+      const { reader } = hooks.fmMatch;
+      const words = reader.rawSlot(reader.sequence() - 1);
+      const f = new Float32Array(words?.buffer ?? new ArrayBuffer(288));
+      const [cx = 0, cy = 0, zoom = 1] = hooks.fmCamera.current;
+      const canvas = document.querySelector('#match-canvas')?.getBoundingClientRect();
+      const label = document.querySelector('[data-testid="labels"] .label')?.getBoundingClientRect();
+      if (canvas === undefined || label === undefined) return undefined;
+      // The window is 113 / zoom metres wide over the canvas width.
+      const pxPerM = canvas.width / (113 / zoom);
+      const x = canvas.left + canvas.width / 2 + ((f[8] ?? 0) - cx) * pxPerM;
+      // Pitch y grows upwards on screen.
+      const y = canvas.top + canvas.height / 2 - ((f[9] ?? 0) - cy) * pxPerM;
+      return {
+        dx: label.left + label.width / 2 - x,
+        below: label.top - y,
+        disc: 1.15 * pxPerM,
+      };
+    });
+    expect(placed).toBeDefined();
+    if (placed === undefined) return;
+    // To a few pixels: the page draws one sample (17 ms) behind the newest
+    // snapshot read here.
+    expect(Math.abs(placed.dx)).toBeLessThan(6);
+    // Its top edge is just under the disc (radius 1.15 m at this zoom).
+    expect(placed.below).toBeGreaterThan(placed.disc - 4);
+    expect(placed.below).toBeLessThan(placed.disc + 10);
+
+    const cost = (p: Hooks['fmPerf']): number => (p.drawMs + p.labelsMs) / p.frames;
+    console.log(
+      `[6D frame cost ${testInfo.project.name}] full ${cost(fullCost).toFixed(3)} ms | half ${cost(halfCost).toFixed(3)} ms (+${(cost(halfCost) - cost(fullCost)).toFixed(3)}) | tactical ${cost(tacticalCost).toFixed(3)} ms (+${(cost(tacticalCost) - cost(fullCost)).toFixed(3)}, labels and formation lines on)`,
+    );
+    // SPEC 6D: under 1 ms a frame over the full pitch, in Chromium (WebKit
+    // on CI only reports: its frame cost swings by more than that).
+    if (browserName === 'chromium') {
+      expect(cost(halfCost) - cost(fullCost)).toBeLessThan(1);
+      expect(cost(tacticalCost) - cost(fullCost)).toBeLessThan(1);
+    }
+  });
+
   test('golden: the match at a fixed tick (pixels, Chromium only)', async ({ page, browserName }) => {
     // Pixel goldens only where rendering is deterministic: the software
     // renderer of headless Chromium (docs/SPEC.md, Fase 6). Firefox and
@@ -553,6 +728,26 @@ test.describe('Fase 6 (6A): the match runs in the engine worker', () => {
       .poll(() => page.evaluate(() => (globalThis as unknown as Hooks).fmPerf.verts))
       .toBe(plain + 17 * 6 + 14 * 6);
     await expect(page).toHaveScreenshot('match-overlays.png', { maxDiffPixelRatio: 0.01 });
+
+    // The same instant through the other two cameras, each once it has
+    // landed exactly on its goal (the match is paused: the ball stands).
+    await page.keyboard.press('F3');
+    await page.keyboard.press('F4');
+    for (const [key, mode, name] of [
+      ['2', 1, 'match-camera-half.png'],
+      ['3', 2, 'match-camera-tactical.png'],
+    ] as const) {
+      await page.keyboard.press(key);
+      await page.waitForFunction((m) => {
+        const cam = (globalThis as unknown as Hooks).fmCamera;
+        return cam.mode === m && cam.settled;
+      }, mode);
+      // One more frame, so that what is on screen is the settled camera.
+      await page.evaluate(
+        () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+      );
+      await expect(page).toHaveScreenshot(name, { maxDiffPixelRatio: 0.01 });
+    }
   });
 
   test('tick-to-draw latency stays under 50 ms at 1× (95% of the frames)', async ({ page }, testInfo) => {

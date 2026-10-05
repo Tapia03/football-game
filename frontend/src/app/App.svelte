@@ -1,5 +1,7 @@
 <script lang="ts">
   import {
+    cameraStep,
+    cameraTarget,
     fitCanvas,
     loadEngineInfo,
     openCanvas,
@@ -88,15 +90,45 @@
   // drawn by the mesh; the bits are `OVERLAY_*` of the WASM side.
   const OVERLAY_OFFSIDE = 1;
   const OVERLAY_FORMATION = 2;
-  // Camera (6D): `[centre x, centre y, zoom]`, the full pitch for now.
-  const camera = new Float32Array([52.5, 34, 1]);
   let showOffside = $state(false);
   let showFormation = $state(false);
+  // Camera (6D): presentation only, like the toggles. `camera` is where it
+  // is now and `cameraGoal` where the mode wants it, both `[centre x,
+  // centre y, zoom]`; every frame it blends towards the goal.
+  const CAMERAS = [
+    { id: 'full', label: 'Campo', title: 'Campo inteiro (1)' },
+    { id: 'half', label: 'Bola', title: 'Meio campo, segue a bola (2)' },
+    { id: 'tactical', label: 'Tática', title: 'Tática: rótulos e linhas de formação (3)' },
+  ];
+  const TACTICAL = 2;
+  let cameraMode = $state(0);
+  const camera = new Float32Array([52.5, 34, 1]);
+  const cameraGoal = new Float32Array([52.5, 34, 1]);
+  /** Test hook: the camera and how long the last switch took to settle. */
+  const cam = { mode: 0, current: camera, goal: cameraGoal, settled: true, switchedAt: 0, settleMs: 0 };
+  (globalThis as { fmCamera?: typeof cam }).fmCamera = cam;
+  function setCamera(mode: number): void {
+    if (mode === cameraMode) return;
+    cameraMode = mode;
+    cam.mode = mode;
+    cam.settled = false;
+    cam.switchedAt = performance.now();
+  }
+  // The tactical camera shows labels and formation lines while it is on,
+  // without touching the F1/F4 toggles.
+  const labelsOn = $derived(showLabels || cameraMode === TACTICAL);
+  const formationOn = $derived(showFormation || cameraMode === TACTICAL);
   let labelTexts: string[] = $state([]);
   let labelEls: (HTMLSpanElement | undefined)[] = $state([]);
 
   $effect(() => {
     const onKey = (e: KeyboardEvent): void => {
+      // Letters and digits belong to a focused control (a select types ahead).
+      const typing = e.target instanceof HTMLSelectElement || e.target instanceof HTMLInputElement;
+      if (!typing && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        if (e.key === 'c' || e.key === 'C') return setCamera((cameraMode + 1) % CAMERAS.length);
+        if (e.key === '1' || e.key === '2' || e.key === '3') return setCamera(Number(e.key) - 1);
+      }
       if (e.key === 'F1') showLabels = !showLabels;
       else if (e.key === 'F2') showVectors = !showVectors;
       else if (e.key === 'F3') showOffside = !showOffside;
@@ -132,9 +164,20 @@
     (globalThis as { fmPerf?: typeof perf }).fmPerf = perf;
     let view: Float32Array = new Float32Array(4);
     let viewFor = '';
+    /** Real time of the last camera step (0: none yet, the camera cuts). */
+    let cameraAt = 0;
+    const moveCamera = (): void => {
+      const now = performance.now();
+      cameraGoal.set(cameraTarget(cameraMode, frame.ballX, frame.ballY, cameraGoal[0] ?? 0, cameraGoal[1] ?? 0));
+      camera.set(cameraAt === 0 ? cameraGoal : cameraStep(camera, cameraGoal, now - cameraAt));
+      cameraAt = now;
+      const there = camera[0] === cameraGoal[0] && camera[1] === cameraGoal[1] && camera[2] === cameraGoal[2];
+      if (there && !cam.settled) cam.settleMs = now - cam.switchedAt;
+      cam.settled = there;
+    };
     const placeLabels = (): void => {
       if (el === undefined) return;
-      const key = `${el.width}x${el.height}`;
+      const key = `${el.width}x${el.height}:${camera[0]},${camera[1]},${camera[2]}`;
       if (key !== viewFor) {
         view = pitchView(camera, el.width, el.height);
         viewFor = key;
@@ -142,6 +185,8 @@
       const [cx = 0, cy = 0, sx = 0, sy = 0] = view;
       const w = el.clientWidth;
       const h = el.clientHeight;
+      // Under the player's disc (1.15 m), whatever the zoom.
+      const below = 1.15 * Math.abs(sy) * 0.5 * h + 3;
       for (let i = 0; i < labelEls.length; i += 1) {
         const label = labelEls[i];
         if (label === undefined) continue;
@@ -151,9 +196,9 @@
         }
         // Clip space → CSS pixels of the canvas box (y grows downwards).
         const x = (((frame.xy[2 * i] ?? 0) - cx) * sx + 1) * 0.5 * w;
-        const y = (1 - ((frame.xy[2 * i + 1] ?? 0) - cy) * sy) * 0.5 * h;
+        const y = (1 - ((frame.xy[2 * i + 1] ?? 0) - cy) * sy) * 0.5 * h + below;
         label.style.display = '';
-        label.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, 80%)`;
+        label.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, 0)`;
       }
     };
     (globalThis as { fmLatency?: typeof latency }).fmLatency = latency;
@@ -192,10 +237,13 @@
         tactics[1] = frame.awayTactics;
         copyStats(frame.homeStats, stats.home);
         copyStats(frame.awayStats, stats.away);
+        const c0 = performance.now();
+        moveCamera();
+        const cameraMs = performance.now() - c0;
         if (canvas !== undefined) {
           try {
             const t0 = performance.now();
-            if (showLabels) placeLabels();
+            if (labelsOn) placeLabels();
             const t1 = performance.now();
             perf.verts = canvas.draw(
               frame.xy,
@@ -205,13 +253,13 @@
               frame.sentOff,
               frame.homePhase | (frame.awayPhase << 8) | (frame.half << 16),
               showVectors ? interpolator.velocity : NO_VELOCITIES,
-              (showOffside ? OVERLAY_OFFSIDE : 0) | (showFormation ? OVERLAY_FORMATION : 0),
+              (showOffside ? OVERLAY_OFFSIDE : 0) | (formationOn ? OVERLAY_FORMATION : 0),
               roster,
               camera,
             );
             perf.frames += 1;
             perf.labelsMs += t1 - t0;
-            perf.drawMs += performance.now() - t1;
+            perf.drawMs += performance.now() - t1 + cameraMs;
             render = 'ok';
           } catch (err: unknown) {
             render = `FALHOU: ${err instanceof Error ? err.message : String(err)}`;
@@ -310,7 +358,7 @@
   <div class="stage">
     <div class="pitch">
       <canvas id="match-canvas" bind:this={canvasEl}></canvas>
-      {#if showLabels}
+      {#if labelsOn}
         <div class="labels" data-testid="labels">
           {#each labelTexts as text, i (i)}
             <span class="label" bind:this={labelEls[i]}>{text}</span>
@@ -430,6 +478,17 @@
         title="Linhas de formação (F4)"
         onclick={() => (showFormation = !showFormation)}>F4 formação</button
       >
+    </span>
+    <span class="speeds" role="group" aria-label="Câmera">
+      {#each CAMERAS as c, i (c.id)}
+        <button
+          data-testid="camera-{c.id}"
+          class:active={cameraMode === i}
+          aria-pressed={cameraMode === i}
+          title={c.title}
+          onclick={() => setCamera(i)}>{c.label}</button
+        >
+      {/each}
     </span>
     <span class="seed">seed {seed}</span>
   </footer>

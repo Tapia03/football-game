@@ -94,8 +94,11 @@ export function startMatch(seed: number, speed: number): Promise<MatchHandle> {
   };
   return new Promise((resolve, reject) => {
     worker.addEventListener('message', (e: MessageEvent<EngineEvent>) => {
-      if (e.data.type === 'ready') resolve({ ...handle, roster: e.data.roster });
-      else reject(new Error(e.data.message));
+      if (e.data.type === 'ready') {
+        // The page's own module too: the camera functions run on this side.
+        const { roster } = e.data;
+        ensureInit().then(() => resolve({ ...handle, roster }), reject);
+      } else reject(new Error(e.data.message));
     });
     worker.addEventListener('error', (e) => reject(new Error(e.message)));
     send({ type: 'start', seed, speed, buffer });
@@ -108,7 +111,34 @@ export type { Frame } from './sab';
 // The canvas side (main thread): WebGL2 objects only. Every frame drawn is
 // read from the snapshot ring and handed in — no match state lives here.
 
-import { MatchCanvas, pitch_view, reference_slot, reference_slot_with } from './pkg/fm_wasm.js';
+import {
+  MatchCanvas,
+  camera_step,
+  camera_target,
+  pitch_view,
+  reference_slot,
+  reference_slot_with,
+} from './pkg/fm_wasm.js';
+
+/**
+ * Where the camera of `mode` (0 full pitch, 1 half pitch following the
+ * ball, 2 tactical) wants to be, as `[centre x, centre y, zoom]`, given the
+ * centre it wanted last frame. Pure (call after the canvas is open).
+ */
+export function cameraTarget(
+  mode: number,
+  ballX: number,
+  ballY: number,
+  previousX: number,
+  previousY: number,
+): Float32Array {
+  return camera_target(mode, ballX, ballY, previousX, previousY);
+}
+
+/** The camera `dtMs` of real time later on its way from `current` to `target`. */
+export function cameraStep(current: Float32Array, target: Float32Array, dtMs: number): Float32Array {
+  return camera_step(current, target, dtMs);
+}
 
 /**
  * How the pitch is fitted into a `width` × `height` canvas, as
