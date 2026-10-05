@@ -3,7 +3,7 @@
 //! `fm-wasm/tests/web.rs`.
 
 use fm_match::demo::demo_match;
-use fm_match::{EventKind, LodLevel, MatchEngine, MatchSnapshot};
+use fm_match::{EventKind, LodLevel, MatchEngine, MatchSnapshot, Mentality, Role, Side, Tactics};
 
 fn play(seed: u64, lod: LodLevel) -> (MatchEngine, usize) {
     let (db, setup) = demo_match(seed);
@@ -264,4 +264,73 @@ fn restarts_are_not_lost_at_once() {
     println!("restarts taken {taken}, lost out of play within 5 ticks {lost_at_once}");
     assert!(taken > 1_000, "restarts are taken");
     assert_eq!(lost_at_once, 0, "restarts lost straight out of play");
+}
+
+/// Mean depth of `side`'s ten outfielders toward the goal it attacks (m).
+fn block_depth(engine: &MatchEngine, side: Side) -> f32 {
+    let state = engine.state();
+    let goal = state.attacking(side).opposite();
+    let now = state.now_ms();
+    let (sum, n) = state
+        .players
+        .iter()
+        .filter(|p| p.side == side && p.active() && p.role != Role::Goalkeeper)
+        .fold((0.0, 0.0), |(sum, n), p| {
+            (
+                sum + (p.pos(now).x - goal.goal_line_x()) * -goal.direction(),
+                n + 1.0,
+            )
+        });
+    sum / n
+}
+
+/// Acceptance criterion 3 (spec Section 9, item 19; Fase 6, 6C): switching
+/// a team from Defensive to Attacking in the middle of a match moves its
+/// centre of mass up by at least 5 m within 5 s. Measured against the same
+/// match left on Defensive, so that the ball moving the block does not
+/// count: the two only differ by the instruction.
+#[test]
+fn mentality_moves_the_block_five_metres_in_five_seconds() {
+    let tactics = |mentality| Tactics {
+        mentality,
+        ..Tactics::default()
+    };
+    let mut gains = Vec::new();
+    for seed in [3, 7, 11] {
+        for side in [Side::Home, Side::Away] {
+            for switch_at in [1_500, 9_000, 20_000, 33_000] {
+                let (db, setup) = demo_match(seed);
+                let mut control = MatchEngine::new(&setup, &db);
+                control.set_tactics(side, tactics(Mentality::Defensive));
+                for _ in 0..switch_at {
+                    control.tick_logic();
+                }
+                let (db, setup) = demo_match(seed);
+                let mut switched = MatchEngine::new(&setup, &db);
+                switched.set_tactics(side, tactics(Mentality::Defensive));
+                for _ in 0..switch_at {
+                    switched.tick_logic();
+                }
+                assert_eq!(switched.state(), control.state(), "same match so far");
+                switched.set_tactics(side, tactics(Mentality::Attacking));
+                let mut by_second = [0.0; 5];
+                for gain in &mut by_second {
+                    for _ in 0..10 {
+                        control.tick_logic();
+                        switched.tick_logic();
+                    }
+                    *gain = block_depth(&switched, side) - block_depth(&control, side);
+                }
+                gains.push(by_second[4]);
+            }
+        }
+    }
+    gains.sort_by(f32::total_cmp);
+    println!(
+        "after 5 s: min {:.1} median {:.1} max {:.1}",
+        gains[0],
+        gains[gains.len() / 2],
+        gains[gains.len() - 1]
+    );
+    assert!(gains[0] >= 5.0, "least gain after 5 s: {:.1} m", gains[0]);
 }
