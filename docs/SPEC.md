@@ -428,6 +428,21 @@ Uma fase por vez, na branch `fase-N`. Ao final de cada uma:
 
 Se algum teste falhar: PARAR e reportar o log completo com hipóteses.
 
+**Renumeração das fases depois da 6 (2026-10-05).** A ordem geral foi
+redefinida pelo usuário (motivo e detalhes no STATE). Os títulos abaixo
+da Fase 6 guardam a numeração antiga; vale esta:
+
+| Nova | Conteúdo | Títulos antigos abaixo |
+|---|---|---|
+| **Fase 7** | MVP de gerenciamento: 7A persistência local (SQLite WASM + OPFS), 7B mundo mínimo e calendário, 7C telas básicas, 7D integração com o 2D | parte da antiga "Fase 12 — World Simulator" |
+| **Fase 8** | Bola longa + contraparte defensiva (motor) | — (está no STATE) |
+| **Fase 9** | Resto do gerenciamento: mercado, contratos, finanças, ligas múltiplas, copas; UI da partida | antigas "Fase 7 — UI + Overlays Táticos" e "Fase 11 — Motor Econômico" |
+| **Fase 10** | Polimento e comunidade: packs, auth, sync | antigas "Fase 8 — Auth" e "Fase 9 — Sync" |
+
+As antigas "Fase 10 — PWA" e "Fase 13 — Demo + Deploy" ainda não têm
+lugar na ordem nova. O desenho de cada sub-fase da Fase 7 entra aqui
+quando for aprovado.
+
 ## FASE 0 — Bootstrap ✅
 Workspace, Vite + Svelte 5 + TS strict, `wasm-pack`, Playwright nos 3
 navegadores, página "Hello from Rust (libm: π)", tabela golden de libm,

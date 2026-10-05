@@ -4,19 +4,56 @@ Resumo de uma tela que sobrevive a compactações de sessão. A fonte de verdade
 de arquitetura e regras é o [`docs/SPEC.md`](SPEC.md); este arquivo só diz
 *onde estamos*. Atualizado em **2026-10-05** (Fase 6 completa — 6A, 6B, 6C, 6D — em PR para a `main`).
 
-## Ordem geral (decidida em 2026-10-05)
-**Fase 6 → "Bola longa + contraparte defensiva" → Fase 7.** O 6C-2 vem
-depois da fase de motor. Motivos:
-- O motor com 4,4 gols por partida (real ~2,7) é visivelmente errado;
-  construir a UI da Fase 7 em cima disso é chão ruim.
-- A UI da Fase 7 mostra o que essa fase muda: a linha de impedimento do
-  F3 passa a ter consequência quando o impedimento é apitado, e o painel
-  de pressing ganha outro peso quando a bola longa pune linha alta.
-- Os números de calibração vão se mexer (botes, faltas, posse, extremos
-  do pressing): telas de tática e estatísticas feitas antes seriam
-  ajustadas duas vezes.
-- O 6C-2 ("opções de passe", "zonas de pressing") expõe a avaliação de
-  passes do motor, justamente o que o patch do passe pelo alto altera.
+## Ordem geral (redefinida pelo usuário em 2026-10-05)
+Fases 0–6 fechadas. A ordem nova, que **substitui** a anterior ("Bola
+longa" antes da UI):
+
+1. **Fase 7 — MVP de gerenciamento** (próxima; começa depois do merge do
+   PR da Fase 6).
+2. **Fase 8 — Bola longa + contraparte defensiva** (pausada até a Fase 7
+   fechar).
+3. **Fase 9 — Resto do gerenciamento:** mercado, contratos, finanças,
+   ligas múltiplas, copas — e o que o SPEC chamava de "Fase 7" (UI da
+   partida, botão simular, painel tático só do clube do usuário, zoom e
+   pan).
+4. **Fase 10 — Polimento e comunidade:** packs, auth, sync.
+
+**Motivo:** depois das Fases 0–6 o projeto é um motor de partida com um
+spike visual, não um jogo de gerenciamento jogável. O MVP vem antes de
+refinar o motor para (1) provar que é um jogo de gerenciamento, (2)
+descobrir problemas estruturais — persistência, custo de simulação em
+background, UX de avançar dia, comunicação entre Workers — enquanto o
+código é pequeno, e (3) ter feedback visual do motor no contexto real,
+para orientar a próxima rodada de refinamento.
+
+**Fase 7 em quatro sub-fases, um PR cada, CI verde antes da próxima:**
+- **7A — Persistência local:** SQLite em WASM num Web Worker dedicado,
+  OPFS com fallback para IndexedDB, schema mínimo (players, clubs,
+  competitions, matches, saves, tactics), escrita atômica, export/import
+  do save, `navigator.storage.persist()`, protocolo entre Workers.
+  Desenho antes do código.
+- **7B — Mundo mínimo e calendário:** bootstrap determinístico (1 liga,
+  20 clubes, ~500 jogadores sintéticos — sem a base FM real), round-robin
+  de 38 rodadas / 380 partidas, `WorldSimulator` num Worker com LOD
+  Abstract para todas as partidas de background (o `MatchEngine` que já
+  existe), save a cada dia, avançar dia com barra de progresso.
+- **7C — Telas básicas:** meus saves, elenco, tática (formação e papel
+  por slot), calendário, classificação, botão "Avançar dia" sempre
+  visível. Svelte.
+- **7D — Integração com o 2D:** "Assistir partida" abre o render da Fase
+  6 em LOD Full; ao fim volta ao calendário. Nenhum motor novo.
+
+**Regras da Fase 7:** uma pergunta por vez; **não mexer no motor** (se o
+MVP precisar, PARAR e trazer a proposta); determinismo bit a bit e
+`test_cross_lod_consistency` continuam bloqueantes; bench no orçamento.
+
+**Fora do MVP (Fase 9 ou depois):** base FM real; mercado, contratos,
+finanças, diretoria, imprensa, base, seleções; ligas múltiplas, copas,
+continentais; overlays táticos avançados no 2D (inclui o 6C-2); auth e
+sync; modding / packs.
+
+**Nome:** o jogo ainda não tem nome; nos documentos, "o jogo" ou "o
+projeto".
 
 Sem lugar na ordem ainda: (c2) e (d) da Fase 5 (das quais depende o
 6C-bis), fadiga, IA tática.
@@ -66,10 +103,10 @@ TS, malha como função WASM pura. Latência tick → desenho a 1×: média
   Velocidades 1×/2×/5×/10×/30×/60×. Cinco goldens. Aprovado visualmente
   pelo usuário ("os 3 modos estão ótimos"). Zoom/pan manuais ficam para
   a Fase 7.
-- **6C-2: pendente, depois da fase "Bola longa"** (overlays de zonas de
+- **6C-2: pendente, depois da Fase 8 ("Bola longa")** (overlays de zonas de
   pressing e opções de passe; trabalho de motor + render, desenho e PR
   próprios). Não entra no PR da Fase 6.
-- **Fase 7, já registrado:** botão **"Simular partida"** (LOD Abstract,
+- **Fase 9 (a antiga "Fase 7" do SPEC), já registrado:** botão **"Simular partida"** (LOD Abstract,
   tela de resultado com placar, estatísticas e eventos, botão voltar). A
   infraestrutura existe; o custo é UI.
 
@@ -156,17 +193,17 @@ fechar (c1) no motor do 5D-2 (`f17b1d9`); PR #6 mergeado em `6ae001a`.
 - **Por que não foi aplicado:** falta a contraparte defensiva. A bola longa
   por cima da defesa passa a chegar e nada a contém.
 
-### Próxima fase: "Bola longa + contraparte defensiva" (depois da Fase 6, antes da Fase 7)
-- **Branch:** nasce da `main` depois do merge da Fase 6.
+### Fase 8: "Bola longa + contraparte defensiva" (pausada até a Fase 7 fechar)
+- **Branch:** nasce da `main` depois do merge da Fase 7.
 - **Quatro componentes, time-box por componente (não escopo fechado):**
   patch do passe pelo alto (pronto; provavelmente o primeiro, para medir
   o efeito puro), goleiro saindo do gol, impedimento apitado, marcação
   de corredores redesenhada.
-- **Para liberar a Fase 7:** gols ≤ 3,5 por partida **e** os quatro
+- **Para fechar a fase:** gols ≤ 3,5 por partida **e** os quatro
   componentes no lugar. Se a marcação de corredores falhar de novo, o
-  número não libera sozinho. Se passar de 3,5: PARAR e reescopar.
-- **3,5 é "aceitável", não "bom"** (real ~2,7): se fechar em ≤ 3,5 e a
-  Fase 7 abrir, a diferença fica como dívida no backlog de refinamento.
+  número não fecha sozinho. Se passar de 3,5: PARAR e reescopar.
+- **3,5 é "aceitável", não "bom"** (real ~2,7): se fechar em ≤ 3,5, a
+  diferença fica como dívida no backlog de refinamento.
 - **Pré-requisito:** aplicar o patch acima.
 - **Escopo:** (1) goleiro saindo do gol (interceptar, cortar cruzamento,
   líbero) — o antigo passo 2.5; (2) impedimento apitado, com tiro livre;
