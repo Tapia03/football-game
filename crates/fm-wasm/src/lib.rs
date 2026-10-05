@@ -3,6 +3,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod camera;
 pub mod mesh;
 pub mod sab;
 
@@ -243,7 +244,9 @@ impl EngineHost {
 /// word (home | away << 8 | half << 16); `velocities` is vx0, vy0, … in m/s
 /// to draw velocity arrows, or empty for none; `overlays` is a bit set
 /// (`OVERLAY_OFFSIDE`, `OVERLAY_FORMATION`); `roster` is the role code of
-/// each player (`EngineHost::roster`), needed by the formation lines.
+/// each player (`EngineHost::roster`), needed by the formation lines;
+/// `camera` is `[centre x, centre y, zoom]` (`camera_step`), anything else
+/// being the full pitch.
 #[wasm_bindgen]
 #[must_use]
 #[allow(clippy::too_many_arguments)] // a flat frame across the wasm boundary
@@ -257,6 +260,7 @@ pub fn frame_mesh_vertices(
     velocities: &[f32],
     overlays: u32,
     roster: &[u8],
+    camera: &[f32],
     width_px: u32,
     height_px: u32,
 ) -> Vec<f32> {
@@ -270,7 +274,48 @@ pub fn frame_mesh_vertices(
             .as_ref()
             .filter(|_| overlays & OVERLAY_FORMATION != 0),
     };
-    mesh::frame_mesh(&frame, &overlays, width_px, height_px).verts
+    mesh::frame_mesh_through(&frame, &overlays, camera_of(camera), width_px, height_px).verts
+}
+
+/// The camera in a `[centre x, centre y, zoom]` slice; the full pitch when
+/// the slice is not one.
+fn camera_of(parts: &[f32]) -> camera::Camera {
+    match parts {
+        &[x, y, zoom] => camera::Camera::from_parts(x, y, zoom),
+        _ => camera::Camera::FULL,
+    }
+}
+
+/// Where the camera of `mode` (0 full pitch, 1 half pitch following the
+/// ball, 2 tactical) wants to be, as `[centre x, centre y, zoom]`, for the
+/// ball at `(ball_x, ball_y)` and the centre it wanted last frame. Pure.
+#[wasm_bindgen]
+#[must_use]
+pub fn camera_target(
+    mode: u32,
+    ball_x: f32,
+    ball_y: f32,
+    previous_x: f32,
+    previous_y: f32,
+) -> Vec<f32> {
+    camera::target(
+        camera::Mode::from_code(mode),
+        fm_core::Vec2::new(ball_x, ball_y),
+        fm_core::Vec2::new(previous_x, previous_y),
+    )
+    .parts()
+    .to_vec()
+}
+
+/// The camera `dt_ms` of real time later on its way from `current` to
+/// `target` (both `[centre x, centre y, zoom]`): an exponential blend that
+/// lands exactly on the target. Pure.
+#[wasm_bindgen]
+#[must_use]
+pub fn camera_step(current: &[f32], target: &[f32], dt_ms: f32) -> Vec<f32> {
+    camera::step(camera_of(current), camera_of(target), dt_ms)
+        .parts()
+        .to_vec()
 }
 
 /// Bit of `overlays` that draws the offside line (F3).
@@ -278,14 +323,17 @@ pub const OVERLAY_OFFSIDE: u32 = 1;
 /// Bit of `overlays` that draws the formation lines (F4).
 pub const OVERLAY_FORMATION: u32 = 2;
 
-/// How the pitch is fitted into a `width_px` × `height_px` canvas, as
-/// `[centre x, centre y, scale x, scale y]`: pitch point `p` is drawn at
-/// clip `((p.x − cx) · sx, (p.y − cy) · sy)`. Pure; the same view as the
-/// mesh, for labels laid over the canvas.
+/// How `camera` (`[centre x, centre y, zoom]`) maps the pitch into a
+/// `width_px` × `height_px` canvas, as `[centre x, centre y, scale x,
+/// scale y]`: pitch point `p` is drawn at clip `((p.x − cx) · sx,
+/// (p.y − cy) · sy)`. Pure; the same view as the mesh, for labels laid
+/// over the canvas.
 #[wasm_bindgen]
 #[must_use]
-pub fn pitch_view(width_px: u32, height_px: u32) -> Vec<f32> {
-    mesh::pitch_view(width_px, height_px).params().to_vec()
+pub fn pitch_view(camera: &[f32], width_px: u32, height_px: u32) -> Vec<f32> {
+    camera::view(camera_of(camera), width_px, height_px)
+        .params()
+        .to_vec()
 }
 
 /// One ring slot as a fresh engine produces it for demo match `seed` after
@@ -344,10 +392,12 @@ impl MatchCanvas {
         velocities: &[f32],
         overlays: u32,
         roster: &[u8],
+        camera: &[f32],
     ) -> Result<u32, String> {
         let (w, h) = self.renderer.size();
         let verts = frame_mesh_vertices(
-            xy, ball_x, ball_y, ball_z, sent_off, phases, velocities, overlays, roster, w, h,
+            xy, ball_x, ball_y, ball_z, sent_off, phases, velocities, overlays, roster, camera, w,
+            h,
         );
         self.renderer.draw(mesh::BACKGROUND, &verts)?;
         u32::try_from(verts.len() / 6).map_err(|_| "mesh too large".into())

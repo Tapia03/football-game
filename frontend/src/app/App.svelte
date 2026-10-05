@@ -88,6 +88,8 @@
   // drawn by the mesh; the bits are `OVERLAY_*` of the WASM side.
   const OVERLAY_OFFSIDE = 1;
   const OVERLAY_FORMATION = 2;
+  // Camera (6D): `[centre x, centre y, zoom]`, the full pitch for now.
+  const camera = new Float32Array([52.5, 34, 1]);
   let showOffside = $state(false);
   let showFormation = $state(false);
   let labelTexts: string[] = $state([]);
@@ -134,7 +136,7 @@
       if (el === undefined) return;
       const key = `${el.width}x${el.height}`;
       if (key !== viewFor) {
-        view = pitchView(el.width, el.height);
+        view = pitchView(camera, el.width, el.height);
         viewFor = key;
       }
       const [cx = 0, cy = 0, sx = 0, sy = 0] = view;
@@ -205,6 +207,7 @@
               showVectors ? interpolator.velocity : NO_VELOCITIES,
               (showOffside ? OVERLAY_OFFSIDE : 0) | (showFormation ? OVERLAY_FORMATION : 0),
               roster,
+              camera,
             );
             perf.frames += 1;
             perf.labelsMs += t1 - t0;

@@ -2441,11 +2441,16 @@ recalibrar contra a coluna "Real". As constantes estão em `AnchorTuning`,
     e zoom desejados (zona morta e limites). `draw` e `pitch_view`
     recebem centro x, centro y e zoom.
   - **Troca de modo: blend, não corte seco.** Suavização exponencial em
-    tempo real, constante de ~150 ms, independente da taxa de quadros; a
-    mesma suavização segue a bola no HalfPitch. A menos de 1 cm e 0,1%
+    tempo real, constante de **100 ms**, independente da taxa de quadros;
+    a mesma suavização segue a bola no HalfPitch. A menos de 1 cm e 0,1%
     de zoom do alvo, salta para o alvo exato (quadro final reproduzível
     com a partida pausada). Corte seco só no primeiro quadro. **Assentar
     em ≤ 1 s, senão parar.**
+    - **Constante medida no 6D.2 (60 fps):** com 100 ms, 95% do caminho
+      em 300 ms e alvo exato em 817 ms na troca mais longa (FullPitch →
+      HalfPitch num canto). Os ~150 ms do desenho dariam 450 ms e
+      **1.233 ms** — fora da regra. O "≤ 1 s" é sobre o golden (assentar
+      exato, captura reproduzível), não sobre a sensação (os 95%).
   - **Zoom e pan manuais: fora do 6D** (sem critério de aceite; exigem
     ponteiro, roda e toque). Candidato à Fase 7.
   - **Input:** `C` cicla FullPitch → HalfPitch → Tactical; `1`/`2`/`3`

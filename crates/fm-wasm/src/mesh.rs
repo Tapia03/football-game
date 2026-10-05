@@ -8,6 +8,7 @@ use fm_core::Vec2;
 use fm_match::Side;
 use fm_render::shapes::{tessellate, Mesh, Rgba, Shape, View};
 
+use crate::camera::{self, Camera};
 use crate::sab::Frame;
 
 /// Clear colour behind the pitch.
@@ -93,18 +94,11 @@ fn pitch_shapes(out: &mut Vec<Shape>) {
     }
 }
 
-/// How the pitch is fitted into a `width_px` × `height_px` canvas: the one
-/// view both the mesh and anything laid over the canvas use.
+/// How the whole pitch is fitted into a `width_px` × `height_px` canvas:
+/// the view of the full camera (`camera::view`).
 #[must_use]
 pub fn pitch_view(width_px: u32, height_px: u32) -> View {
-    #[allow(clippy::cast_precision_loss)] // canvas sizes ≪ 2^24
-    let (w, h) = (width_px.max(1) as f32, height_px.max(1) as f32);
-    View::fit(
-        pitch::CENTRE,
-        Vec2::new(pitch::LENGTH + 8.0, pitch::WIDTH + 8.0),
-        w,
-        h,
-    )
+    camera::view(Camera::FULL, width_px, height_px)
 }
 
 /// A velocity arrow is this many seconds of travel long (a sprint at 8 m/s
@@ -286,13 +280,27 @@ pub fn roster_from_parts(roster: &[u8]) -> Option<[u8; 22]> {
     roster.try_into().ok()
 }
 
+/// The whole frame through the full camera (see `frame_mesh_through`).
+#[must_use]
+pub fn frame_mesh(frame: &Frame, overlays: &Overlays, width_px: u32, height_px: u32) -> Mesh {
+    frame_mesh_through(frame, overlays, Camera::FULL, width_px, height_px)
+}
+
 /// The whole frame (pitch, players, ball) for a `width_px` × `height_px`
-/// canvas, with the `overlays` asked for. Players sent off are not drawn.
+/// canvas, with the `overlays` asked for, seen through `camera`. Players
+/// sent off are not drawn; what falls outside the window is left to the
+/// GPU to clip.
 ///
 /// # Panics
 /// Never: shirt numbers are 1..=11.
 #[must_use]
-pub fn frame_mesh(frame: &Frame, overlays: &Overlays, width_px: u32, height_px: u32) -> Mesh {
+pub fn frame_mesh_through(
+    frame: &Frame,
+    overlays: &Overlays,
+    camera: Camera,
+    width_px: u32,
+    height_px: u32,
+) -> Mesh {
     let mut shapes = Vec::with_capacity(250);
     pitch_shapes(&mut shapes);
     // Overlays first, so the players sit on top of them.
@@ -361,7 +369,7 @@ pub fn frame_mesh(frame: &Frame, overlays: &Overlays, width_px: u32, height_px: 
         radius: 0.45 + lift,
         color: Rgba(1.0, 1.0, 1.0, 1.0),
     });
-    tessellate(&shapes, &pitch_view(width_px, height_px))
+    tessellate(&shapes, &camera::view(camera, width_px, height_px))
 }
 
 /// The 22 velocities from what the main thread holds: `v` is vx0, vy0, vx1,
@@ -726,6 +734,51 @@ mod tests {
                 assert_eq!(sector(role_code(slot.role)), expected, "{:?}", slot.role);
             }
         }
+    }
+
+    /// 6D: the camera only changes where things land. Same shapes, same
+    /// vertex count; zoomed in on a point, that point is the middle of the
+    /// canvas and the geometry is twice as far apart.
+    #[test]
+    fn camera_moves_the_mesh_without_changing_it() {
+        let frame = frame_at(6_000);
+        let full = frame_mesh(&frame, &PLAIN, 1280, 820);
+        assert_eq!(
+            frame_mesh_through(&frame, &PLAIN, Camera::FULL, 1280, 820).verts,
+            full.verts,
+            "the full camera is the old mesh"
+        );
+        let at = frame.ball.xy();
+        let zoomed = frame_mesh_through(
+            &frame,
+            &PLAIN,
+            Camera {
+                centre: at,
+                zoom: 2.0,
+            },
+            1280,
+            820,
+        );
+        assert_eq!(zoomed.vertex_count(), full.vertex_count());
+        // Clip position of a pitch point `p` under each camera.
+        let clip = |camera: Camera, p: Vec2| {
+            let [cx, cy, sx, sy] = camera::view(camera, 1280, 820).params();
+            Vec2::new((p.x - cx) * sx, (p.y - cy) * sy)
+        };
+        let half = Camera {
+            centre: at,
+            zoom: 2.0,
+        };
+        assert_eq!(clip(half, at), Vec2::ZERO);
+        let (a, b) = (frame.players[3], frame.players[14]);
+        let ratio = clip(half, a).distance(clip(half, b))
+            / clip(Camera::FULL, a).distance(clip(Camera::FULL, b));
+        assert!((ratio - 2.0).abs() < 1e-4, "{ratio}");
+        // Zoomed in, part of the pitch is outside the canvas.
+        assert!(zoomed
+            .verts
+            .chunks(6)
+            .any(|v| v[0].abs() > 1.0 || v[1].abs() > 1.0));
     }
 
     #[test]

@@ -367,6 +367,21 @@ a própria referência antiga. Então:
 2. push que **remove** as referências afetadas (`git rm`) — vermelho, e o
    artefato `golden-chromium` traz as novas;
 3. push com as novas — verde.
+**Câmera (6D), constante da suavização — não mexer antes de ver em ação:**
+- Está em 100 ms (`camera::SMOOTH_MS`). O critério "assentar em ≤ 1 s" é
+  sobre o **golden** (chegar exatamente no alvo para a captura ser
+  reproduzível), não sobre a sensação (95% do caminho em 300 ms).
+- O salto final a 1 cm é conservador: 5 cm já é 1 pixel a 2× de zoom.
+- Se depois do 6D.3 o HalfPitch parecer nervoso, a primeira alavanca é
+  subir a constante para 120–125 ms (alvo exato em ~0,98 s no pior caso).
+
+**Playwright local trava ao encerrar (2 vezes até o 6D.2):** quando é o
+próprio Playwright que sobe o `npm run build && npm run preview`, os
+testes terminam mas o processo não sai (não derruba o servidor no
+Windows) e o resumo final não é impresso. Contorno: ler o log dos testes;
+com um preview já no ar na 4173 ele reaproveita e encerra normal. Se
+acontecer de novo no 6D.3, investigar.
+
 **Padrão do projeto (6C-2, 6D, Fase 7):** remover as referências **no
 mesmo commit** da mudança visual reduz de dois para um push vermelho.
 

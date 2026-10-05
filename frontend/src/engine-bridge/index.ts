@@ -116,8 +116,8 @@ import { MatchCanvas, pitch_view, reference_slot, reference_slot_with } from './
  * clip `((x − cx) · sx, (y − cy) · sy)`. The mesh's own view (call after the
  * canvas is open).
  */
-export function pitchView(width: number, height: number): Float32Array {
-  return pitch_view(width, height);
+export function pitchView(camera: Float32Array, width: number, height: number): Float32Array {
+  return pitch_view(camera, width, height);
 }
 
 /** Sizes `canvas` to its CSS box × devicePixelRatio (sharp on HiDPI). */
