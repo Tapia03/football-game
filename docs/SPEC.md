@@ -3016,6 +3016,101 @@ depois. O jogo ainda não tem nome ("o jogo", "o projeto").
     como dado qualquer pelo código da 7A. A v2 usa `day` para o dia do
     mundo; não há conflito, porque um save só tem mundo quando existe
     `world_seed`, e `world.create` regrava `day`.
+  - **Decisão consciente: os ganchos de teste do Worker de banco ficam
+    no bundle de produção, atrás de uma flag de runtime** (`test.sql`,
+    `test.plantFile`, `test.files`, `test.writeWithoutCommit`,
+    `stopImport`, `stopCommitDay`, as migrações de teste). Motivo: os e2e
+    rodam contra o mesmo bundle que vai ao ar. Alcance: só o
+    armazenamento local do usuário, o mesmo que export e import já
+    alcançam. Nenhum código do jogo passa a opção `test`. Verificado no
+    commit 3 (o bundle de produção contém os ganchos).
+- **7B.4 — `WorldHost`, Worker de mundo e progresso (desenho aprovado em
+  2026-10-05).** Três processos (main, Worker de mundo, Worker de banco).
+  A tela, a navegação e os testes de determinismo e de crash com o mundo
+  de verdade ficam no commit 5.
+  - **`WorldHost` (`fm-wasm`), só no Worker de mundo.** Guarda um `World`
+    e os resultados das partidas do dia já jogadas e ainda não aplicadas
+    (menos de 100 kB). Expõe: criar de (seed, clube do usuário);
+    reconstruir das peças que o banco devolve (com a validação do
+    `from_save`); `matches_today()`, `play(id)`, `finish_day()`,
+    `abandon_day()`; as peças do save e do fim do dia como arrays e
+    buffers; dia, rodada, "terminou?" e a classificação do Rust.
+    - **Partida a partida, não "avance o dia":** uma chamada única ao
+      WASM bloquearia o Worker a rodada inteira, sem progresso e sem
+      ouvir um cancelamento. `play` só lê o mundo; o Worker chama uma
+      partida, avisa, cede a vez e chama a próxima.
+  - **Main ↔ Worker de mundo.** O envelope do banco (`{id, op, args}` →
+    `{id, ok, result | error}`); o progresso é evento à parte, sem `id`.
+    - `start` (controle): recebe a `MessagePort` do banco.
+    - `world.new {seed, userClub}`: gera o mundo, grava com
+      `world.create` no save aberto, responde o resumo.
+    - `world.open`: `world.load` no banco, reconstrói, responde o resumo;
+      `no-world` passa adiante como veio.
+    - `world.advance {days}`: vive `days` dias, **dia a dia** — partidas
+      → `finish_day` (aplica e **limpa** os resultados) → `world.commitDay`
+      → próximo dia. N dias são N ciclos; a memória não cresce com N. A
+      tela da 7B só manda `days: 1`; `days` maior serve à medição de
+      temporada e à 7C.
+    - `cancel` (controle): o avanço em curso para depois da partida que
+      está rodando.
+    - Se o `commitDay` falhar, o mundo em memória está um dia à frente do
+      banco: o Worker descarta, recarrega do banco e responde o erro. **O
+      banco é sempre a verdade.**
+    - As leituras da tela (classificação, rodada) vão da main direto ao
+      banco.
+  - **Worker de mundo ↔ Worker de banco.**
+    - A main cria a porta (`connect()` da 7A) e a transfere no `start`.
+    - **O `WorldSave` e o `DayCommit` viajam com os blobs em
+      `ArrayBuffer` transferido** (fichas 30 kB, estados 7 kB, onzes,
+      seeds), no padrão da 7A; as linhas vão como objetos pelo clone
+      estruturado do `postMessage`, nunca como texto JSON. Por dia: 7 kB
+      transferidos, 500 linhas de três números e até dez resultados; o
+      custo entra na medição (tempo do commit, separado da simulação).
+    - **Recarregar a página:** os Workers morrem com a página; a main
+      refaz tudo (banco, `save.open` com o id que vai na URL, mundo,
+      `world.open`) e o mundo volta do último `commitDay`.
+    - **Banco ocupado não existe:** o Worker de banco atende em fila, um
+      pedido por vez, de todas as portas; `world.load` espera a vez.
+    - **Banco que não responde:** os pedidos do mundo ao banco têm prazo
+      de 10 s; estourou, o avanço falha com erro claro.
+    - **Ponto frágil registrado:** o "save aberto" é um só, do Worker de
+      banco, compartilhado por todas as portas. Serve à 7B (uma aba, um
+      mundo); com dois mundos, cada pedido teria de dizer o save.
+  - **Progresso:** uma mensagem por partida (dia, rodada, feitas, totais,
+    dias restantes, estimativa pela média das já simuladas). Ceder a vez
+    entre partidas usa um canal de mensagens, não `setTimeout` (que os
+    navegadores atrasam 4 ms). **Não aparece no número de instruções:** o
+    bench conta o `tick_logic` no nativo; este commit mede tempo de
+    relógio.
+  - **Cancelamento.**
+    - Pelo botão: termina a partida em curso (o WASM não se interrompe no
+      meio), `abandon_day()`, responde "cancelado". O mundo não mudou e
+      nada foi ao banco.
+    - **Entre a última partida e o `commitDay`: o cancelamento é
+      ignorado** (decisão): a janela é de milissegundos, o dia fecha e o
+      cancelamento vale a partir do dia seguinte. Um ponto de
+      cancelamento a mais seria complexidade sem ganho.
+    - Aba fechada no meio da rodada: os Workers morrem, o banco não tem
+      transação aberta (a única do dia é o `commitDay`, pedido depois da
+      última partida) e vale o `commitDay` anterior. Durante o
+      `commitDay`: o caso já testado no commit 3.
+  - **Medição no CI — o número que decide o pool.**
+    - Cronômetros por rodada: **simulação** (só as dez chamadas a `play`,
+      dentro do Worker) e **rodada inteira** (do pedido `world.advance`
+      até a resposta: progresso, `finish_day`, `commitDay`).
+    - **Decide a mediana da rodada inteira no Chromium do CI:** < 500 ms,
+      o pool fica para depois; > 1 s, é obrigatório (trazer o número
+      antes de implementar); no meio, decide o usuário. **Se em qualquer
+      commit deste ciclo passar de 1 s: parar antes do commit 5.**
+    - Cinco rodadas em todo push (35 dias de jogo), num **passo próprio
+      do CI, sozinho, com um Worker do Playwright** (os outros testes em
+      paralelo inflariam o tempo). O log traz o tempo por partida, o
+      custo do commit e os núcleos do runner.
+    - Temporada inteira: só quando o CI é disparado à mão. Firefox e
+      WebKit rodam e reportam; não decidem.
+  - **Sub-commits:** (1) `WorldHost`; (2) Worker de mundo e os dois
+    protocolos; (3) progresso; (4) cancelamento, recarga e prazo; (5)
+    medição no CI.
 
 ## FASE 7 (numeração antiga; agora parte da Fase 9) — UI + Overlays Táticos
 - **Ordem (2026-10-05):** vem depois da fase "Bola longa + contraparte

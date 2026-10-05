@@ -19,6 +19,8 @@ import {
 // tested natively). The real world meets the database in the next commits.
 
 const V1_FIXTURE = 'tests/fixtures/save-v1-7a.sqlite';
+/** Schema version the game writes today. */
+const CURRENT = 2;
 const CLUBS = 20;
 const PLAYERS = 500;
 const MATCHES = 380;
@@ -233,7 +235,7 @@ for (const backend of ['opfs', 'idb'] as const) {
       await open(page, testInfo.project.name);
       const v1 = Array.from(await readFile(V1_FIXTURE));
       const save = await ask<SaveInfo>(page, 'save.create', { name: 'Veio da 7A' });
-      expect(((await importSave(page, save.id, v1)) as SaveInfo).schemaVersion).toBe(2);
+      expect(((await importSave(page, save.id, v1)) as SaveInfo).schemaVersion).toBe(CURRENT);
       await ask(page, 'save.open', { id: save.id });
       // Refused with a clear answer, by every operation that needs a world.
       const refusal = await page.evaluate(async () => {
