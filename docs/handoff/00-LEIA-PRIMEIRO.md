@@ -42,8 +42,9 @@ próprio navegador, em SQLite. O jogo ainda **não tem nome**: nos documentos,
   - **7A (persistência local): feita e mergeada** (PR #9).
   - **7B (mundo mínimo e calendário): em andamento**, branch `fase-7b`.
   - 7C (telas de gerenciamento) e 7D (assistir a partida) não começaram.
-- **Commits 1 e 2 da 7B feitos** (SPEC e `fm-world` nativo). O próximo é o
-  commit 3, com desenho a aprovar antes do código. Ver o arquivo 03.
+- **Na 7B já estão feitos** o `fm-world`, a persistência do mundo, o Worker
+  de mundo e o pool de Workers de partida. Falta a tela `?view=world`, com
+  desenho a aprovar antes do código. Ver o arquivo 03.
 
 ## A decisão das formações (tomada em 2026-10-05)
 

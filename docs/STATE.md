@@ -2,7 +2,7 @@
 
 Resumo de uma tela que sobrevive a compactações de sessão. A fonte de verdade
 de arquitetura e regras é o [`docs/SPEC.md`](SPEC.md); este arquivo só diz
-*onde estamos*. Atualizado em **2026-10-05** (Fases 6 e 7A mergeadas; Fase 7B — mundo mínimo e calendário — **em implementação**, branch `fase-7b`: commits 1 a 4 feitos (SPEC, `fm-world`, persistência do mundo, Worker de mundo com progresso e cancelamento). **A medição decidiu: rodada de 1.453 ms no Chromium do CI, acima de 1 s — o pool de Workers de partida é obrigatório.** Próximo: desenho do pool, a aprovar; só depois o commit 5 (tela)).
+*onde estamos*. Atualizado em **2026-10-05** (Fases 6 e 7A mergeadas; Fase 7B — mundo mínimo e calendário — **em implementação**, branch `fase-7b`: commits 1 a 4 feitos (SPEC, `fm-world`, persistência do mundo, Worker de mundo com progresso e cancelamento) e o **pool de Workers de partida (7B.4b) feito**, obrigatório porque a rodada mediu 1.453 ms no Chromium do CI. **Medição do pool no CI pendente.** Próximo: o commit 6 (tela `?view=world`), com desenho a aprovar antes do código).
 
 **Para quem chega agora:** comece por [`docs/handoff/`](handoff/00-LEIA-PRIMEIRO.md).
 As seções deste arquivo abaixo de "Fase anterior — Fase 5 (c1)" são o
@@ -91,10 +91,39 @@ para orientar a próxima rodada de refinamento.
     Firefox real. Se confirmado, item da Fase 8, junto com o WASM 3,4×
     mais lento que o nativo. Um pool não leva o Firefox abaixo do tempo
     de uma partida (~0,9 s por rodada, no melhor caso).
-  - **Fica para o commit 5:** comparar a classificação do Rust com a do
-    banco (precisa do `WorldHost`); a tela `?view=world` e a navegação
-    saves ↔ mundo; os testes de determinismo e de crash com o mundo de
-    verdade.
+  - **7B.4b feito (pool de partida):** 4 sub-commits de código (7B.4b.2 a
+    7B.4b.5, mais o SPEC em 7B.4b.1). `WorldHost` com `play` puro,
+    `finish_day(resultados)` e `sync_day`; `min(núcleos, 10)` Workers de
+    partida; mesmo `save.digest` com 0, 1, 2 e 4 workers; com pool o
+    coordenador não joga; fila dinâmica; Worker de partida morto é
+    retirado e a partida dele é jogada pelo Worker de mundo; pool que não
+    responde, o mundo segue sozinho. **Medição no CI pendente (sub-commit
+    5).** Decisão com o número do Chromium do CI: ≤ 700 ms aprovado;
+    700 ms a 1 s aprovado com ressalva; > 1 s parar e trazer o perfil.
+  - **Dívida — meta 3 do pool não atingida (Fase 8):** na máquina do dono
+    (16 núcleos), Chromium, a rodada leva 567 ms com 10 workers, contra
+    1.676 ms sem pool (meta: ≤ 300 ms com 8 núcleos ou mais). Dez Workers
+    em 16 núcleos não escalam linearmente. Entra na Fase 8 junto com o
+    Firefox ~7× e o WASM 3,4× mais lento que o nativo.
+  - **Firefox com pool:** ~2,7 s por rodada no runner, estimado; nunca
+    abaixo de uma partida (871 ms). É a dívida do WASM no Firefox, não
+    falha do pool.
+  - **Incidente de infraestrutura do GitHub (2026-10-05):** runners
+    hospedados em fila; jobs esperam 10–15 min e são cancelados sem rodar
+    ("The job was not acquired by Runner of type hosted"). Nos pushes do
+    7B.4b.2 e do 7B.4b.3 os jobs que conseguiram runner passaram; os
+    cancelados ficam vermelhos por infra e **não são reexecutados**.
+    - **Exceção pontual à regra "um push por commit":** os sub-commits 4
+      e 5 do pool (7B.4b.4 e 7B.4b.5) foram empurrados juntos. Não é
+      mudança de regra nem precedente.
+    - **Regra provisória, enquanto durar a fila:** job cancelado por
+      infra não conta como vermelho; só conta job que rodou e falhou.
+      Com o GitHub normalizado, volta a regra normal.
+  - **Fica para o commit 6** (o "commit 5" do desenho original; o pool
+    entrou antes): a tela `?view=world` e a navegação saves ↔ mundo;
+    comparar a classificação do Rust com a do banco (precisa do
+    `WorldHost`); os testes de determinismo e de crash com o mundo de
+    verdade. **Desenho a aprovar antes do código.**
 - **Achado da 7B.2 — desequilíbrio entre formações (item da Fase 8):**
   4-3-3 contra 4-3-3 dá 12,5 gols por partida; com as formações sorteadas
   a formação decide a tabela (correlação força × posição final 0,19–0,65;
@@ -568,7 +597,7 @@ estiver ocupada (`strictPort`); nesse caso `npx vite --port 5174`.
 | Tapia03/football-game#7 | Fase 6 (render: 6A, 6B, 6C, 6D) | mergeado (`9a27cab`) |
 | Tapia03/football-game#8 | Fase 7A aberta por engano contra a branch errada | fechado sem merge |
 | Tapia03/football-game#9 | Fase 7A (persistência local) | mergeado (`4c38095`) |
-| — | Fase 7B (`fase-7b`) | abre quando os cinco commits estiverem prontos, com CI verde |
+| — | Fase 7B (`fase-7b`) | abre quando todos os commits estiverem prontos (falta a tela), com CI verde |
 
 Branch `spike-render`: nunca mergeia (spike visual do render).
 

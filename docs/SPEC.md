@@ -3225,6 +3225,25 @@ depois. O jogo ainda não tem nome ("o jogo", "o projeto").
     equivalência; (3) Worker de partida, pool e fila — 1, 2 e 4 jogadores
     dão o mesmo digest; (4) cancelamento e falhas com o pool; (5)
     medição.
+- **7B.4b, medição local e a meta 3 (2026-10-05).** Máquina do dono (16
+  núcleos), Chromium: rodada de **567 ms com 10 Workers de partida**,
+  contra **1.676 ms sem pool**.
+  - **Meta 3 (≤ 300 ms com 8 núcleos ou mais) não atingida.** Dez Workers
+    em 16 núcleos não escalam linearmente (ganho de ~3×, não de 10×).
+    Causa não investigada. **Dívida da Fase 8**, junto com o Firefox ~7×
+    mais lento e o WASM 3,4× mais lento que o nativo.
+  - **Meta 2 (≤ 700 ms no Chromium do CI): a medir** no push do
+    sub-commit 5. Decisão do usuário com o número: ≤ 700 ms, aprovado;
+    700 ms a 1 s, aprovado com ressalva (registrar a diferença); > 1 s,
+    parar e trazer o perfil.
+  - **Firefox:** ~2,7 s por rodada com o pool, estimado; não chega a
+    menos de 1 s porque uma partida custa 871 ms. Não é falha do pool.
+- **Incidente de infraestrutura do GitHub (2026-10-05).** Runners
+  hospedados em fila: jobs cancelados sem rodar ("The job was not
+  acquired by Runner of type hosted"). Exceção pontual à regra "um push
+  por commit": os sub-commits 4 e 5 do pool foram empurrados juntos.
+  Regra provisória enquanto durar a fila: job cancelado por infra não
+  conta como vermelho; só conta job que rodou e falhou. Não é precedente.
 
 ## FASE 7 (numeração antiga; agora parte da Fase 9) — UI + Overlays Táticos
 - **Ordem (2026-10-05):** vem depois da fase "Bola longa + contraparte
