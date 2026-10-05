@@ -6,6 +6,7 @@
 pub mod camera;
 pub mod mesh;
 pub mod sab;
+pub mod world;
 
 use wasm_bindgen::prelude::wasm_bindgen;
 

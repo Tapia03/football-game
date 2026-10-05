@@ -14,6 +14,9 @@ wasm-bindgen.workspace = true
 fm-render.workspace = true
 # Fase 6: the engine worker runs the match and publishes its snapshots.
 fm-match.workspace = true
+# Fase 7B: the world worker lives the season and hands the save its pieces.
+fm-world.workspace = true
+fm-persistence.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 js-sys.workspace = true
