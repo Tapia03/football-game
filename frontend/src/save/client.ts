@@ -50,12 +50,17 @@ export class DbClient {
     });
   }
 
-  request<O extends DbOp>(op: O, args: DbOps[O]['args']): Promise<DbOps[O]['result']> {
+  /** `transfer`: buffers of `args` to hand over instead of copying. */
+  request<O extends DbOp>(
+    op: O,
+    args: DbOps[O]['args'],
+    transfer: Transferable[] = [],
+  ): Promise<DbOps[O]['result']> {
     const id = this.nextId;
     this.nextId += 1;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
-      this.line.postMessage({ id, op, args });
+      this.line.postMessage({ id, op, args }, transfer);
     });
   }
 }

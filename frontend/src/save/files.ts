@@ -27,6 +27,12 @@ export type Files = {
   flush(changed: readonly OpenFile[], remove?: readonly string[]): Promise<void>;
   /** Copies the closed file `from` over `to`. */
   copy(from: string, to: string): Promise<void>;
+  /** The bytes of the closed file `name` as last made durable. */
+  read(name: string): Promise<Uint8Array>;
+  /** Creates (or replaces) the closed file `name` with `bytes`, durably. */
+  write(name: string, bytes: Uint8Array): Promise<void>;
+  /** The bytes of an open database: the SQLite file it would be on disk. */
+  export(db: Database): Uint8Array;
   /** Makes room for `saves` saves (a no-op where files need no slots). */
   reserve(saves: number): Promise<void>;
 };
@@ -77,6 +83,12 @@ export async function openOpfs(sqlite3: Sqlite3Static): Promise<Files> {
       sah.importDb(to, bytes);
       return Promise.resolve();
     },
+    read: (name) => Promise.resolve(sah.exportFile(name)),
+    write: async (name, bytes) => {
+      remove(name);
+      await sah.importDb(name, bytes);
+    },
+    export: (db) => sqlite3.capi.sqlite3_js_db_export(db),
     reserve: async (saves) => {
       // A save takes two slots (file and journal).
       await sah.reserveMinimumCapacity(2 * (saves + 1) + SPARE_SLOTS);
@@ -152,6 +164,13 @@ export async function openIdb(sqlite3: Sqlite3Static): Promise<Files> {
       else tx.objectStore(IDB_STORE).put(bytes, to);
       await done(tx);
     },
+    read: async (name) => (await read(name)) ?? new Uint8Array(0),
+    write: async (name, bytes) => {
+      const tx = idb.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).put(bytes, name);
+      await done(tx);
+    },
+    export: (db) => sqlite3.capi.sqlite3_js_db_export(db),
     reserve: () => Promise.resolve(),
   };
 }

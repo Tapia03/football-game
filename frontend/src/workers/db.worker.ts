@@ -65,6 +65,14 @@ let storage: Storage | undefined;
 let current: { readonly id: string; readonly name: string; readonly db: Database } | undefined;
 
 const fileOf = (id: string): string => `/save-${id}.sqlite`;
+/** A fresh file name for new content of save `id` (an import). */
+const nextFileOf = (id: string): string => `/save-${id}.${crypto.randomUUID().slice(0, 8)}.sqlite`;
+
+/** First bytes of every SQLite file. */
+const SQLITE_HEADER = 'SQLite format 3\u0000';
+
+/** Tables a file must have to be a save of ours. */
+const SAVE_TABLES = ['clubs', 'competitions', 'matches', 'meta', 'migrations', 'players', 'tactics'];
 
 function wrap(db: Database): MigratableDb {
   return {
@@ -131,8 +139,32 @@ async function boot(): Promise<void> {
   if (migrate(wrap(catalog), CATALOG_MIGRATIONS).length > 0) {
     await files.flush([{ name: CATALOG_FILE, db: catalog }]);
   }
+  await removeOrphans(files, catalog);
   storage = { files, catalog };
   info = detail === undefined ? { backend: files.backend, sqlite } : { backend: files.backend, sqlite, detail };
+}
+
+/**
+ * Removes every file no row of the catalog points at: what a crash leaves
+ * between the commit of a pointer swap and the removal of the old file, a
+ * file written aside for an import that never happened, a stray copy. The
+ * journal of a file that is referenced stays: SQLite still needs it.
+ */
+async function removeOrphans(files: Files, catalog: Database): Promise<void> {
+  const referenced = new Set([CATALOG_FILE, ...catalog.selectValues('SELECT active_file FROM saves').map(text)]);
+  const orphans = (await files.list()).filter(
+    (name) => !referenced.has(name) && !referenced.has(name.replace(/-journal$/, '')),
+  );
+  if (orphans.length > 0) await files.flush([], orphans);
+}
+
+/** Never answers: the test kills the worker here (`stopImport`). */
+function stopHere(at: 'before-swap' | 'after-swap'): Promise<void> {
+  return options.test?.stopImport === at ? new Promise(() => undefined) : Promise.resolve();
+}
+
+function hex(bytes: Uint8Array): string {
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 function need(): Storage {
@@ -286,6 +318,100 @@ const handlers: { [O in DbOp]: (args: DbOps[O]['args']) => DbOps[O]['result'] | 
     return null;
   },
 
+  'save.export': async ({ id }) => {
+    const { files, catalog } = need();
+    const save = findSave(catalog, id);
+    // The open save is exported as it is now; a closed one from its file.
+    const bytes = current?.id === id ? files.export(current.db) : await files.read(save.activeFile);
+    const slug = save.name
+      .normalize('NFD')
+      .replace(/[^\w\s-]/g, '')
+      .trim()
+      .replace(/\s+/g, '-')
+      .toLowerCase();
+    const day = new Date().toISOString().slice(0, 10);
+    // A buffer of its own (not a view of the WASM heap), to be transferred.
+    const copy = new Uint8Array(bytes).buffer;
+    return { fileName: `save-${slug === '' ? id : slug}-${day}.sqlite`, bytes: copy };
+  },
+
+  'save.import': async ({ id, bytes }) => {
+    const { files, catalog } = need();
+    const save = findSave(catalog, id);
+    const content = new Uint8Array(bytes);
+    const header = new TextDecoder().decode(content.subarray(0, SQLITE_HEADER.length));
+    if (header !== SQLITE_HEADER) throw new OpError('not-a-save', 'o arquivo não é um banco SQLite');
+    // Written aside: until the catalog points at it, it is nobody's file.
+    const file = nextFileOf(id);
+    await files.reserve(int(catalog.selectValue('SELECT count(*) FROM saves')) + 1);
+    let db: Database | undefined;
+    try {
+      // Whatever SQLite itself refuses here is a file that is not a sound
+      // database: the same answer as a failed integrity check.
+      try {
+        await files.write(file, content);
+        db = await openFile(files, file);
+        const sound = db.selectValue('PRAGMA integrity_check');
+        if (sound !== 'ok') throw new Error(String(sound));
+      } catch (err: unknown) {
+        throw new OpError('not-a-save', `o arquivo está corrompido: ${reason(err)}`);
+      }
+      const migrations = saveMigrations();
+      if (schemaVersion(wrap(db)) < 1) throw new OpError('not-a-save', 'o arquivo não é um save deste jogo');
+      checkFile(wrap(db), migrations);
+      const tables = db.selectValues("SELECT name FROM sqlite_schema WHERE type = 'table'").map(text);
+      if (!SAVE_TABLES.every((t) => tables.includes(t))) {
+        throw new OpError('not-a-save', 'o arquivo não tem as tabelas de um save');
+      }
+      // An older save is brought up to date before it becomes the save.
+      migrate(wrap(db), migrations);
+      const version = schemaVersion(wrap(db));
+      await files.flush([{ name: file, db }]);
+      db.close();
+      db = undefined;
+      await stopHere('before-swap');
+      // The swap: one transaction of the catalog. Before it the save is the
+      // old file, whole; after it, the new one, whole.
+      const wasOpen = current?.id === id;
+      if (wasOpen) closeCurrent();
+      catalog.exec({
+        sql: 'UPDATE saves SET active_file = ?, schema_version = ? WHERE id = ?',
+        bind: [file, version, id],
+      });
+      await files.flush([{ name: CATALOG_FILE, db: catalog }]);
+      await stopHere('after-swap');
+      await files.flush([], [save.activeFile]);
+      if (wasOpen) current = { id, name: file, db: await openFile(files, file) };
+    } catch (err: unknown) {
+      db?.close();
+      // Not referenced by the catalog: remove what was written aside.
+      if (text(catalog.selectValue('SELECT active_file FROM saves WHERE id = ?', [id])) !== file) {
+        await files.flush([], [file]);
+      }
+      throw err;
+    }
+    return findSave(catalog, id);
+  },
+
+  'save.digest': async () => {
+    const { db } = needCurrent();
+    const tables = db
+      .selectValues("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+      .map(text);
+    const dump = tables.map((table) => {
+      // Table names come from the schema of our own file.
+      const rows = db.selectArrays(`SELECT * FROM "${table}" ORDER BY 1`);
+      const columns = db.selectValues(`SELECT name FROM pragma_table_info('${table}')`).map(text);
+      const skip = table === 'migrations' ? columns.indexOf('applied_at') : -1;
+      return [
+        table,
+        rows.map((row) => row.filter((_, i) => i !== skip).map((v) => (v instanceof Uint8Array ? `x${hex(v)}` : v))),
+      ];
+    });
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(dump)));
+    return hex(new Uint8Array(digest));
+  },
+
   'test.writeWithoutCommit': ({ key, value }) => {
     testOnly();
     const { db } = needCurrent();
@@ -297,6 +423,15 @@ const handlers: { [O in DbOp]: (args: DbOps[O]['args']) => DbOps[O]['result'] | 
   'test.files': () => {
     testOnly();
     return need().files.list();
+  },
+
+  'test.plantFile': async ({ name }) => {
+    testOnly();
+    // The size of one SQLite page, so that every backend takes it as a file.
+    const bytes = new Uint8Array(4096);
+    bytes.set(new TextEncoder().encode(SQLITE_HEADER));
+    await need().files.write(name, bytes);
+    return null;
   },
 };
 
@@ -313,6 +448,8 @@ function toError(err: unknown): DbError {
 }
 
 let booted: Promise<void> | undefined;
+/** Requests are served one at a time, in the order they arrive. */
+let queue: Promise<unknown> = Promise.resolve();
 
 async function serve<O extends DbOp>(request: DbRequest<O>): Promise<DbResponse<O>> {
   try {
@@ -324,7 +461,14 @@ async function serve<O extends DbOp>(request: DbRequest<O>): Promise<DbResponse<
   }
 }
 
-type Reply = (message: DbResponse | DbReady) => void;
+type Reply = (message: DbResponse | DbReady, transfer?: Transferable[]) => void;
+
+/** Buffers of a response that are handed over instead of copied. */
+function transferOf(response: DbResponse): Transferable[] {
+  if (!response.ok || response.result === null || typeof response.result !== 'object') return [];
+  const { bytes } = response.result as { bytes?: unknown };
+  return bytes instanceof ArrayBuffer ? [bytes] : [];
+}
 
 function listen(reply: Reply): (e: MessageEvent<DbControl | DbRequest>) => void {
   return (e) => {
@@ -339,15 +483,17 @@ function listen(reply: Reply): (e: MessageEvent<DbControl | DbRequest>) => void 
       } else {
         // Another worker's line to the database: served like the page's.
         const { port } = message;
-        port.onmessage = listen((m) => port.postMessage(m));
+        port.onmessage = listen((m, transfer = []) => port.postMessage(m, transfer));
       }
       return;
     }
-    void serve(message).then(reply);
+    const served = queue.then(() => serve(message));
+    queue = served;
+    void served.then((response) => reply(response, transferOf(response)));
   };
 }
 
 addEventListener(
   'message',
-  listen((m) => postMessage(m)),
+  listen((m, transfer = []) => postMessage(m, { transfer })),
 );

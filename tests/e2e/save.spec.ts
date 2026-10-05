@@ -6,7 +6,10 @@ import { expect, test, type Page } from '@playwright/test';
 // fresh origin private file system and a fresh IndexedDB.
 
 type Backend = 'opfs' | 'idb';
-type Options = { storage?: 'idb'; test?: { migrations?: 'v2' | 'v2-then-broken' } };
+type Options = {
+  storage?: 'idb';
+  test?: { migrations?: 'v2' | 'v2-then-broken'; stopImport?: 'before-swap' | 'after-swap' };
+};
 /** The storage the tests of the running `describe` ask for. */
 let wanted: Backend = 'opfs';
 type SaveInfo = {
@@ -17,7 +20,7 @@ type SaveInfo = {
   createdAt: string;
   lastOpenedAt: string;
 };
-type Client = { request(op: string, args: unknown): Promise<unknown> };
+type Client = { request(op: string, args: unknown, transfer?: Transferable[]): Promise<unknown> };
 type Database = { client: Client; connect(): MessagePort; terminate(): void };
 type Hooks = {
   fmSave: {
@@ -56,6 +59,42 @@ async function ask<T>(page: Page, op: string, args: unknown = {}): Promise<T> {
 }
 
 type Storage = { backend: Backend | 'none'; sqlite: string; detail?: string };
+
+/** Exports save `id`; the bytes travel to the test as plain numbers. */
+async function exportSave(page: Page, id: string): Promise<{ fileName: string; bytes: number[] }> {
+  return page.evaluate(async (save) => {
+    const { db } = globalThis as unknown as Hooks;
+    const out = (await db.client.request('save.export', { id: save })) as { fileName: string; bytes: ArrayBuffer };
+    return { fileName: out.fileName, bytes: Array.from(new Uint8Array(out.bytes)) };
+  }, id);
+}
+
+/**
+ * Imports `bytes` over save `id` (transferring the buffer). With `wait`
+ * false the answer is not awaited: the worker is about to be stopped.
+ */
+async function importSave(page: Page, id: string, bytes: number[], wait = true): Promise<unknown> {
+  return page.evaluate(
+    async ([save, content, awaited]) => {
+      const { db } = globalThis as unknown as Hooks;
+      const buffer = new Uint8Array(content as number[]).buffer;
+      const asked = db.client
+        .request('save.import', { id: save, bytes: buffer }, [buffer])
+        .catch((err: unknown) => ({ error: (err as { code?: string }).code ?? String(err) }));
+      if (awaited) return asked;
+      // Long enough for the worker to reach the point it stops at.
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      return 'not awaited';
+    },
+    [id, bytes, wait] as const,
+  );
+}
+
+/** Opens save `id` and returns the digest of its content. */
+async function digestOf(page: Page, id: string): Promise<string> {
+  await ask(page, 'save.open', { id });
+  return ask<string>(page, 'save.digest');
+}
 
 /**
  * Opens the quiet page and the database. Asked for OPFS, a browser without
@@ -231,6 +270,137 @@ test.describe(`Fase 7A: local persistence (SQLite WASM in the database worker, $
     expect((viaPort as SaveInfo[]).map((s) => s.name)).toEqual(['Porta']);
     // One database behind both lines.
     expect(await ask(page, 'meta.get', { key: 'day' })).toBe(21);
+  });
+
+  test('export then import: the save is replaced by the file, content for content', async ({
+    page,
+  }, testInfo) => {
+    await open(page, testInfo.project.name);
+    const a = await ask<SaveInfo>(page, 'save.create', { name: 'Série A' });
+    const b = await ask<SaveInfo>(page, 'save.create', { name: 'Outro' });
+    await ask(page, 'save.open', { id: a.id });
+    await ask(page, 'meta.set', { key: 'day', value: 5 });
+    const digestA = await ask<string>(page, 'save.digest');
+    expect(digestA).toMatch(/^[0-9a-f]{64}$/);
+    await ask(page, 'save.open', { id: b.id });
+    await ask(page, 'meta.set', { key: 'day', value: 9 });
+    expect(await ask<string>(page, 'save.digest')).not.toBe(digestA);
+
+    // The export is a SQLite file, named after the save and the date; the
+    // open save and the closed one export alike.
+    const exported = await exportSave(page, a.id);
+    expect(exported.fileName).toMatch(/^save-serie-a-\d{4}-\d{2}-\d{2}\.sqlite$/);
+    expect(String.fromCharCode(...exported.bytes.slice(0, 15))).toBe('SQLite format 3');
+    await ask(page, 'save.open', { id: a.id });
+    expect((await exportSave(page, a.id)).bytes.length).toBe(exported.bytes.length);
+
+    // Imported over B while B is the open save: B is now A's content, in a
+    // new file; the old file is gone and A is untouched.
+    await ask(page, 'save.open', { id: b.id });
+    const replaced = (await importSave(page, b.id, exported.bytes)) as SaveInfo;
+    expect(replaced.id).toBe(b.id);
+    expect(replaced.name).toBe('Outro');
+    expect(replaced.activeFile).not.toBe(b.activeFile);
+    expect(await ask(page, 'meta.get', { key: 'day' })).toBe(5); // still open, on the new file
+    expect(await ask<string>(page, 'save.digest')).toBe(digestA);
+    expect(await ask(page, 'test.files')).toEqual(['/catalog.sqlite', a.activeFile, replaced.activeFile].sort());
+    expect(await digestOf(page, a.id)).toBe(digestA);
+
+    // And it is what is there after a restart.
+    await start(page);
+    expect(await digestOf(page, b.id)).toBe(digestA);
+  });
+
+  test('an invalid file is refused and the save stays exactly as it was', async ({ page }, testInfo) => {
+    await open(page, testInfo.project.name);
+    const save = await ask<SaveInfo>(page, 'save.create', { name: 'Intacto' });
+    await ask(page, 'save.open', { id: save.id });
+    await ask(page, 'meta.set', { key: 'day', value: 30 });
+    const before = await ask<string>(page, 'save.digest');
+    const good = (await exportSave(page, save.id)).bytes;
+    const unchanged = async (): Promise<void> => {
+      expect(await ask<SaveInfo[]>(page, 'save.list')).toMatchObject([{ id: save.id, activeFile: save.activeFile }]);
+      expect(await ask(page, 'test.files')).toEqual(['/catalog.sqlite', save.activeFile].sort());
+      expect(await digestOf(page, save.id)).toBe(before);
+    };
+
+    // Not a SQLite file at all.
+    const text = Array.from(new TextEncoder().encode('isto não é um save'));
+    expect(await importSave(page, save.id, text)).toEqual({ error: 'not-a-save' });
+    await unchanged();
+    // A SQLite header with nothing sound behind it.
+    const hollow = [...good.slice(0, 16), ...new Array<number>(4096 - 16).fill(0xab)];
+    expect(await importSave(page, save.id, hollow)).toEqual({ error: 'not-a-save' });
+    await unchanged();
+    // A real save cut in half.
+    expect(await importSave(page, save.id, good.slice(0, good.length / 2))).toEqual({ error: 'not-a-save' });
+    await unchanged();
+    // A save that does not exist.
+    expect(await importSave(page, 'no-such-save', good)).toEqual({ error: 'not-found' });
+    await unchanged();
+
+    // A file from a newer game: refused. An older one: migrated on import.
+    await start(page, { test: { migrations: 'v2' } });
+    await ask(page, 'save.open', { id: save.id }); // v1 → v2
+    const newer = (await exportSave(page, save.id)).bytes;
+    const v2 = await ask<string>(page, 'save.digest');
+    await start(page, { test: { migrations: 'v2' } });
+    const migratedOnImport = (await importSave(page, save.id, good)) as SaveInfo;
+    expect(migratedOnImport.schemaVersion).toBe(2);
+    expect(await digestOf(page, save.id)).toBe(v2);
+    await ask(page, 'save.close');
+    const other = await ask<SaveInfo>(page, 'save.create', { name: 'De hoje' });
+    await start(page);
+    // (Both saves are v2 now; the game of today only reads the catalog.)
+    expect(await importSave(page, other.id, newer)).toEqual({ error: 'newer-version' });
+    expect((await ask<SaveInfo[]>(page, 'save.list')).find((s) => s.id === other.id)?.activeFile).toBe(
+      other.activeFile,
+    );
+  });
+
+  test('a crash around the swap: the old save whole, or the new one whole; orphans go at boot', async ({
+    page,
+  }, testInfo) => {
+    await open(page, testInfo.project.name);
+    const a = await ask<SaveInfo>(page, 'save.create', { name: 'Fonte' });
+    const b = await ask<SaveInfo>(page, 'save.create', { name: 'Alvo' });
+    await ask(page, 'save.open', { id: a.id });
+    await ask(page, 'meta.set', { key: 'day', value: 77 });
+    const digestA = await ask<string>(page, 'save.digest');
+    const bytes = (await exportSave(page, a.id)).bytes;
+    const digestB = await digestOf(page, b.id);
+
+    // Dies after the new file is written, before the catalog points at it:
+    // the save is still the old file, and the new one is an orphan.
+    await start(page, { test: { stopImport: 'before-swap' } });
+    expect(await importSave(page, b.id, bytes, false)).toBe('not awaited');
+    await start(page);
+    expect((await ask<SaveInfo[]>(page, 'save.list')).find((s) => s.id === b.id)?.activeFile).toBe(b.activeFile);
+    expect(await ask(page, 'test.files')).toEqual(['/catalog.sqlite', a.activeFile, b.activeFile].sort());
+    expect(await digestOf(page, b.id)).toBe(digestB);
+
+    // Dies after the catalog points at the new file, before the old one is
+    // removed: the save is the new file, and the old one is the orphan.
+    await start(page, { test: { stopImport: 'after-swap' } });
+    expect(await importSave(page, b.id, bytes, false)).toBe('not awaited');
+    await start(page);
+    const swapped = (await ask<SaveInfo[]>(page, 'save.list')).find((s) => s.id === b.id);
+    expect(swapped?.activeFile).not.toBe(b.activeFile);
+    expect(await ask(page, 'test.files')).toEqual(
+      ['/catalog.sqlite', a.activeFile, swapped?.activeFile ?? ''].sort(),
+    );
+    expect(await digestOf(page, b.id)).toBe(digestA);
+
+    // Any other file nobody references is removed at boot too; the files of
+    // the saves are not.
+    await ask(page, 'test.plantFile', { name: '/save-ghost.sqlite' });
+    await ask(page, 'test.plantFile', { name: '/import.tmp' });
+    expect(await ask<string[]>(page, 'test.files')).toContain('/save-ghost.sqlite');
+    await start(page);
+    expect(await ask(page, 'test.files')).toEqual(
+      ['/catalog.sqlite', a.activeFile, swapped?.activeFile ?? ''].sort(),
+    );
+    expect(await digestOf(page, a.id)).toBe(digestA);
   });
 });
 }

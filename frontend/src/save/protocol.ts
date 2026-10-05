@@ -68,6 +68,28 @@ export type DbOps = {
   /** Writes a key of the current save's `meta` table, in one transaction. */
   'meta.set': { args: { readonly key: string; readonly value: MetaValue }; result: null };
   /**
+   * The save as a SQLite file: what the "export" button downloads. `bytes`
+   * is transferred.
+   */
+  'save.export': {
+    args: { readonly id: string };
+    result: { readonly fileName: string; readonly bytes: ArrayBuffer };
+  };
+  /**
+   * Replaces the save `id` with the file in `bytes` (transfer it). The file
+   * is written aside, validated (a SQLite file, ours, sound, not from a
+   * newer game) and migrated if older; only then the catalog is pointed at
+   * it, in one transaction, and the old file removed. Any failure leaves
+   * the save exactly as it was.
+   */
+  'save.import': { args: { readonly id: string; readonly bytes: ArrayBuffer }; result: SaveInfo };
+  /**
+   * SHA-256 (hex) of every table of the current save, row by row: two
+   * saves with the same content have the same digest, whatever their files
+   * look like byte by byte. `applied_at` of the migrations is left out.
+   */
+  'save.digest': { args: Record<string, never>; result: string };
+  /**
    * Test only (`DbOptions.test`): writes a `meta` key inside a transaction
    * that is never committed, and answers. Killing the worker afterwards is
    * a crash in the middle of a write.
@@ -78,6 +100,8 @@ export type DbOps = {
   };
   /** Test only: the names of the files in the pool, sorted. */
   'test.files': { args: Record<string, never>; result: readonly string[] };
+  /** Test only: leaves a file nobody references (an orphan) in the storage. */
+  'test.plantFile': { args: { readonly name: string }; result: null };
 };
 
 export type DbOp = keyof DbOps;
@@ -117,7 +141,15 @@ export type DbOptions = {
    *  - `'v2'`: one more migration (v1 → v2, adds a table).
    *  - `'v2-then-broken'`: that one and a v2 → v3 that fails half way.
    */
-  readonly test?: { readonly migrations?: 'v2' | 'v2-then-broken' };
+  readonly test?: {
+    readonly migrations?: 'v2' | 'v2-then-broken';
+    /**
+     * `save.import` stops for good (never answers) right before or right
+     * after the catalog is pointed at the new file: killing the worker then
+     * is a crash at that exact point.
+     */
+    readonly stopImport?: 'before-swap' | 'after-swap';
+  };
 };
 
 /** Control messages of the worker, besides requests. */
