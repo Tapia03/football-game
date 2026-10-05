@@ -65,6 +65,12 @@
   let roster = new Uint8Array(0);
   let showLabels = $state(false);
   let showVectors = $state(false);
+  // Overlays (6B-3): F3 the offside line, F4 the formation lines. Both are
+  // drawn by the mesh; the bits are `OVERLAY_*` of the WASM side.
+  const OVERLAY_OFFSIDE = 1;
+  const OVERLAY_FORMATION = 2;
+  let showOffside = $state(false);
+  let showFormation = $state(false);
   let labelTexts: string[] = $state([]);
   let labelEls: (HTMLSpanElement | undefined)[] = $state([]);
 
@@ -72,8 +78,10 @@
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'F1') showLabels = !showLabels;
       else if (e.key === 'F2') showVectors = !showVectors;
+      else if (e.key === 'F3') showOffside = !showOffside;
+      else if (e.key === 'F4') showFormation = !showFormation;
       else return;
-      // F1 is the browser's help, F2 renames in some: keep them for the game.
+      // F1 is the browser's help, F3 its search: keep them for the game.
       e.preventDefault();
     };
     addEventListener('keydown', onKey);
@@ -174,7 +182,7 @@
               frame.sentOff,
               frame.homePhase | (frame.awayPhase << 8) | (frame.half << 16),
               showVectors ? interpolator.velocity : NO_VELOCITIES,
-              0,
+              (showOffside ? OVERLAY_OFFSIDE : 0) | (showFormation ? OVERLAY_FORMATION : 0),
               roster,
             );
             perf.frames += 1;
@@ -332,6 +340,20 @@
         aria-pressed={showVectors}
         title="Vetores de velocidade (F2)"
         onclick={() => (showVectors = !showVectors)}>F2 vetores</button
+      >
+      <button
+        data-testid="toggle-offside"
+        class:active={showOffside}
+        aria-pressed={showOffside}
+        title="Linha de impedimento (F3)"
+        onclick={() => (showOffside = !showOffside)}>F3 impedimento</button
+      >
+      <button
+        data-testid="toggle-formation"
+        class:active={showFormation}
+        aria-pressed={showFormation}
+        title="Linhas de formação (F4)"
+        onclick={() => (showFormation = !showFormation)}>F4 formação</button
       >
     </span>
     <span class="seed">seed {seed}</span>

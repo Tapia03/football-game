@@ -271,6 +271,73 @@ test.describe('Fase 6 (6A): the match runs in the engine worker', () => {
     expect(both.labelsMs / both.frames).toBeLessThan(4);
   });
 
+  test('F3 draws the offside line, F4 the formation lines; keys and buttons', async ({
+    page,
+    browserName,
+  }, testInfo) => {
+    await openMatch(page);
+    const offside = page.getByTestId('toggle-offside');
+    const formation = page.getByTestId('toggle-formation');
+    await expect(offside).toHaveAttribute('aria-pressed', 'false');
+    await expect(formation).toHaveAttribute('aria-pressed', 'false');
+    // By key on, by button off.
+    await page.keyboard.press('F3');
+    await expect(offside).toHaveAttribute('aria-pressed', 'true');
+    await offside.click();
+    await expect(offside).toHaveAttribute('aria-pressed', 'false');
+    await formation.click();
+    await expect(formation).toHaveAttribute('aria-pressed', 'true');
+    await page.keyboard.press('F4');
+    await expect(formation).toHaveAttribute('aria-pressed', 'false');
+
+    // Without WebGL (headless Firefox on CI) nothing is drawn.
+    if (browserName === 'firefox') return;
+
+    // One fixed instant (the golden's): open play, nobody sent off.
+    await page.evaluate(() => (globalThis as unknown as Hooks).fmMatch.runTo(6_000));
+    await expect(page.getByTestId('match-status')).toHaveText('pausado', { timeout: 20_000 });
+    await expect(page.getByTestId('match-render')).toHaveText('ok');
+    const verts = async (): Promise<number> =>
+      page.evaluate(() => (globalThis as unknown as Hooks).fmPerf.verts);
+    const drawn = async (expected: number): Promise<void> => {
+      await expect.poll(verts).toBe(expected);
+    };
+    const plain = await verts();
+    // The offside line: 17 dashes of 6 vertices.
+    await page.keyboard.press('F3');
+    await drawn(plain + 17 * 6);
+    // The formation lines: 10 outfielders in 3 sectors, 7 segments a team.
+    await page.keyboard.press('F4');
+    await drawn(plain + 17 * 6 + 14 * 6);
+    await page.keyboard.press('F3');
+    await drawn(plain + 14 * 6);
+    await page.keyboard.press('F4');
+    await drawn(plain);
+
+    // Main-thread cost per frame with both overlays against none.
+    const measure = async (): Promise<Hooks['fmPerf']> => {
+      await page.evaluate(() => {
+        const perf = (globalThis as unknown as Hooks).fmPerf;
+        perf.frames = 0;
+        perf.labelsMs = 0;
+        perf.drawMs = 0;
+      });
+      await page.waitForTimeout(1_500);
+      return page.evaluate(() => ({ ...(globalThis as unknown as Hooks).fmPerf }));
+    };
+    const off = await measure();
+    await page.keyboard.press('F3');
+    await page.keyboard.press('F4');
+    const on = await measure();
+    const cost = (p: Hooks['fmPerf']): number => p.drawMs / p.frames;
+    console.log(
+      `[6B-3 frame cost ${testInfo.project.name}] off: mesh+draw ${cost(off).toFixed(3)} ms, ${off.verts} vertices | F3+F4: mesh+draw ${cost(on).toFixed(3)} ms, ${on.verts} vertices | overhead ${(cost(on) - cost(off)).toFixed(3)} ms`,
+    );
+    expect(off.frames).toBeGreaterThan(10);
+    // SPEC 6B-3: both overlays together cost under 1 ms a frame.
+    expect(cost(on) - cost(off)).toBeLessThan(1);
+  });
+
   test('golden: the match at a fixed tick (pixels, Chromium only)', async ({ page, browserName }) => {
     // Pixel goldens only where rendering is deterministic: the software
     // renderer of headless Chromium (docs/SPEC.md, Fase 6). Firefox and
