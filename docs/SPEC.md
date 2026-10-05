@@ -2238,6 +2238,17 @@ recalibrar contra a coluna "Real". As constantes estão em `AnchorTuning`,
     - O teste de latência passou a contar os quadros acima de 50 ms
       (limite: 5%) em vez da média, que um único quadro travado numa
       máquina ocupada distorcia.
+    - **Piso de quadros do teste de latência: mais de 15 (2026-10-05).**
+      O piso antigo (mais de 30) foi calibrado quando o teste rodava
+      sozinho: o WebKit do CI desenhava 62–79 quadros nos 3 s de medição.
+      Com o teste de F1/F2 no mesmo runner caiu para 27–46, e o 6B-3.1
+      ficou vermelho com 27 sem mudar nada no custo por quadro. O piso
+      existe só para garantir amostra mínima; a asserção real (menos de
+      5% dos quadros com 50 ms ou mais) continua valendo. Abaixo de 16
+      quadros os 5% deixariam de significar um quadro inteiro.
+    - **Solução estrutural, registrada e não implementada:** se a
+      intermitência voltar (neste ou em outro navegador), dividir o job
+      do WebKit em dois — latência isolada + o resto. Custa ~1 min de CI.
 - **6B-3 — overlays geométricos (aprovado 2026-10-04):**
   - **SAB continua na versão 3.** Nada novo no buffer: os dois overlays
     são funções WASM puras do quadro que a main já tem (posições, bola,

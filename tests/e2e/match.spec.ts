@@ -317,7 +317,12 @@ test.describe('Fase 6 (6A): the match runs in the engine worker', () => {
     });
     await page.waitForTimeout(3_000);
     const stats = await page.evaluate(() => ({ ...(globalThis as unknown as Hooks).fmLatency }));
-    expect(stats.frames).toBeGreaterThan(30);
+    // A floor on the sample only, not a frame-rate check. It was 30 when
+    // this test ran alone (62–79 frames in WebKit on CI); with the F1/F2
+    // test sharing the runner WebKit draws 27–46 in these 3 s. Above 15
+    // frames the real assertion below (under 5% of the frames at 50 ms or
+    // more) still means something: a single late frame is enough to see.
+    expect(stats.frames).toBeGreaterThan(15);
     const mean = stats.sumMs / stats.frames;
     testInfo.annotations.push({
       type: 'latency',
