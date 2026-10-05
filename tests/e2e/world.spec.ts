@@ -101,6 +101,13 @@ type Row = { club: number; played: number; won: number; drawn: number; lost: num
  */
 const FIREFOX_TIMEOUT_MS = 180_000;
 
+/**
+ * How long a match worker gets to answer in the tests that kill one: long
+ * enough for a match in the slowest browser with the tests in parallel
+ * (Firefox: about 1 s alone), short enough for the test to see the drop.
+ */
+const MATCH_TIMEOUT_MS = 8_000;
+
 for (const backend of ['opfs', 'idb'] as const) {
   test.describe(`Fase 7B: the world worker (${backend})`, () => {
     test.beforeEach(({ browserName }) => {
@@ -321,6 +328,122 @@ for (const backend of ['opfs', 'idb'] as const) {
       await world(page, 'world.advance', { days: 7 });
       await ask(page, 'meta.set', { key: 'name', value: 'Cancelado' });
       expect(await ask<string>(page, 'save.digest')).toBe(cancelledThenPlayed);
+    });
+
+    test('the pool: a cancel lets the matches under way end, abandons the day and writes nothing', async ({
+      page,
+    }, testInfo) => {
+      await open(page, testInfo.project.name);
+      await openSave(page, 'Cancelado com pool');
+      await startWorld(page, { players: 3 });
+      await world(page, 'world.new', { seed: '2026', userClub: 0 });
+      const stopped = await page.evaluate(async () => {
+        const hooks = globalThis as unknown as WorldHooks;
+        const heard: number[] = [];
+        const stop = hooks.world.onProgress((p) => {
+          heard.push(p.done);
+          if (p.done === 2) hooks.world.cancel();
+        });
+        const result = (await hooks.world.request('world.advance', { days: 14 })) as Advance;
+        stop();
+        return { result, heard };
+      });
+      // Days 0 to 5 were lived and written; day 6, the round, was not.
+      expect(stopped.result).toMatchObject({ daysLived: 6, cancelled: true, timing: [] });
+      expect(stopped.result.summary).toMatchObject({ day: 6, nextRound: 0, matchesToday: 10 });
+      // No match was dealt after the cancel was heard; the ones the three
+      // players had in hand ended. The round was not played to the end.
+      expect(stopped.heard.length).toBeGreaterThanOrEqual(2);
+      expect(stopped.heard.length).toBeLessThan(10);
+      const stored = await ask<Loaded>(page, 'world.load');
+      expect(stored.day).toBe(6);
+      expect(stored.fixtures.every((f) => f.result === null)).toBe(true);
+      // Nobody was dropped for it, and the round played again is the round
+      // a world without a pool, never cancelled, plays.
+      const again = await world<Advance>(page, 'world.advance', { days: 1 });
+      expect(again).toMatchObject({ daysLived: 1, cancelled: false });
+      expect(again.timing.map((t) => [t.round, t.matches, t.players])).toEqual([[0, 10, 3]]);
+      expect((await world<Stats>(page, 'world.stats')).dropped).toEqual([]);
+      await ask(page, 'meta.set', { key: 'name', value: 'o mesmo' });
+      const cancelledThenPlayed = await ask<string>(page, 'save.digest');
+      await openSave(page, 'Direto, sem pool');
+      await startWorld(page);
+      await world(page, 'world.new', { seed: '2026', userClub: 0 });
+      await world(page, 'world.advance', { days: 7 });
+      await ask(page, 'meta.set', { key: 'name', value: 'o mesmo' });
+      expect(await ask<string>(page, 'save.digest')).toBe(cancelledThenPlayed);
+    });
+
+    test('the pool: a match worker that dies is dropped, its match is played by the world worker, same save', async ({
+      page,
+    }, testInfo) => {
+      await open(page, testInfo.project.name);
+      await openSave(page, 'Sem um jogador');
+      await startWorld(page, { players: 2, matchTimeoutMs: MATCH_TIMEOUT_MS });
+      await world(page, 'world.new', { seed: '2026', userClub: 0 });
+      // The first round with both; in the second, one dies with a match in
+      // hand, when the third result comes in.
+      await world(page, 'world.advance', { days: 7 });
+      const lived = await page.evaluate(async () => {
+        const hooks = globalThis as unknown as WorldHooks;
+        const stop = hooks.world.onProgress((p) => {
+          if (p.round === 1 && p.done === 3) hooks.world.killPlayer(0);
+        });
+        const result = (await hooks.world.request('world.advance', { days: 7 })) as Advance;
+        stop();
+        return result;
+      });
+      expect(lived).toMatchObject({ daysLived: 7, cancelled: false });
+      expect(lived.summary.day).toBe(14);
+      const stats = await world<Stats>(page, 'world.stats');
+      expect(stats.players).toBe(1);
+      expect(stats.dropped).toHaveLength(1);
+      expect(stats.dropped[0]).toMatch(/^play \d+: o Worker de partida não respondeu em/);
+      // The third round is played by the one left.
+      const next = await world<Advance>(page, 'world.advance', { days: 7 });
+      expect(next.timing.map((t) => [t.round, t.matches, t.players])).toEqual([[2, 10, 1]]);
+      await ask(page, 'meta.set', { key: 'name', value: 'o mesmo' });
+      const withTheDead = await ask<string>(page, 'save.digest');
+      await openSave(page, 'Direto, sem pool');
+      await startWorld(page);
+      await world(page, 'world.new', { seed: '2026', userClub: 0 });
+      await world(page, 'world.advance', { days: 21 });
+      await ask(page, 'meta.set', { key: 'name', value: 'o mesmo' });
+      expect(await ask<string>(page, 'save.digest')).toBe(withTheDead);
+    });
+
+    test('the pool: when no match worker answers, the world worker plays alone, same save', async ({
+      page,
+    }, testInfo) => {
+      await open(page, testInfo.project.name);
+      await openSave(page, 'Pool que não sobe');
+      await startWorld(page, { players: 2, matchTimeoutMs: MATCH_TIMEOUT_MS });
+      // Both die before they are ever given the world.
+      await page.evaluate(() => {
+        const hooks = globalThis as unknown as WorldHooks;
+        hooks.world.killPlayer(0);
+        hooks.world.killPlayer(1);
+      });
+      await world(page, 'world.new', { seed: '2026', userClub: 0 });
+      const lived = await world<Advance>(page, 'world.advance', { days: 14 });
+      expect(lived).toMatchObject({ daysLived: 14, cancelled: false });
+      // The first round found them out; the second started without a pool.
+      expect(lived.timing.map((t) => [t.round, t.matches, t.players])).toEqual([
+        [0, 10, 2],
+        [1, 10, 0],
+      ]);
+      const stats = await world<Stats>(page, 'world.stats');
+      expect(stats.players).toBe(0);
+      expect(stats.dropped).toHaveLength(2);
+      expect(stats.dropped.every((why) => /^load: o Worker de partida não respondeu em/.test(why))).toBe(true);
+      await ask(page, 'meta.set', { key: 'name', value: 'o mesmo' });
+      const alone = await ask<string>(page, 'save.digest');
+      await openSave(page, 'Direto, sem pool');
+      await startWorld(page);
+      await world(page, 'world.new', { seed: '2026', userClub: 0 });
+      await world(page, 'world.advance', { days: 14 });
+      await ask(page, 'meta.set', { key: 'name', value: 'o mesmo' });
+      expect(await ask<string>(page, 'save.digest')).toBe(alone);
     });
 
     test('reloading the page: the world comes back from the last day committed and goes on', async ({
