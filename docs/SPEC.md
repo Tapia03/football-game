@@ -2238,6 +2238,48 @@ recalibrar contra a coluna "Real". As constantes estão em `AnchorTuning`,
     - O teste de latência passou a contar os quadros acima de 50 ms
       (limite: 5%) em vez da média, que um único quadro travado numa
       máquina ocupada distorcia.
+- **6B-3 — overlays geométricos (aprovado 2026-10-04):**
+  - **SAB continua na versão 3.** Nada novo no buffer: os dois overlays
+    são funções WASM puras do quadro que a main já tem (posições, bola,
+    expulsos, fases, período) mais o elenco (posição de cada jogador), que
+    já vai uma vez por mensagem do worker. `tick_logic` não muda.
+  - **F3 — linha de impedimento, pela regra.** Linha tracejada de lateral
+    a lateral, na cor do time que defende, na profundidade a partir da
+    qual um atacante estaria em posição de impedimento: a **menor** entre
+    a do penúltimo defensor (goleiro conta, expulso não), a da bola e a do
+    meio-campo, contadas da linha de fundo de quem defende. Logo, nunca
+    passa do meio-campo nem fica atrás da bola.
+    - **Quem ataca** sai das fases do snapshot: o time em posse ou em
+      transição ofensiva (com a bola solta os times mantêm a última fase,
+      então a linha continua a do último time com a bola). Em bola parada
+      as duas fases são "bola parada" e o snapshot não diz de quem é a
+      bola: **sem linha**.
+    - **Para que lado** sai do período: o mandante ataca para a direita no
+      primeiro tempo, os lados trocam no intervalo.
+    - **Diferença para o motor, registrada:** o motor usa **só o penúltimo
+      defensor** (`TickFrame::offside_line`), porque não apita impedimento
+      — a linha serve apenas de alvo para as corridas em profundidade, e
+      ele a calcula só para o time com a bola dominada ou na cobrança. O
+      overlay mostra a linha das Regras (penúltimo defensor, bola e
+      meio-campo). Quando o penúltimo defensor está no próprio campo e à
+      frente da bola, as duas coincidem.
+    - **Teste bit a bit:** a parte "penúltimo defensor" do overlay,
+      calculada do snapshot decodificado, é idêntica bit a bit ao
+      `TickFrame::offside_line` do motor em todo tick de partidas inteiras
+      em que o motor tem linha (dois tempos, com expulsões quando houver).
+  - **F4 — linhas de formação.** Por time, uma linha quebrada por setor
+    (defesa, meio-campo, ataque, pela posição de cada jogador; goleiro
+    fora), ligando os jogadores do setor em ordem ao longo da largura do
+    campo. Cor do time, semitransparente, desenhada **sob** os jogadores.
+    Setor com um jogador só não tem linha; expulso sai da linha.
+  - **Input:** F3 e F4 por tecla (`preventDefault`) e por botão, como
+    F1/F2.
+  - **F2 não muda** (as setas ficam como estão; o golden do 6B-2 não é
+    invalidado).
+  - **Golden:** terceiro golden do Chromium (`match-overlays.png`, F3 + F4
+    ligados, seed 7, tick 6.000). Os dois existentes não mudam.
+  - **Limites:** bench de instruções em +0,00% (nada no tick); custo de
+    F3 + F4 abaixo de 1 ms por quadro no Chromium, medido pelo `fmPerf`.
 - `MatchSnapshot` POD em `SharedArrayBuffer`, com ring buffer duplo
   (`ffi/sab.rs`).
 - `fm-wasm` expõe `init_engine(seed)`, `tick_logic()`,
