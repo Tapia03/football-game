@@ -30,18 +30,34 @@ TS, malha como função WASM pura. Latência tick → desenho a 1×: média
   defensor, testado bit a bit) e F4 linhas de formação por setor; terceiro
   golden (`match-overlays.png`). Custo de F3 + F4: +186 vértices, sem
   diferença mensurável por quadro no Chromium.
-- **Em andamento: 6C** painel tático (desenho aprovado em 2026-10-05, no
-  SPEC): mentalidade (já no motor, falta trocar ao vivo), pressing em
-  versão mínima (escala a contenção; só Medium calibrado), tempo visível
-  e desabilitado. Input por `postMessage`, SAB versão 4. Critérios 3 e 5
-  medidos no motor antes da UI. Depois: **6C-2** (overlays de zonas de
-  pressing e opções de passe), **6D** câmera.
+- **6C feito (2026-10-05):** painel tático em DOM (Casa/Visitante,
+  mentalidade, pressão; tempo visível e desabilitado), comando por
+  `postMessage`, SAB versão 4 (táticas na palavra 55; o painel mostra o
+  que o snapshot diz). `MatchEngine::set_tactics` e pressing mínimo no
+  motor (escala a contenção fora da área; só Medium calibrado, bit a bit
+  com antes). Critério 3: Defensive → Attacking sobe o bloco ≥ 10,0 m em
+  5 s (pela página: +14,1 m). Critério 5: distância ao portador nos 5 s
+  depois da troca 4,07 / 3,46 / 2,20 m (Low / Medium / UltraHigh; pela
+  página: 2,37 → 1,39 m). Partida = função de (seed, comandos com tick),
+  testado bit a bit pela página. Três goldens refeitos.
+- **Próximo: 6D** câmera (desenho antes do código). **Pendente: 6C-2**
+  (overlays de zonas de pressing e opções de passe; trabalho de motor +
+  render, desenho próprio).
+
+**Bench:** referência atualizada para 582.952.421 instruções no fim do 6C
+(era 590.430.506; caiu 1,27% no 6C.2 com a paridade inalterada).
 
 **Dívidas do painel tático (registradas no 6C):**
 - **Pressing sem fadiga.** No futebol real, pressing alto cobra o time
-  aos 60–70 min. O motor não tem fadiga: UltraHigh tende a ser
-  estritamente melhor que Low e o controle perde significado. Candidato
-  a (c2) ou a uma fase de fadiga.
+  aos 60–70 min. O motor não tem fadiga. Candidato a (c2) ou a uma fase
+  de fadiga.
+  - **Achado (estimativa, 12 partidas, não fato):** mesmo sem fadiga,
+    UltraHigh **não** é estritamente melhor. Só o mandante mudando de
+    nível, gols sofridos: Low 4,00, Medium 2,67, High 2,75, UltraHigh
+    6,58 — quem contém a 1–2 m é batido e sobra espaço atrás. Emergente,
+    não calibrado: o motor já tem trade-off real de posicionamento. A
+    fadiga acrescentaria o custo ao longo do tempo, que continua
+    faltando. Tabela completa no SPEC (6C).
 - **Sem IA tática.** Quando o usuário muda um time, o outro continua com
   as táticas padrão: não responde a Attacking com Cautious, não muda com
   o placar nem com o relógio. Fase futura "IA tática" ou (d).
@@ -338,8 +354,17 @@ desta máquina são outras).
 2. Baixar o artefato (`gh run download <run> -n golden-chromium`) e
    commitar a imagem em `tests/golden/chromium/`.
 3. 2º push: verde.
-O mesmo vale quando uma mudança visual intencional invalida um golden:
-apagar a referência antiga, e repetir.
+**Substituir um golden que já existe custa dois pushes vermelhos, não
+um** (aprendido no 6C; vale para 6C-2, 6D e Fase 7): enquanto a
+referência antiga existir, o teste falha na comparação, para ali (as
+capturas seguintes do mesmo teste nem são tiradas) e o artefato devolve
+a própria referência antiga. Então:
+1. push da mudança visual — vermelho no golden (esperado);
+2. push que **remove** as referências afetadas (`git rm`) — vermelho, e o
+   artefato `golden-chromium` traz as novas;
+3. push com as novas — verde.
+Para economizar um push: remover as referências **no mesmo commit** da
+mudança visual.
 
 **Playwright local (instalado em 2026-10-04):** `npx playwright install`
 foi rodado nesta máquina; `npx playwright test` roda os e2e localmente

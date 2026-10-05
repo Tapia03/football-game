@@ -2395,7 +2395,24 @@ recalibrar contra a coluna "Real". As constantes estão em `AnchorTuning`,
   - **Bench depois do 6C.2:** 582.952.421 instruções (**−1,27%** sobre a
     referência de 590.430.506), com a referência de paridade inalterada:
     a mesma partida, código gerado diferente em `containment_point`. A
-    referência do bench não foi atualizada (decisão do usuário).
+    referência do bench foi atualizada para 582.952.421 no fim do 6C (a
+    referência é "o que foi aceito por último"; em 590M o gate de +1,5%
+    aceitaria até +2,8% reais).
+  - **6C implementado (2026-10-05), medido no CI:**
+    - **Critérios pela página** (e2e, os três navegadores, seed 7): o
+      painel põe a pressão em UltraHigh no tick 3.000 → distância da bola
+      ao mandante de linha mais próximo, com a bola do visitante, 2,37 →
+      1,39 m nos 5 s seguintes (50 ticks); o painel troca Defensive →
+      Attacking no tick 4.000 → bloco +14,1 m aos 5 s. Medidos em slots
+      de referência; o slot publicado pelo worker bate **bit a bit** com
+      a referência que recebe os mesmos comandos nos mesmos ticks.
+    - Latência tick → desenho a 1×: Chromium 19,2 ms (máx. 25,7), WebKit
+      18,7 ms (máx. 21,7), Firefox 18,7 ms (máx. 21,7).
+    - **Goldens (Chromium):** os três refeitos com o painel na página.
+    - **Overhead de F3 + F4 no WebKit:** um run mediu 1,04 ms (base 0,62
+      → 1,66 ms) sem mudança de código; a malha + desenho do WebKit do CI
+      oscila 0,6–1,7 ms entre medições. O limite de 1 ms passa a valer só
+      no Chromium (onde é a regra); o WebKit só reporta no log.
 - `MatchSnapshot` POD em `SharedArrayBuffer`, com ring buffer duplo
   (`ffi/sab.rs`).
 - `fm-wasm` expõe `init_engine(seed)`, `tick_logic()`,
