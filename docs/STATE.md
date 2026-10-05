@@ -2,13 +2,150 @@
 
 Resumo de uma tela que sobrevive a compactações de sessão. A fonte de verdade
 de arquitetura e regras é o [`docs/SPEC.md`](SPEC.md); este arquivo só diz
-*onde estamos*. Atualizado em **2026-10-04** (fechamento de (c1) da Fase 5; PR `fase-5` → `main` aberto, aguardando merge).
+*onde estamos*. Atualizado em **2026-10-05** (Fase 6 completa — 6A, 6B, 6C, 6D — em PR para a `main`).
 
-## Fase atual — Fase 5 (c1) FECHADA, PR aberto
+## Ordem geral (redefinida pelo usuário em 2026-10-05)
+Fases 0–6 fechadas. A ordem nova, que **substitui** a anterior ("Bola
+longa" antes da UI):
+
+1. **Fase 7 — MVP de gerenciamento** (próxima; começa depois do merge do
+   PR da Fase 6).
+2. **Fase 8 — Bola longa + contraparte defensiva** (pausada até a Fase 7
+   fechar).
+3. **Fase 9 — Resto do gerenciamento:** mercado, contratos, finanças,
+   ligas múltiplas, copas — e o que o SPEC chamava de "Fase 7" (UI da
+   partida, botão simular, painel tático só do clube do usuário, zoom e
+   pan).
+4. **Fase 10 — Polimento e comunidade:** packs, auth, sync.
+
+**Motivo:** depois das Fases 0–6 o projeto é um motor de partida com um
+spike visual, não um jogo de gerenciamento jogável. O MVP vem antes de
+refinar o motor para (1) provar que é um jogo de gerenciamento, (2)
+descobrir problemas estruturais — persistência, custo de simulação em
+background, UX de avançar dia, comunicação entre Workers — enquanto o
+código é pequeno, e (3) ter feedback visual do motor no contexto real,
+para orientar a próxima rodada de refinamento.
+
+**Fase 7 em quatro sub-fases, um PR cada, CI verde antes da próxima:**
+- **7A — Persistência local:** SQLite em WASM num Web Worker dedicado,
+  OPFS com fallback para IndexedDB, schema mínimo (players, clubs,
+  competitions, matches, saves, tactics), escrita atômica, export/import
+  do save, `navigator.storage.persist()`, protocolo entre Workers.
+  Desenho antes do código.
+- **7B — Mundo mínimo e calendário:** bootstrap determinístico (1 liga,
+  20 clubes, ~500 jogadores sintéticos — sem a base FM real), round-robin
+  de 38 rodadas / 380 partidas, `WorldSimulator` num Worker com LOD
+  Abstract para todas as partidas de background (o `MatchEngine` que já
+  existe), save a cada dia, avançar dia com barra de progresso.
+- **7C — Telas básicas:** meus saves, elenco, tática (formação e papel
+  por slot), calendário, classificação, botão "Avançar dia" sempre
+  visível. Svelte.
+- **7D — Integração com o 2D:** "Assistir partida" abre o render da Fase
+  6 em LOD Full; ao fim volta ao calendário. Nenhum motor novo.
+
+**Regras da Fase 7:** uma pergunta por vez; **não mexer no motor** (se o
+MVP precisar, PARAR e trazer a proposta); determinismo bit a bit e
+`test_cross_lod_consistency` continuam bloqueantes; bench no orçamento.
+
+**Fora do MVP (Fase 9 ou depois):** base FM real; mercado, contratos,
+finanças, diretoria, imprensa, base, seleções; ligas múltiplas, copas,
+continentais; overlays táticos avançados no 2D (inclui o 6C-2); auth e
+sync; modding / packs.
+
+**Nome:** o jogo ainda não tem nome; nos documentos, "o jogo" ou "o
+projeto".
+
+Sem lugar na ordem ainda: (c2) e (d) da Fase 5 (das quais depende o
+6C-bis), fadiga, IA tática.
+
+## Fase 6 (render) — completa, em PR
+**Fase 6 — Snapshot + Renderer2D + Canvas**, branch `fase-6` (criada de
+`main` em `6ae001a`, depois do merge do PR #6). Partes: **6A** infra de
+render (worker + SAB + interpolação) → 6B HUD e overlays → 6C painel
+tático (mentalidade, tempo, pressing) → 6D câmera. 6C-bis (comportamentos
+por papel) fica para depois de (d). Desenho do 6A no SPEC, Fase 6.
+
+**6A feito** (commits `faf5cdf`, `d05bcc3`, `ce1fde4`, `534e549` e o de
+testes): motor no worker, anel de snapshots no SAB (208 bytes × 16), 60
+snapshots por segundo publicados adiantados, a main lê e interpola em
+TS, malha como função WASM pura. Latência tick → desenho a 1×: média
+18,9 ms, máximo 22,7 ms.
+
+**6B em três commits visuais:**
+- **6B-1 feito:** SAB versão 2 (período, cartões, posse), HUD em DOM,
+  `run_to`, primeiro golden.
+- **6B-2 feito:** SAB versão 3 (288 bytes por posição: estatísticas de
+  time, com o xG relido de fora do tick e testado bit a bit contra o
+  motor), painel lateral, toggles F1 (rótulos: número + posição; o projeto
+  ainda não tem nomes) e F2 (vetores de velocidade), dois goldens.
+- **6B-3 feito:** overlays geométricos como funções WASM puras do
+  snapshot (SAB continua na versão 3): F3 linha de impedimento pela regra
+  (penúltimo defensor, bola e meio-campo; o motor usa só o penúltimo
+  defensor, testado bit a bit) e F4 linhas de formação por setor; terceiro
+  golden (`match-overlays.png`). Custo de F3 + F4: +186 vértices, sem
+  diferença mensurável por quadro no Chromium.
+- **6C feito (2026-10-05):** painel tático em DOM (Casa/Visitante,
+  mentalidade, pressão; tempo visível e desabilitado), comando por
+  `postMessage`, SAB versão 4 (táticas na palavra 55; o painel mostra o
+  que o snapshot diz). `MatchEngine::set_tactics` e pressing mínimo no
+  motor (escala a contenção fora da área; só Medium calibrado, bit a bit
+  com antes). Critério 3: Defensive → Attacking sobe o bloco ≥ 10,0 m em
+  5 s (pela página: +14,1 m). Critério 5: distância ao portador nos 5 s
+  depois da troca 4,07 / 3,46 / 2,20 m (Low / Medium / UltraHigh; pela
+  página: 2,37 → 1,39 m). Partida = função de (seed, comandos com tick),
+  testado bit a bit pela página. Três goldens refeitos.
+- **6D feito (2026-10-05):** câmera como função WASM pura (vista
+  parametrizada, alvo com zona morta, blend exponencial de 100 ms que
+  assenta exato em ≤ 0,8 s): FullPitch, HalfPitch (2×, segue a bola),
+  Tactical (zoom-out + rótulos e linhas de formação automáticos, sem
+  mexer nos toggles); tecla `C` cicla, `1`/`2`/`3` direto, botões no
+  rodapé. Custo por quadro: +0,08 ms (HalfPitch), +0,44 ms (Tactical).
+  Velocidades 1×/2×/5×/10×/30×/60×. Cinco goldens. Aprovado visualmente
+  pelo usuário ("os 3 modos estão ótimos"). Zoom/pan manuais ficam para
+  a Fase 7.
+- **6C-2: pendente, depois da Fase 8 ("Bola longa")** (overlays de zonas de
+  pressing e opções de passe; trabalho de motor + render, desenho e PR
+  próprios). Não entra no PR da Fase 6.
+- **Fase 9 (a antiga "Fase 7" do SPEC), já registrado:** botão **"Simular partida"** (LOD Abstract,
+  tela de resultado com placar, estatísticas e eventos, botão voltar). A
+  infraestrutura existe; o custo é UI.
+
+**Bench:** referência atualizada para 582.952.421 instruções no fim do 6C
+(era 590.430.506; caiu 1,27% no 6C.2 com a paridade inalterada).
+
+**Dívidas do painel tático (registradas no 6C):**
+- **Pressing sem fadiga.** No futebol real, pressing alto cobra o time
+  aos 60–70 min. O motor não tem fadiga. Candidato a (c2) ou a uma fase
+  de fadiga.
+  - **Achado (estimativa, 12 partidas, não fato):** mesmo sem fadiga,
+    UltraHigh **não** é estritamente melhor. Só o mandante mudando de
+    nível, gols sofridos: Low 4,00, Medium 2,67, High 2,75, UltraHigh
+    6,58 — quem contém a 1–2 m é batido e sobra espaço atrás. Emergente,
+    não calibrado: o motor já tem trade-off real de posicionamento. A
+    fadiga acrescentaria o custo ao longo do tempo, que continua
+    faltando. Tabela completa no SPEC (6C).
+- **Sem IA tática.** Quando o usuário muda um time, o outro continua com
+  as táticas padrão: não responde a Attacking com Cautious, não muda com
+  o placar nem com o relógio. Fase futura "IA tática" ou (d).
+- **Seletor Casa/Visitante é provisório.** Na Fase 7 só o lado do clube
+  do usuário é controlável; o seletor some ou trava.
+- **Tempo** não existe no motor (pergunta de modelo; encosta na soltura
+  forçada, dívida da (c1)).
+
+**Piso do teste de latência:** mais de 15 quadros em 3 s (amostra mínima,
+não taxa de quadros); o WebKit do CI desenha 27–46 quando divide o runner
+com o teste de F1/F2. Se a intermitência voltar: dividir o job do WebKit
+(latência isolada + resto) — registrado no SPEC, não implementado.
+
+**Cuidado ao rodar os e2e localmente:** se uma aba (inclusive o painel de
+navegador do Claude) estiver aberta numa página da partida, ela disputa a
+CPU com o WebGL por software dos testes e os testes de tempo (latência,
+`runTo`) falham de forma intermitente. Fechar ou navegar essa aba para
+outra página antes de rodar.
+
+## Fase anterior — Fase 5 (c1), mergeada
 **Fase 5 — Role Behaviors**, branch `fase-5`. O usuário decidiu (2026-10-04)
-fechar (c1) no motor do 5D-2 (`f17b1d9`) e abrir o PR `fase-5` → `main`.
-**Depois do merge: Fase 6 (render completo).** Antes de começar a Fase 6,
-verificar que o PR foi mergeado (SPEC, Seção 0, item 5).
+fechar (c1) no motor do 5D-2 (`f17b1d9`); PR #6 mergeado em `6ae001a`.
 
 ### O que a fase entrega (motor de `f17b1d9`, 180 partidas por orientação)
 | Métrica por partida | Fase 5 (c1) | Real (aprox.) |
@@ -56,7 +193,17 @@ verificar que o PR foi mergeado (SPEC, Seção 0, item 5).
 - **Por que não foi aplicado:** falta a contraparte defensiva. A bola longa
   por cima da defesa passa a chegar e nada a contém.
 
-### Fase futura (sem prazo): "Bola longa + contraparte defensiva"
+### Fase 8: "Bola longa + contraparte defensiva" (pausada até a Fase 7 fechar)
+- **Branch:** nasce da `main` depois do merge da Fase 7.
+- **Quatro componentes, time-box por componente (não escopo fechado):**
+  patch do passe pelo alto (pronto; provavelmente o primeiro, para medir
+  o efeito puro), goleiro saindo do gol, impedimento apitado, marcação
+  de corredores redesenhada.
+- **Para fechar a fase:** gols ≤ 3,5 por partida **e** os quatro
+  componentes no lugar. Se a marcação de corredores falhar de novo, o
+  número não fecha sozinho. Se passar de 3,5: PARAR e reescopar.
+- **3,5 é "aceitável", não "bom"** (real ~2,7): se fechar em ≤ 3,5, a
+  diferença fica como dívida no backlog de refinamento.
 - **Pré-requisito:** aplicar o patch acima.
 - **Escopo:** (1) goleiro saindo do gol (interceptar, cortar cruzamento,
   líbero) — o antigo passo 2.5; (2) impedimento apitado, com tiro livre;
@@ -250,7 +397,7 @@ iniciados.
 
 ### Comandos para retomar
 ```sh
-git checkout fase-5
+git checkout fase-6
 cargo test --workspace --release
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo fmt --all -- --check
@@ -261,21 +408,67 @@ cargo bench -p fm-match --bench instructions
 UPDATE_GOLDEN=1 cargo test -p fm-match --release --lib parity
 # Calibrador (180 partidas, 4-3-3 e 4-4-2):
 FM_FORMATIONS=433,442 cargo run --release -p fm-match --features diagnostics --example calibrate
-# Spike visual: push em qualquer branch spike-* dispara o deploy
+# Preview: push em qualquer branch fase-* (ou spike-*) dispara o deploy
 # (.github/workflows/deploy.yml) e publica em
 # https://<branch>.football-game-b5k.pages.dev
 ```
-**Regra do spike local (2026-10-03):** o usuário vê o jogo no worktree
-`../football-game-spike` (branch `spike-render-v2`, `npm run dev` em
-`http://localhost:5173`). Sempre que ele pedir para atualizar o spike:
-(1) `git merge fase-5` nesse worktree; (2) `npm run wasm` nele; (3)
-informar qual commit da `fase-5` está rodando. Sem isso o navegador mostra
-um motor antigo sem avisar. O deploy remoto (`spike-render-v2` no
-Cloudflare) só muda com push, que é pedido à parte.
+**Ver o jogo a partir da Fase 6 (2026-10-04):** o render agora está na
+própria branch `fase-6`; os spikes ficaram para trás.
+- **Remoto:** todo push em `fase-*` publica um preview no Cloudflare Pages:
+  https://fase-6.football-game-b5k.pages.dev
+- **Local:** `git checkout fase-6 && npm ci && npm run build && npm run
+  preview`, depois http://localhost:4173 (ou `npm run dev`, porta 5173).
+- O worktree `../football-game-spike` (branch `spike-render-v2`, motor do
+  5D-2 com o render antigo, sem worker) não é mais atualizado.
 
-Para atualizar o spike com um motor novo: refazer `spike-render-v2` a
-partir da `fase-5` e copiar só os arquivos de render da `fase-6-v0` (ver o
-commit `d6f433a`).
+**Golden de pixel (só Chromium) — fluxo de dois pushes:** a referência
+tem de ser a imagem que o Chromium do CI produz (fontes e rasterização
+desta máquina são outras).
+1. 1º push com o teste novo: o job `test-e2e (chromium)` fica **vermelho**
+   ("snapshot doesn't exist"); o Playwright grava a imagem obtida e o job
+   a sobe no artefato `golden-chromium`.
+2. Baixar o artefato (`gh run download <run> -n golden-chromium`) e
+   commitar a imagem em `tests/golden/chromium/`.
+3. 2º push: verde.
+**Substituir um golden que já existe custa dois pushes vermelhos, não
+um** (aprendido no 6C; vale para 6C-2, 6D e Fase 7): enquanto a
+referência antiga existir, o teste falha na comparação, para ali (as
+capturas seguintes do mesmo teste nem são tiradas) e o artefato devolve
+a própria referência antiga. Então:
+1. push da mudança visual — vermelho no golden (esperado);
+2. push que **remove** as referências afetadas (`git rm`) — vermelho, e o
+   artefato `golden-chromium` traz as novas;
+3. push com as novas — verde.
+**Câmera (6D), constante da suavização — não mexer antes de ver em ação:**
+- Está em 100 ms (`camera::SMOOTH_MS`). O critério "assentar em ≤ 1 s" é
+  sobre o **golden** (chegar exatamente no alvo para a captura ser
+  reproduzível), não sobre a sensação (95% do caminho em 300 ms).
+- O salto final a 1 cm é conservador: 5 cm já é 1 pixel a 2× de zoom.
+- Se depois do 6D.3 o HalfPitch parecer nervoso, a primeira alavanca é
+  subir a constante para 120–125 ms (alvo exato em ~0,98 s no pior caso).
+
+**Playwright local trava ao encerrar (2 vezes até o 6D.2):** quando é o
+próprio Playwright que sobe o `npm run build && npm run preview`, os
+testes terminam mas o processo não sai (não derruba o servidor no
+Windows) e o resumo final não é impresso. Contorno: ler o log dos testes;
+com um preview já no ar na 4173 ele reaproveita e encerra normal. Se
+acontecer de novo no 6D.3, investigar.
+
+**Padrão do projeto (6C-2, 6D, Fase 7):** remover as referências **no
+mesmo commit** da mudança visual reduz de dois para um push vermelho.
+
+**Playwright local (instalado em 2026-10-04):** `npx playwright install`
+foi rodado nesta máquina; `npx playwright test` roda os e2e localmente
+(sobe `npm run build && npm run preview` na porta 4173) em ~45 s: fora do
+CI a configuração usa 2 workers — com um worker por núcleo as páginas,
+que desenham com WebGL por software, saturam a máquina (a primeira
+tentativa travou por 30 min). O teste de golden de pixel é pulado fora do
+CI (a referência é do Chromium do CI, Linux); `FM_GOLDEN=1` força a
+comparação local.
+
+**`npm run dev` com o worker e o SAB:** funciona sem ajuste — o servidor de
+dev envia COOP/COEP (`vite.config.ts`). Só não sobe se a porta 5173
+estiver ocupada (`strictPort`); nesse caso `npx vite --port 5174`.
 
 ## PRs
 | PR | Conteúdo | Estado |
@@ -284,7 +477,8 @@ commit `d6f433a`).
 | Tapia03/football-game#2 | Fase 2 | mergeado |
 | Tapia03/football-game#4 | Fase 3 + SPEC v2.1 + glow | mergeado |
 | Tapia03/football-game#5 | Fase 4 | mergeado |
-| — | Fase 5 (`fase-5`) | aberto em 2026-10-04 ((c1) fechada); aguardando merge |
+| Tapia03/football-game#6 | Fase 5 (c1) | mergeado (`6ae001a`) |
+| — | Fase 6 (`fase-6`) | abre quando a fase fechar com CI verde |
 
 Branch `spike-render`: nunca mergeia (spike visual do render).
 

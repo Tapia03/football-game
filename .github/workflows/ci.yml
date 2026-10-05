@@ -33,6 +33,9 @@ jobs:
       - run: cargo clippy -p fm-match --all-targets --all-features -- -D warnings
       - run: cargo clippy --workspace --all-targets --target wasm32-unknown-unknown -- -D warnings
       - run: cargo test --workspace
+      # The xG the engine worker reads back from outside the tick must be
+      # the resolver's, bit for bit (needs the engine-side sum: diagnostics).
+      - run: cargo test --release -p fm-match --features diagnostics --lib struck_shot_xg
 
   stable-canary:
     name: stable-canary (latest stable, informative)
@@ -151,6 +154,16 @@ jobs:
           name: evidence-${{ matrix.browser }}
           path: evidence/
           if-no-files-found: warn
+      # Pixel goldens (Chromium only) are produced by this runner: when a
+      # reference is missing Playwright writes the image it got here, to be
+      # downloaded and committed (docs/STATE.md, "Golden de pixel").
+      - name: Upload pixel goldens as rendered here
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-${{ matrix.browser }}
+          path: tests/golden/${{ matrix.browser }}/
+          if-no-files-found: ignore
       - name: Upload Playwright report
         if: failure()
         uses: actions/upload-artifact@v4

@@ -8,6 +8,10 @@ export default defineConfig({
   snapshotPathTemplate: 'tests/golden/{projectName}/{arg}{ext}',
   fullyParallel: true,
   forbidOnly: isCI,
+  // Every page draws the match with software WebGL as fast as it can: with
+  // one worker per core a local run saturates the machine (minutes, flaky
+  // timeouts). Two workers finish the three browsers in under a minute.
+  ...(isCI ? {} : { workers: 2 }),
   retries: 0,
   reporter: isCI ? [['list'], ['html', { open: 'never' }]] : 'list',
   use: {

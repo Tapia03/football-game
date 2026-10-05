@@ -12,6 +12,8 @@ const crossOriginIsolation = {
 export default defineConfig({
   root: 'frontend',
   plugins: [svelte()],
+  // The engine worker is an ES module (it imports the wasm-bindgen glue).
+  worker: { format: 'es' },
   build: {
     outDir: '../dist',
     emptyOutDir: true,

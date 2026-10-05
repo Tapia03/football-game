@@ -317,7 +317,14 @@ pub trait Renderer2D {
 
 **Regras:**
 - A `DrawList` é montada por código seguro e independente de backend
-  (campo → sombras → jogadores → bola → labels → overlays → HUD).
+  (campo → sombras → jogadores → bola → labels → overlays).
+- **O HUD não é desenhado pelo renderer `[ALTERADO v2.1]`** (decisão
+  consciente, 2026-10-04; antes a lista terminava em "→ HUD"): placar,
+  cronômetro, cartões, posse e painéis de estatística são DOM (Svelte)
+  por cima e em volta do canvas. Texto em WebGL pediria um atlas de
+  fonte; em DOM o HUD é testável por texto no Playwright e acessível de
+  graça. O canvas fica com o campo, os jogadores, a bola e os overlays
+  geométricos.
 - O backend só traduz a `DrawList` em chamadas de GPU.
 - Câmera com 3 modos: `FullPitch`, `HalfPitch` (segue a bola) e
   `Tactical`.
@@ -420,6 +427,21 @@ Uma fase por vez, na branch `fase-N`. Ao final de cada uma:
 7. Relatório: screenshots, benchmarks e saída dos testes.
 
 Se algum teste falhar: PARAR e reportar o log completo com hipóteses.
+
+**Renumeração das fases depois da 6 (2026-10-05).** A ordem geral foi
+redefinida pelo usuário (motivo e detalhes no STATE). Os títulos abaixo
+da Fase 6 guardam a numeração antiga; vale esta:
+
+| Nova | Conteúdo | Títulos antigos abaixo |
+|---|---|---|
+| **Fase 7** | MVP de gerenciamento: 7A persistência local (SQLite WASM + OPFS), 7B mundo mínimo e calendário, 7C telas básicas, 7D integração com o 2D | parte da antiga "Fase 12 — World Simulator" |
+| **Fase 8** | Bola longa + contraparte defensiva (motor) | — (está no STATE) |
+| **Fase 9** | Resto do gerenciamento: mercado, contratos, finanças, ligas múltiplas, copas; UI da partida | antigas "Fase 7 — UI + Overlays Táticos" e "Fase 11 — Motor Econômico" |
+| **Fase 10** | Polimento e comunidade: packs, auth, sync | antigas "Fase 8 — Auth" e "Fase 9 — Sync" |
+
+As antigas "Fase 10 — PWA" e "Fase 13 — Demo + Deploy" ainda não têm
+lugar na ordem nova. O desenho de cada sub-fase da Fase 7 entra aqui
+quando for aprovado.
 
 ## FASE 0 — Bootstrap ✅
 Workspace, Vite + Svelte 5 + TS strict, `wasm-pack`, Playwright nos 3
@@ -2066,6 +2088,424 @@ recalibrar contra a coluna "Real". As constantes estão em `AnchorTuning`,
   - Tight Marking: a distância média cai 2 m.
 
 ## FASE 6 — Snapshot + Renderer2D (glow/WebGL2) + Canvas `[ALTERADO v2.1]`
+- **Plano da Fase 6 em quatro partes (aprovado 2026-10-04)
+  `[ALTERADO v2.1]`:** 6A infra de render (worker + SAB + interpolação);
+  6B HUD e overlays básicos; 6C painel tático em tempo real (mentalidade,
+  tempo, pressing; critérios 3 e 5 dos aceites); 6D câmera. Os
+  comportamentos por papel (Overlap Left, Counter Attack, Tight Marking,
+  Offside Trap), as setas de instrução e o critério 4 ficam no **6C-bis,
+  depois de (d)**: não existem no motor e não entram como meia
+  implementação. Um push por commit; instruções > +1,5% ou bench
+  quebrado: parar.
+- **6A — desenho aprovado `[ALTERADO v2.1]`:**
+  - **Um estado de partida só, no worker.** `engine.worker.ts` instancia
+    o WASM com o `MatchEngine`, mantém o relógio da partida (tempo real ×
+    velocidade), roda `tick_logic` e publica snapshots no
+    `SharedArrayBuffer`. A main thread **não tem motor**: lê o SAB por
+    `Int32Array`/`Float32Array`, interpola em TypeScript e chama funções
+    WASM **puras** (montagem de malha, depois overlays) que recebem o
+    snapshot por parâmetro, mais o backend glow, que só guarda o contexto
+    GL. Reconsiderar só se um overlay do 6B precisar de estado do motor.
+  - **Sem threads no WASM.** O Rust não endereça o SAB como memória:
+    codifica o snapshot num buffer próprio e copia para uma visão
+    tipada criada sobre o SAB (API segura do `js-sys`). Não exige build
+    com atomics nem `unsafe` novo; `fm-render/src/ffi/sab.rs` continua
+    vazio.
+  - **Controle** (iniciar, pausar, velocidade, seed): `postMessage` da
+    main para o worker. O SAB só leva snapshots.
+  - **Layout do SAB** (little-endian; versão no cabeçalho):
+    - Cabeçalho, 64 bytes (16 × i32): `[0]` magic + versão, `[1]`
+      contador de escrita (atômico), `[2]` posições do anel (16), `[3]`
+      bytes por posição (208), `[4]` estado (rodando, pausado, fim),
+      `[5]` velocidade × 1000, `[6]` seed, `[7]` relógio da partida no
+      worker (ms; a main desenha um intervalo de amostra atrás dele),
+      `[8]` relógio de parede do último passo do worker (para medir a
+      latência), `[9..16]` reservado.
+    - Posição, 208 bytes: i32 `tick`; i32 `t_ms`; i32 placar (um byte
+      por time); i32 fases dos dois times; i32 máscara de 22 bits dos
+      expulsos; f32 × 3 bola (x, y, z); f32 × 44 jogadores (x, y), na
+      ordem do motor. Lado e número saem do índice.
+    - Total: 64 + 16 × 208 = 3.392 bytes.
+  - **Anel sem locks, um escritor e um leitor:** o escritor grava a
+    posição `seq % 16` e só depois publica `seq + 1` com `Atomics.store`.
+    O leitor lê o contador, copia as posições de que precisa e confere o
+    contador de novo; se o escritor avançou 15 ou mais posições no meio,
+    repete.
+  - **60 snapshots por segundo, publicados adiantados:** logo depois de
+    cada `tick_logic` o worker grava os 6 instantes do LOD `Full` (0,
+    17, 33, 50, 67, 83 ms) do intervalo seguinte — as trajetórias são
+    funções puras do tempo dentro do tick. A main desenha um intervalo de
+    amostra atrás e interpola linearmente entre dois snapshots vizinhos.
+    Latência estimada tick → pixel: ~20–40 ms a 1×; medir no 6A e
+    revisar se passar de 50 ms. A alternativa de 10 snapshots por segundo
+    (100–120 ms) foi rejeitada.
+  - **Ordem dos commits:** (1) motor no worker + SAB; (2) grade de 60
+    por segundo; (3) render na main lendo o SAB e interpolando em TS;
+    (4) helpers de malha como funções WASM puras; (5) testes
+    (determinismo pelo SAB, latência medida, partida roda).
+  - **6A implementado (2026-10-04):**
+    - `fm-wasm::sab` (layout, `encode`/`decode`, `tick_frames`),
+      `EngineHost` (o único `MatchEngine`, no worker), `fm-wasm::mesh`
+      (`frame_mesh`, pura) e `MatchCanvas` (só o contexto GL);
+      `engine.worker.ts`, `engine-bridge/sab.ts` (`SnapshotReader`) e
+      `render/interpolate.ts` (`FrameInterpolator`).
+    - **Latência tick → desenho, medida** (intervalo de amostra + defasagem
+      do relógio do worker no instante do desenho; não inclui o atraso de
+      apresentação do quadro): a 1×, **média 18,9 ms, máximo 22,7 ms**
+      (1.155 quadros, Chromium local, com o desenho ligado); a 10×, média
+      3,8 ms. Dentro da estimativa de 20–40 ms e do limite de 50 ms.
+    - **Determinismo pelo anel:** o snapshot que o worker publica num
+      tick é igual, bit a bit, ao de um motor novo rodado até o mesmo
+      tick (`reference_slot`, função pura).
+    - **Testes:** Rust — layout (208 bytes, 3.392 no total), volta do
+      anel, ida-e-volta bit a bit, grade de 60 Hz sem buraco, malha pura
+      e em espaço de clip. Playwright (`tests/e2e/match.spec.ts`) —
+      partida roda e a velocidade responde; cabeçalho do SAB; determinismo
+      pelo anel; latência < 50 ms a 1×. No Firefox do CI (sem WebGL) a
+      partida roda e só o desenho é dispensado.
+    - **Custo:** `tick_logic` não mudou (bench de instruções em +0,00%).
+- **6B em três commits visuais (aprovado 2026-10-04):** 6B-1 extensão do
+  SAB + HUD básico; 6B-2 painel lateral de estatísticas + toggles (F1
+  nomes, F2 vetores de velocidade); 6B-3 overlays geométricos (linha de
+  impedimento, linhas de formação). Desenho de cada um aprovado antes do
+  código.
+- **6B-1 — SAB versão 2 + HUD básico `[ALTERADO v2.1]`:**
+  - **Layout versão 2** (`magic = 0x464D0002`): a posição vai de 52 para
+    **56 palavras (224 bytes)**; buffer de 64 + 16 × 224 = **3.648
+    bytes**. Só acrescenta no fim; os campos do 6A não mudam de lugar.
+    - palavra 3, bits 16–23: período (0 = primeiro tempo, 1 = segundo);
+    - palavra 52: cartões, um byte cada — amarelos da casa, vermelhos da
+      casa, amarelos do visitante, vermelhos do visitante;
+    - palavras 53 e 54: ticks com a bola dominada pela casa e pelo
+      visitante, acumulados;
+    - palavra 55: reservada (zero).
+  - **De onde vêm:** `sab::Hud`, no worker, observa o motor depois de
+    cada tick (eventos novos de cartão; quem tem a bola dominada). O
+    `tick_logic` não muda. Teste: os contadores batem com a lista de
+    eventos e o estado da bola numa partida inteira (3 seeds).
+  - **HUD (DOM):** barra superior com nome dos times, cartões amarelos e
+    vermelhos de cada lado, placar, cronômetro e período; abaixo, a faixa
+    de posse com as duas porcentagens (somam 100; 50/50 antes da primeira
+    posse). Nenhuma função WASM de render nova.
+  - **`EngineHost::run_to(tick)`** (comando `runTo` do worker): roda a
+    partida até um tick exato e pausa. Necessário para o golden de pixel
+    ser reproduzível, já que a partida segue o relógio real.
+  - **Golden de pixel (só Chromium):** `tests/golden/chromium/match-hud.png`
+    — seed 7, tick 6.000 (09:59), página inteira, tolerância de 1%. A
+    referência é a imagem produzida pelo Chromium do CI (o job sobe
+    `tests/golden/<navegador>/` como artefato `golden-<navegador>`).
+  - **Testes:** Rust — layout (224 bytes, 3.648 no total, campos antigos
+    no lugar), ida-e-volta bit a bit com os campos novos, contadores do
+    HUD. Playwright — HUD contra o snapshot lido do anel (cartões, posse,
+    período), nos três navegadores; golden no Chromium.
+- **6B-2 — SAB versão 3 + painel de estatísticas + toggles
+  `[ALTERADO v2.1]` (desenho aprovado 2026-10-04):** quatro commits — (1)
+  SAB v3 + contadores do worker; (2) painel lateral em DOM; (3) toggles
+  F1/F2 + botões; (4) goldens.
+  - **Layout versão 3** (`magic = 0x464D0003`): a posição vai de 56 para
+    **72 palavras (288 bytes)**; buffer de 64 + 16 × 288 = **4.672
+    bytes**. Só acrescenta no fim.
+    - palavras 56–62 (casa) e 63–69 (visitante): chutes, chutes no alvo,
+      xG (f32), passes tentados, passes completos, botes, faltas
+      cometidas;
+    - palavras 70–71: reservadas (zero).
+  - **De onde vêm:** chutes, no alvo, passes e botes são os contadores do
+    próprio motor (`TeamState`), copiados pelo worker depois de cada
+    tick; as faltas vêm da lista de eventos.
+  - **xG fora do `tick_logic` (aprovado sob condição: bater bit a bit).**
+    O motor não acumula xG. `fm_match::xg::struck_shot_xg` relê o xG do
+    chute do tick que acabou de rodar: o ponto do chute é onde começa o
+    voo, que ainda é a bola logo depois do tick, então todas as entradas
+    do cálculo do resolver (ponto, gol atacado, atributos, tuning) são os
+    mesmos valores. **Teste (com a feature `diagnostics`, no CI):** somado
+    por time de fora do tick em 12 partidas inteiras, é idêntico **bit a
+    bit** à soma que o próprio motor guarda só para esse teste
+    (`TeamState::xg`, só com `diagnostics`), e nenhum chute fica de fora.
+    Se um dia deixar de bater, parar: acumular no motor mexe em
+    `MatchState`, nos goldens e na paridade — decisão do usuário.
+  - **Painel lateral (DOM):** à direita do campo (abaixo, em tela
+    estreita), tabela "Casa | métrica | Visitante": chutes (no alvo), xG,
+    passes completos / tentados (%), botes, faltas.
+  - **F1 — rótulos dos jogadores:** número + posição abreviada (o projeto
+    ainda não tem nomes: a ficha guarda só índices de tabelas que não
+    existem; nomes reais ficam para a fase de database). DOM sobre o
+    canvas; o elenco (posição de cada um) vai uma vez por mensagem do
+    worker, fora do SAB; a transformação campo → pixel é uma função WASM
+    pura, a mesma conta da malha.
+  - **F2 — vetores de velocidade:** setas no canvas. Nada novo no SAB: a
+    velocidade é a diferença entre os dois snapshots vizinhos que o
+    interpolador já lê. A malha recebe as 22 velocidades por parâmetro.
+  - **Input:** `keydown` de F1/F2 (com `preventDefault`) e dois botões
+    equivalentes junto aos de velocidade (toque, teste e navegadores que
+    não deixem interceptar o F1).
+  - **6B-2 implementado (2026-10-04), medido no CI:**
+    - Bench de instruções: 590.430.506 (**+0,00%**).
+    - Latência tick → desenho a 1×: Chromium 18,9 ms (máx. 20,7), WebKit
+      18,7 ms (máx. 21,7), Firefox 18,8 ms (máx. 21,7) — igual ao 6A.
+    - **Custo por quadro na main** (`fmPerf`, Chromium do CI): rótulos do
+      F1 0,14 ms (22 posições em DOM por `transform`); malha + desenho
+      0,2–0,4 ms com ou sem F2; o F2 acrescenta ~1.000–1.700 vértices
+      (5.754 → 6.774–7.488) sem custo mensurável. No WebKit do CI:
+      rótulos 0,18–0,23 ms; malha + desenho 0,6–1,5 ms.
+    - **Goldens (Chromium):** `match-hud.png` refeito (o campo encolheu
+      para caber o painel) e `match-toggles.png` novo (F1 + F2 ligados),
+      ambos no tick 6.000 da seed 7.
+    - O teste de latência passou a contar os quadros acima de 50 ms
+      (limite: 5%) em vez da média, que um único quadro travado numa
+      máquina ocupada distorcia.
+    - **Piso de quadros do teste de latência: mais de 15 (2026-10-05).**
+      O piso antigo (mais de 30) foi calibrado quando o teste rodava
+      sozinho: o WebKit do CI desenhava 62–79 quadros nos 3 s de medição.
+      Com o teste de F1/F2 no mesmo runner caiu para 27–46, e o 6B-3.1
+      ficou vermelho com 27 sem mudar nada no custo por quadro. O piso
+      existe só para garantir amostra mínima; a asserção real (menos de
+      5% dos quadros com 50 ms ou mais) continua valendo. Abaixo de 16
+      quadros os 5% deixariam de significar um quadro inteiro.
+    - **Solução estrutural, registrada e não implementada:** se a
+      intermitência voltar (neste ou em outro navegador), dividir o job
+      do WebKit em dois — latência isolada + o resto. Custa ~1 min de CI.
+- **6B-3 — overlays geométricos (aprovado 2026-10-04):**
+  - **SAB continua na versão 3.** Nada novo no buffer: os dois overlays
+    são funções WASM puras do quadro que a main já tem (posições, bola,
+    expulsos, fases, período) mais o elenco (posição de cada jogador), que
+    já vai uma vez por mensagem do worker. `tick_logic` não muda.
+  - **F3 — linha de impedimento, pela regra.** Linha tracejada de lateral
+    a lateral, na cor do time que defende, na profundidade a partir da
+    qual um atacante estaria em posição de impedimento: a **menor** entre
+    a do penúltimo defensor (goleiro conta, expulso não), a da bola e a do
+    meio-campo, contadas da linha de fundo de quem defende. Logo, nunca
+    passa do meio-campo nem fica atrás da bola.
+    - **Quem ataca** sai das fases do snapshot: o time em posse ou em
+      transição ofensiva (com a bola solta os times mantêm a última fase,
+      então a linha continua a do último time com a bola). Em bola parada
+      as duas fases são "bola parada" e o snapshot não diz de quem é a
+      bola: **sem linha**.
+    - **Para que lado** sai do período: o mandante ataca para a direita no
+      primeiro tempo, os lados trocam no intervalo.
+    - **Diferença para o motor, registrada:** o motor usa **só o penúltimo
+      defensor** (`TickFrame::offside_line`), porque não apita impedimento
+      — a linha serve apenas de alvo para as corridas em profundidade, e
+      ele a calcula só para o time com a bola dominada ou na cobrança. O
+      overlay mostra a linha das Regras (penúltimo defensor, bola e
+      meio-campo). Quando o penúltimo defensor está no próprio campo e à
+      frente da bola, as duas coincidem.
+    - **Teste bit a bit:** a parte "penúltimo defensor" do overlay,
+      calculada do snapshot decodificado, é idêntica bit a bit ao
+      `TickFrame::offside_line` do motor em todo tick de partidas inteiras
+      em que o motor tem linha (dois tempos, com expulsões quando houver).
+  - **F4 — linhas de formação.** Por time, uma linha quebrada por setor
+    (defesa, meio-campo, ataque, pela posição de cada jogador; goleiro
+    fora), ligando os jogadores do setor em ordem ao longo da largura do
+    campo. Cor do time, semitransparente, desenhada **sob** os jogadores.
+    Setor com um jogador só não tem linha; expulso sai da linha.
+  - **Input:** F3 e F4 por tecla (`preventDefault`) e por botão, como
+    F1/F2.
+  - **F2 não muda** (as setas ficam como estão; o golden do 6B-2 não é
+    invalidado).
+  - **Golden:** terceiro golden do Chromium (`match-overlays.png`, F3 + F4
+    ligados, seed 7, tick 6.000). Os dois existentes não mudam.
+  - **Limites:** bench de instruções em +0,00% (nada no tick); custo de
+    F3 + F4 abaixo de 1 ms por quadro no Chromium, medido pelo `fmPerf`.
+  - **6B-3 implementado (2026-10-05), medido no CI:**
+    - Bench de instruções: 590.430.506 (**+0,00%**) nos quatro commits.
+    - Latência tick → desenho a 1×: Chromium 18,2 ms (máx. 19,7), WebKit
+      18,6 ms (máx. 21,7), Firefox 18,6 ms (máx. 20,7) — igual ao 6A.
+    - **Custo de F3 + F4 por quadro** (`fmPerf`, partida pausada no tick
+      6.000 da seed 7): +186 vértices (5.754 → 5.940: 17 traços + 14
+      segmentos, 6 vértices cada). Chromium: malha + desenho 0,225 →
+      0,219 ms (diferença dentro do ruído; limite: 1 ms). WebKit: 0,908 →
+      0,947 ms (+0,04 ms). O e2e falha se a diferença passar de 1 ms.
+    - **Bit a bit com o motor:** o penúltimo defensor do overlay é igual
+      ao `TickFrame::offside_line` em todos os ticks com linha de três
+      partidas inteiras (seeds 3, 7 e 11; mais de 10.000 comparações em
+      cada tempo).
+    - **Golden (Chromium):** `match-overlays.png` novo (F3 + F4 ligados,
+      tick 6.000 da seed 7). `match-hud.png` e `match-toggles.png` saíram
+      do CI idênticos byte a byte aos commitados.
+    - A malha e o desenho passaram a receber a palavra de fases do
+      snapshot (fases + período), os bits dos overlays e o elenco.
+- **6C — painel tático em tempo real (aprovado 2026-10-05):**
+  - **6C é controle; 6C-2 é informação.** Os overlays "zonas de pressing"
+    e "opções de passe" ficam num 6C-2 separado, com desenho próprio: o
+    primeiro exige amostrar o campo, o segundo exige expor a avaliação de
+    passes do motor, que hoje não sai do tick.
+  - **Critérios (aceites 3 e 5), medidos no motor nativo antes de
+    qualquer UI — se um não cumprir, parar:**
+    - **3, mentalidade:** Defensive → Attacking, o centro de massa do
+      time sobe ≥ 5 m em ≤ 5 s de jogo (critério 19 da Seção 9).
+    - **5, pressing:** trocar o nível move a distância do defensor mais
+      próximo ao portador em ≤ 5 s de jogo.
+  - **Mentalidade:** já existe no motor (desloca o bloco: ±8,4 m entre
+    Balanced e os extremos). Falta trocar durante a partida:
+    `MatchEngine::set_tactics(side, tactics)`, que vale a partir do
+    próximo tick.
+  - **Pressing (versão mínima):** `Pressing { Low, Medium, High,
+    UltraHigh }` em `Tactics`. Escala a distância de contenção nas zonas
+    média e distante (a área fica como está) e a urgência de quem
+    contém. **É constante sobre o modelo de contenção que já existe, não
+    modelo novo.** `Medium` é o comportamento de hoje **bit a bit**
+    (referência de paridade e goldens do motor não mudam).
+    - **Só `Medium` está calibrado** (70,8 botes e 19,4 faltas por
+      partida). `Low` e `UltraHigh` são medidos e reportados (botes,
+      faltas, gols), não calibrados.
+    - **Dívida:** o motor não tem fadiga, então pressing alto não custa
+      nada ao time (ver STATE).
+    - **Tabelas (6C.2):** fator da distância de contenção `[1,6; 1,0;
+      0,7; 0,45]` (Low … UltraHigh) fora da zona da área; urgência de
+      quem contém `[0,8; 1,0; 1,0; 1,0]`.
+    - **Critério 3 medido (6C.1):** Defensive → Attacking contra a mesma
+      partida deixada em Defensive, 24 trocas (3 seeds × 2 times × 4
+      instantes): depois de 5 s o centro de massa dos 10 de linha está
+      10,0 m à frente no pior caso (mediana 14,5; máximo 25,9), e já
+      passa de 5 m aos 3 s nos 24 casos.
+    - **Critério 5 medido (6C.2):** distância do portador (fora da zona
+      da área) ao defensor de linha mais próximo, nos 5 s depois da
+      troca, 12 trocas: Low 4,07 m, Medium 3,46 m, UltraHigh 2,20 m. Em
+      96 trocas, já no primeiro segundo: 3,28 → 2,48 m (UltraHigh) e
+      3,28 → 3,78 m (Low).
+    - **Extremos medidos, não calibrados** (12 partidas inteiras, seeds
+      1–12, só o mandante muda; visitante em Medium):
+
+      | Mandante | Distância | Botes do mandante | Faltas (os dois) | Gols pró | Gols contra | Passe do visitante |
+      |---|---|---|---|---|---|---|
+      | Low | 4,41 m | 32,8 | 21,4 | 1,58 | 4,00 | 54,9% |
+      | Medium | 3,32 m | 39,8 | 21,5 | 2,75 | 2,67 | 58,9% |
+      | High | 2,62 m | 44,8 | 23,5 | 3,42 | 2,75 | 62,3% |
+      | UltraHigh | 1,96 m | 42,1 | 26,5 | 2,42 | 6,58 | 63,6% |
+
+      Com os dois times no mesmo nível, botes somados: 57,7 / 88,3 /
+      107,3 / 80,9. **Leitura:** a distância responde de forma monótona;
+      o resultado não. `UltraHigh` não é estritamente melhor: sofre 6,58
+      gols (quem contém a 1–2 m é batido e sobra espaço atrás) — "use por
+      sua conta". `Low` também sofre mais (4,00). 12 partidas é amostra
+      pequena para gols; serve para dar a ordem de grandeza.
+  - **Tempo:** não existe no motor e **não entra agora**. É pergunta de
+    modelo (retenção? risco do passe? velocidade de circulação?), e a
+    alavanca mais à mão é a soltura forçada, dívida aberta da (c1). No
+    painel: controle visível e desabilitado, com a dica "o motor ainda
+    não suporta".
+  - **Input: `postMessage`, não SAB reverso.** `{type: 'tactics', side,
+    mentality, pressing}` → `EngineHost::set_tactics`. Comando é raro,
+    discreto e não pode se perder nem reordenar; `postMessage` já
+    garante ordem e chega em menos de um passo do worker (4 ms).
+  - **Determinismo:** a partida é função de (seed, lista de comandos com
+    o tick de cada um). O worker guarda a lista. Teste: `runTo(N)` →
+    comando → `runTo(M)` bate bit a bit com um motor novo que recebe o
+    mesmo comando no mesmo tick. Ao vivo, o tick em que o comando cai
+    depende do relógio, como qualquer input.
+  - **SAB versão 4:** a palavra 55 do slot (reservada) passa a levar as
+    táticas dos dois times: `casa | visitante << 16`; em cada 16 bits,
+    mentalidade nos bits 0–3 (0 Defensive … 4 Attacking), bits 4–7
+    reservados para o tempo, pressing nos bits 8–11 (0 Low … 3
+    UltraHigh). O slot continua com 288 bytes.
+  - **Painel (DOM), abaixo das estatísticas:** seletor Casa/Visitante
+    (padrão Casa), mentalidade, tempo (desabilitado), pressing. **Mostra
+    o que o snapshot diz**, não o que foi clicado: se o comando não
+    chegou, o painel não mente.
+  - **Latência clique → efeito:** clique → worker ≤ 4 ms; worker → tick
+    em que vale ≤ 100 ms de jogo; reação do time: medida nos commits de
+    motor.
+  - **Goldens:** os três de pixel são refeitos (o painel entra na
+    página), no fluxo de dois pushes.
+  - **Bench depois do 6C.2:** 582.952.421 instruções (**−1,27%** sobre a
+    referência de 590.430.506), com a referência de paridade inalterada:
+    a mesma partida, código gerado diferente em `containment_point`. A
+    referência do bench foi atualizada para 582.952.421 no fim do 6C (a
+    referência é "o que foi aceito por último"; em 590M o gate de +1,5%
+    aceitaria até +2,8% reais).
+  - **6C implementado (2026-10-05), medido no CI:**
+    - **Critérios pela página** (e2e, os três navegadores, seed 7): o
+      painel põe a pressão em UltraHigh no tick 3.000 → distância da bola
+      ao mandante de linha mais próximo, com a bola do visitante, 2,37 →
+      1,39 m nos 5 s seguintes (50 ticks); o painel troca Defensive →
+      Attacking no tick 4.000 → bloco +14,1 m aos 5 s. Medidos em slots
+      de referência; o slot publicado pelo worker bate **bit a bit** com
+      a referência que recebe os mesmos comandos nos mesmos ticks.
+    - Latência tick → desenho a 1×: Chromium 19,2 ms (máx. 25,7), WebKit
+      18,7 ms (máx. 21,7), Firefox 18,7 ms (máx. 21,7).
+    - **Goldens (Chromium):** os três refeitos com o painel na página.
+    - **Overhead de F3 + F4 no WebKit:** um run mediu 1,04 ms (base 0,62
+      → 1,66 ms) sem mudança de código; a malha + desenho do WebKit do CI
+      oscila 0,6–1,7 ms entre medições. O limite de 1 ms passa a valer só
+      no Chromium (onde é a regra); o WebKit só reporta no log.
+- **6D — câmera (aprovado 2026-10-05):**
+  - **A câmera é a vista da malha com outros números.** A malha já é
+    gerada na CPU em coordenadas de tela a partir de uma vista (centro e
+    escala); nada de matriz na GPU, nada no motor, nada no SAB (continua
+    na versão 4). O que cai fora da tela a GPU recorta. Os rótulos do F1
+    usam a mesma vista.
+  - **Três modos:**
+
+    | Modo | Janela (m) | Centro |
+    |---|---|---|
+    | FullPitch (padrão) | 113 × 76, como antes | centro do campo |
+    | HalfPitch | 56,5 × 38 (zoom 2×, "zoom de TV") | segue a bola com margem |
+    | Tactical | 125 × 84 (zoom-out leve) | centro do campo |
+
+    - **HalfPitch, "com margem":** a bola anda livre nos 40% centrais da
+      janela sem mover a câmera; fora dessa zona morta o alvo acompanha.
+      A janela nunca sai dos limites da vista FullPitch.
+    - **Tactical:** liga rótulos (número + posição) e linhas de formação
+      enquanto o modo está ativo, **sem alterar** o estado dos toggles
+      F1/F4; ao sair, vale de novo o que eles diziam. Sem isso o modo
+      seria redundante com o FullPitch.
+  - **Estado na main**, como os toggles (modo, centro e zoom atuais):
+    apresentação pura, fora da lista de comandos e do determinismo da
+    partida.
+  - **Alvo: função WASM pura** de (modo, bola, centro anterior) → centro
+    e zoom desejados (zona morta e limites). `draw` e `pitch_view`
+    recebem centro x, centro y e zoom.
+  - **Troca de modo: blend, não corte seco.** Suavização exponencial em
+    tempo real, constante de **100 ms**, independente da taxa de quadros;
+    a mesma suavização segue a bola no HalfPitch. A menos de 1 cm e 0,1%
+    de zoom do alvo, salta para o alvo exato (quadro final reproduzível
+    com a partida pausada). Corte seco só no primeiro quadro. **Assentar
+    em ≤ 1 s, senão parar.**
+    - **Constante medida no 6D.2 (60 fps):** com 100 ms, 95% do caminho
+      em 300 ms e alvo exato em 817 ms na troca mais longa (FullPitch →
+      HalfPitch num canto). Os ~150 ms do desenho dariam 450 ms e
+      **1.233 ms** — fora da regra. O "≤ 1 s" é sobre o golden (assentar
+      exato, captura reproduzível), não sobre a sensação (os 95%).
+  - **Zoom e pan manuais: fora do 6D** (sem critério de aceite; exigem
+    ponteiro, roda e toque). Candidato à Fase 7.
+  - **Input:** `C` cicla FullPitch → HalfPitch → Tactical; `1`/`2`/`3`
+    vão direto; três botões "Câmera" no rodapé.
+  - **Limites:** bench em +0,00%; custo por quadro de HalfPitch e de
+    Tactical contra FullPitch abaixo de 1 ms no Chromium (WebKit só
+    reporta).
+  - **Goldens:** os três atuais refeitos (os botões entram no rodapé) e
+    dois novos (HalfPitch e Tactical, seed 7, tick 6.000, câmera
+    assentada).
+  - **6D implementado (2026-10-05), medido no CI:**
+    - Bench de instruções: 582.952.421 (**+0,00%**).
+    - **Tempo até o alvo exato** (partida pausada no tick 6.000, e2e):
+
+      | Troca | Chromium | WebKit | Firefox |
+      |---|---|---|---|
+      | FullPitch → HalfPitch | 796 ms | 741 ms | 800 ms |
+      | HalfPitch → Tactical | 786 ms | 768 ms | 805 ms |
+      | Tactical → FullPitch | 429 ms | 458 ms | 454 ms |
+
+      O e2e exige ≤ 1 s no Chromium; nos outros só reporta (o blend
+      corre em tempo real, e um quadro lento no fim se soma).
+    - **Custo por quadro contra o FullPitch** (`fmPerf`, Chromium):
+      HalfPitch +0,08 ms; Tactical +0,44 ms já com rótulos e linhas de
+      formação ligados (limite: 1 ms). WebKit: +0,26 e +0,03 ms (ruído).
+    - Latência tick → desenho a 1×: Chromium 18,8 ms (máx. 22,7), WebKit
+      19,0 ms (máx. 23,7), Firefox 18,8 ms (máx. 20,7).
+    - **Câmera cheia = vista antiga:** o 6D.1 passou com os três goldens
+      anteriores inalterados.
+    - **Rótulos:** ficam logo abaixo do disco do jogador em qualquer zoom
+      (o deslocamento passou a ser o raio do disco na tela + 3 px).
+    - **Goldens (Chromium):** cinco — `match-hud`, `match-toggles`,
+      `match-overlays` refeitos; `match-camera-half` e
+      `match-camera-tactical` novos.
+    - **Velocidades:** 1×, 2×, 5×, 10×, 30×, 60× (eram 1×, 10×, 30×, 60×;
+      de 1× para 10× era salto grande demais: 2× para assistir, 5× para
+      passar os olhos).
+    - **Corrida no e2e (WebKit do CI):** os rótulos existem assim que o
+      F1 liga, mas só são posicionados no quadro seguinte (100 ms no
+      WebKit do CI); o teste passou a esperar a posição (poll).
 - `MatchSnapshot` POD em `SharedArrayBuffer`, com ring buffer duplo
   (`ffi/sab.rs`).
 - `fm-wasm` expõe `init_engine(seed)`, `tick_logic()`,
@@ -2077,13 +2517,13 @@ recalibrar contra a coluna "Real". As constantes estão em `AnchorTuning`,
   - shapes procedurais com instancing.
 - A interpolação `prev`/`curr` fica na camada segura.
 - Reavaliar o `wasm-opt` (tamanho do binário).
-- **Estratégia de golden `[ALTERADO v2.1]`:**
-  - Comparação de pixel **só no Chromium**: o SwiftShader do CI é
-    renderizador por software determinístico.
-  - **Firefox e WebKit** rodam os mesmos testes de render **sem comparação
-    de pixel**, só para garantir que não quebram. O WebKit do CI informa
-    "Apple GPU", mas é máscara de privacidade: no Linux é software, e não se
-    sabe se é estável entre runs.
+- **Estratégia de golden `[ALTERADO v2.1]` (confirmada em 2026-10-04):**
+  - **Chromium: golden de pixel completo**, a partir do 6B. O SwiftShader
+    do CI é renderizador por software determinístico.
+  - **Firefox e WebKit: rodam os mesmos testes sem comparar pixel**; o
+    teste falha se a página quebrar ou o render der erro. O WebKit do CI
+    informa "Apple GPU", mas é máscara de privacidade: no Linux é
+    software, e não se sabe se é estável entre runs.
   - **Firefox no CI não tem WebGL** (ver 0.1): os testes de render são
     pulados nele, e a cobertura do Firefox fica na validação manual.
   - Isso substitui o item 8 da Seção 0 para screenshots de render.
@@ -2099,7 +2539,14 @@ recalibrar contra a coluna "Real". As constantes estão em `AnchorTuning`,
   - FPS medido e informado (não é gate).
 
 ## FASE 7 — UI + Overlays Táticos
+- **Ordem (2026-10-05):** vem depois da fase "Bola longa + contraparte
+  defensiva" (ver STATE).
 - Telas: menu, elenco, táticas e calendário.
+- **Botão "Simular partida":** roda a partida em LOD Abstract e mostra a
+  tela de resultado (placar, estatísticas, eventos), com botão voltar.
+- No painel tático só o lado do clube do usuário é controlável (o seletor
+  Casa/Visitante do 6C some ou trava).
+- Candidato: zoom e pan manuais da câmera (fora do 6D).
 - Overlays via `Renderer2D`: linha de impedimento, zonas de pressão,
   linhas de formação, linhas de passe e setas de instrução.
 - HUD.

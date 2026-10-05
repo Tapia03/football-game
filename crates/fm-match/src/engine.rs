@@ -163,6 +163,8 @@ impl MatchEngine {
             through_passes: 0,
             #[cfg(feature = "diagnostics")]
             through_completed: 0,
+            #[cfg(feature = "diagnostics")]
+            xg: 0.0,
         };
         let mut state = MatchState {
             match_seed: setup.match_seed,
@@ -195,6 +197,13 @@ impl MatchEngine {
     #[must_use]
     pub fn state(&self) -> &MatchState {
         &self.state
+    }
+
+    /// Changes the instructions of `side` during the match (spec Fase 6,
+    /// 6C): in force from the next `tick_logic`. A match is a function of
+    /// its seed and of these calls with the tick each one was made at.
+    pub fn set_tactics(&mut self, side: Side, tactics: Tactics) {
+        self.state.team_mut(side).tactics = tactics;
     }
 
     #[must_use]
@@ -572,7 +581,9 @@ fn on_ball(
                 if let Some(d) = first {
                     targets[d] = DecisionSystem::containment_point(s, frame, d, carrier);
                     in_play[d] = true;
-                    urgency[d] = s.tuning.defending.contain_urgency;
+                    urgency[d] = s.tuning.defending.contain_urgency
+                        * s.tuning.defending.press_urgency
+                            [s.team(defending).tactics.pressing.index()];
                 }
                 if let Some(d) = second {
                     let behind = s.tuning.defending.contain_far.1 + s.tuning.duel.cover_dist;

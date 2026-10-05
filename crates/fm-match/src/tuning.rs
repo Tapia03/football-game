@@ -126,6 +126,11 @@ pub struct DefendingTuning {
     pub contain_mid: (f32, f32),
     pub contain_far: (f32, f32),
     pub contain_urgency: f32,
+    /// Containment distance factor per `Pressing`, Low..=UltraHigh, outside
+    /// the box zone (in the box everybody defends the same way).
+    pub press_distance: [f32; 4],
+    /// Urgency factor of the containing defender per `Pressing`.
+    pub press_urgency: [f32; 4],
     /// Commit to a challenge when the score exceeds this.
     pub challenge_threshold: f32,
     pub challenge_base: f32,
@@ -555,6 +560,9 @@ impl Default for DefendingTuning {
             contain_mid: (2.0, 3.0),
             contain_far: (3.0, 4.0),
             contain_urgency: 1.0,
+            // Medium is the calibrated behaviour: both factors exactly 1.
+            press_distance: [1.6, 1.0, 0.7, 0.45],
+            press_urgency: [0.8, 1.0, 1.0, 1.0],
             // Calibrated against the engine with movement physics: ~71
             // challenges and ~19 fouls a match (real ~70 / ~22). The old
             // 1.15 came from the arcade engine and gave ~8; 0.97 was right

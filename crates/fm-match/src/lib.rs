@@ -40,6 +40,6 @@ pub use resolver::ActionResolver;
 pub use role::{RoleBehavior, RoleContext, RoleIntent};
 pub use snapshot::{LodLevel, MatchSnapshot, PlayerSnapshot};
 pub use state::MatchState;
-pub use tactics::{LineHeight, Mentality, Tactics, Width};
+pub use tactics::{LineHeight, Mentality, Pressing, Tactics, Width};
 pub use tick_frame::TickFrame;
 pub use tuning::TuningParams;

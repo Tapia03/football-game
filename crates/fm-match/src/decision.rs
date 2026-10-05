@@ -645,15 +645,20 @@ impl DecisionSystem {
             .goal_centre();
         let to_goal = own_goal - c;
         let danger = to_goal.length();
-        let band = if danger <= t.zone_box_dist {
-            t.contain_box
+        let press = t.press_distance[state
+            .team(state.players[defender].side)
+            .tactics
+            .pressing
+            .index()];
+        let (band, press) = if danger <= t.zone_box_dist {
+            (t.contain_box, 1.0)
         } else if danger <= t.zone_mid_dist {
-            t.contain_mid
+            (t.contain_mid, press)
         } else {
-            t.contain_far
+            (t.contain_far, press)
         };
         let aggression = f32::from(state.players[defender].attrs.mental.aggression) / 100.0;
-        let dist = band.1 - (band.1 - band.0) * aggression;
+        let dist = (band.1 - (band.1 - band.0) * aggression) * press;
         c + to_goal.normalize() * dist
     }
 

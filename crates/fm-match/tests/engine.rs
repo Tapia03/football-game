@@ -3,7 +3,10 @@
 //! `fm-wasm/tests/web.rs`.
 
 use fm_match::demo::demo_match;
-use fm_match::{EventKind, LodLevel, MatchEngine, MatchSnapshot};
+use fm_match::state::BallState;
+use fm_match::{
+    EventKind, LodLevel, MatchEngine, MatchSnapshot, Mentality, Pressing, Role, Side, Tactics,
+};
 
 fn play(seed: u64, lod: LodLevel) -> (MatchEngine, usize) {
     let (db, setup) = demo_match(seed);
@@ -264,4 +267,144 @@ fn restarts_are_not_lost_at_once() {
     println!("restarts taken {taken}, lost out of play within 5 ticks {lost_at_once}");
     assert!(taken > 1_000, "restarts are taken");
     assert_eq!(lost_at_once, 0, "restarts lost straight out of play");
+}
+
+/// Mean depth of `side`'s ten outfielders toward the goal it attacks (m).
+fn block_depth(engine: &MatchEngine, side: Side) -> f32 {
+    let state = engine.state();
+    let goal = state.attacking(side).opposite();
+    let now = state.now_ms();
+    let (sum, n) = state
+        .players
+        .iter()
+        .filter(|p| p.side == side && p.active() && p.role != Role::Goalkeeper)
+        .fold((0.0, 0.0), |(sum, n), p| {
+            (
+                sum + (p.pos(now).x - goal.goal_line_x()) * -goal.direction(),
+                n + 1.0,
+            )
+        });
+    sum / n
+}
+
+/// Acceptance criterion 3 (spec Section 9, item 19; Fase 6, 6C): switching
+/// a team from Defensive to Attacking in the middle of a match moves its
+/// centre of mass up by at least 5 m within 5 s. Measured against the same
+/// match left on Defensive, so that the ball moving the block does not
+/// count: the two only differ by the instruction.
+#[test]
+fn mentality_moves_the_block_five_metres_in_five_seconds() {
+    let tactics = |mentality| Tactics {
+        mentality,
+        ..Tactics::default()
+    };
+    let mut gains = Vec::new();
+    for seed in [3, 7, 11] {
+        for side in [Side::Home, Side::Away] {
+            for switch_at in [1_500, 9_000, 20_000, 33_000] {
+                let (db, setup) = demo_match(seed);
+                let mut control = MatchEngine::new(&setup, &db);
+                control.set_tactics(side, tactics(Mentality::Defensive));
+                for _ in 0..switch_at {
+                    control.tick_logic();
+                }
+                let (db, setup) = demo_match(seed);
+                let mut switched = MatchEngine::new(&setup, &db);
+                switched.set_tactics(side, tactics(Mentality::Defensive));
+                for _ in 0..switch_at {
+                    switched.tick_logic();
+                }
+                assert_eq!(switched.state(), control.state(), "same match so far");
+                switched.set_tactics(side, tactics(Mentality::Attacking));
+                let mut by_second = [0.0; 5];
+                for gain in &mut by_second {
+                    for _ in 0..10 {
+                        control.tick_logic();
+                        switched.tick_logic();
+                    }
+                    *gain = block_depth(&switched, side) - block_depth(&control, side);
+                }
+                gains.push(by_second[4]);
+            }
+        }
+    }
+    gains.sort_by(f32::total_cmp);
+    println!(
+        "after 5 s: min {:.1} median {:.1} max {:.1}",
+        gains[0],
+        gains[gains.len() / 2],
+        gains[gains.len() - 1]
+    );
+    assert!(gains[0] >= 5.0, "least gain after 5 s: {:.1} m", gains[0]);
+}
+
+/// Distance from the ball carrier to the nearest outfielder of the other
+/// side, when the carrier is outside that side's box zone; `None` otherwise.
+fn carrier_gap(engine: &MatchEngine, defending: Side) -> Option<f32> {
+    let state = engine.state();
+    let BallState::Held { holder } = state.ball else {
+        return None;
+    };
+    let carrier = &state.players[holder as usize];
+    if carrier.side == defending {
+        return None;
+    }
+    let now = state.now_ms();
+    let at = carrier.pos(now);
+    let own_goal = state.attacking(defending).opposite().goal_centre();
+    if at.distance(own_goal) <= state.tuning.defending.zone_box_dist {
+        return None;
+    }
+    state
+        .players
+        .iter()
+        .filter(|p| p.side == defending && p.active() && p.role != Role::Goalkeeper)
+        .map(|p| p.pos(now).distance(at))
+        .min_by(f32::total_cmp)
+}
+
+/// Acceptance criterion 5 (spec Fase 6, 6C): switching the pressing level
+/// in the middle of a match moves the distance from the carrier to the
+/// nearest defender within 5 s — tighter for `UltraHigh`, looser for `Low`.
+/// Measured against the same match left on `Medium`, over the 5 s that
+/// follow the switch.
+#[test]
+fn pressing_moves_the_distance_to_the_carrier_within_five_seconds() {
+    // Sum of gaps and number of ticks with one, for [Medium, UltraHigh, Low].
+    let mut gaps = [(0.0_f32, 0.0_f32); 3];
+    for seed in [3, 7, 11] {
+        for switch_at in [1_500, 9_000, 20_000, 33_000] {
+            let mut engines = [Pressing::Medium, Pressing::UltraHigh, Pressing::Low].map(|to| {
+                let (db, setup) = demo_match(seed);
+                let mut engine = MatchEngine::new(&setup, &db);
+                for _ in 0..switch_at {
+                    engine.tick_logic();
+                }
+                engine.set_tactics(
+                    Side::Home,
+                    Tactics {
+                        pressing: to,
+                        ..Tactics::default()
+                    },
+                );
+                engine
+            });
+            for (engine, (sum, n)) in engines.iter_mut().zip(&mut gaps) {
+                for _ in 0..50 {
+                    engine.tick_logic();
+                    if let Some(gap) = carrier_gap(engine, Side::Home) {
+                        *sum += gap;
+                        *n += 1.0;
+                    }
+                }
+            }
+        }
+    }
+    let [medium, ultra, low] = gaps.map(|(sum, n)| sum / n);
+    println!("gap over the 5 s after the switch: Low {low:.2} m, Medium {medium:.2} m, UltraHigh {ultra:.2} m");
+    assert!(
+        ultra < medium - 0.5,
+        "UltraHigh {ultra:.2} vs Medium {medium:.2}"
+    );
+    assert!(low > medium + 0.5, "Low {low:.2} vs Medium {medium:.2}");
 }
