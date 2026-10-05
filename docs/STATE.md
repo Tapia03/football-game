@@ -59,7 +59,17 @@ para orientar a próxima rodada de refinamento.
   - **Para a 7B:** o Worker de mundo fala com o banco por `MessagePort`
     (`connect()`); entram `world.load` e `world.commitDay` (uma transação
     por dia) e o teste de determinismo por `save.digest`.
-- **7B — Mundo mínimo e calendário:** bootstrap determinístico (1 liga,
+- **7B em andamento (desenho aprovado em 2026-10-05, no SPEC):** Worker
+  de mundo **único** primeiro; o pool de Workers de partida se decide com
+  o número do CI (rodada > 1 s: obrigatório, trazer o número antes;
+  < 500 ms: fica para depois). Migração v2 (a primeira de verdade), save
+  sem mundo recusado com mensagem clara, navegação saves ↔ mundo.
+  "Avançar até a próxima partida" e o link da partida para os saves são
+  da 7C.
+- **Dívida de desempenho (Fase 8 ou 9, não mexer agora):** o WASM roda
+  uma partida ~3,4× mais devagar que o nativo (169–182 ms contra ~51 ms).
+  Alavanca conhecida: `wasm-opt`, desligado de propósito.
+- **7B — Mundo mínimo e calendário (escopo):** bootstrap determinístico (1 liga,
   20 clubes, ~500 jogadores sintéticos — sem a base FM real), round-robin
   de 38 rodadas / 380 partidas, `WorldSimulator` num Worker com LOD
   Abstract para todas as partidas de background (o `MatchEngine` que já

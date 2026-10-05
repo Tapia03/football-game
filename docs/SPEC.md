@@ -2711,6 +2711,122 @@ depois. O jogo ainda não tem nome ("o jogo", "o projeto").
   - **Página de teste:** `?view=saves` é a tela; `?view=blank` é uma
     página vazia para os testes que dirigem o Worker direto (a tela
     segura o lock de aba única e o pool).
+  - **Depois do merge (2026-10-05):** um `view` desconhecido avisa em
+    vez de cair em silêncio na partida (`?view=save`, sem o "s", mostrava
+    a partida); a tela de saves tem link para a partida. O link da
+    partida para os saves fica para a 7C (invalidaria os cinco goldens).
+    O smoke test do WebGL2 aceita ±2 por canal (0,5 lê como 127 ou 128
+    conforme a GPU).
+
+### 7B — Mundo mínimo e calendário (desenho aprovado em 2026-10-05)
+- **Custo medido antes do desenho.** Uma partida inteira no WASM de
+  release, na main thread, numa máquina de 16 núcleos, com a
+  contabilidade do HUD: **169–182 ms** (cinco seeds). O nativo no CI faz
+  a mesma partida em ~51 ms: o WASM está ~3,4× mais lento (dívida de
+  desempenho para a Fase 8 ou 9; uma alavanca conhecida é o `wasm-opt`,
+  desligado de propósito — **não mexer agora**). Estimativa com um Worker
+  só: ~1,7 s por rodada, ~65 s por temporada.
+- **Worker único primeiro; o pool se decide com número do CI.**
+  - A 7B simula as partidas num Worker de mundo só, em sequência, e mede
+    no CI uma rodada (10 partidas) e uma temporada (380).
+  - **Rodada no CI > 1 s:** o pool de Workers de partida é obrigatório —
+    trazer o número ao usuário **antes** de implementar.
+  - **Rodada no CI < 500 ms:** o pool é otimização prematura e fica para
+    depois.
+  - Entre os dois, decide o usuário com o número na mão.
+  - O desenho deixa a porta aberta: as partidas de um dia são
+    independentes e o resultado não depende da ordem. (Os orçamentos
+    antigos do SPEC — rodada em ≤ 400 ms no runner, 20 × 38 em < 10 s —
+    supunham o pool; valem como referência, não como gate da 7B.)
+  - **Se o custo de uma temporada inteira for proibitivo, parar e
+    reportar com números.**
+- **Onde o código mora.** `fm-world` (Rust): bootstrap, calendário,
+  escalação automática, simulação do dia, classificação — usa
+  `fm-entities` e `fm-match` como estão, **sem mudança no motor**.
+  `fm-persistence` (Rust): codifica e decodifica os blobs do save com
+  layout explícito e versionado, sem `unsafe`. `fm-wasm` exporta um
+  `WorldHost`. `world.worker.ts` é o Worker de mundo: guarda o
+  `WorldHost`, fala com o Worker de banco pela `MessagePort` da 7A e
+  manda progresso à página.
+- **Bootstrap determinístico** (uma seed de mundo; mesma seed, mesmo
+  mundo, bit a bit). Dados **sintéticos**, nunca a base FM real.
+  - 500 jogadores do gerador que existe (`generate_database`), por cotas
+    de posição: 25 por clube (3 goleiros, 8 defensores, 8 meio-campistas,
+    6 atacantes).
+  - 20 clubes com nomes sintéticos, elencos em faixas de força com ruído
+    (a tabela tem favoritos e candidatos ao rebaixamento).
+  - Nomes de jogadores: tabelas sintéticas em `fm-world` (a ficha já
+    guarda os índices).
+  - Overall: média dos atributos ponderada pela posição, em `fm-world`;
+    é para a tela, o motor não usa.
+  - Tática inicial de cada clube: formação sorteada pela seed entre as
+    quatro do motor, táticas padrão, onze por aptidão de posição.
+- **Calendário.** Round-robin pelo método do círculo: 19 rodadas de
+  turno e as mesmas 19 com mando invertido — 38 rodadas, 380 partidas.
+  Uma rodada por semana (dia 6 de cada semana); temporada de 266 dias. A
+  seed de cada partida deriva da seed do mundo e do id da partida e fica
+  em `matches`.
+  - **"Avançar até a próxima partida" é item da 7C**, não da 7B: com uma
+    rodada por semana, "Avançar dia" passa por seis dias vazios.
+- **Simular um dia.**
+  - Dia com rodada: as 10 partidas em LOD Abstract, com o `MatchEngine`
+    que existe. Cada resultado depende só da súmula e do estado dos
+    jogadores no início do dia.
+  - Depois das partidas: minutos jogados entram no estado dos jogadores;
+    placar e chutes entram em `matches`.
+  - Fim de semana: o `weekly_update` de `fm-entities` (fadiga, condição,
+    forma, lesões, moral).
+  - Escalação automática: o onze gravado, trocando o lesionado pelo
+    melhor disponível da posição.
+  - O clube do usuário é escolhido ao criar o mundo; na 7B a partida dele
+    também é simulada em Abstract (assistir é da 7D).
+- **Persistência: migração v2, a primeira de verdade.** O schema v1 não
+  guarda tudo o que o mundo precisa para ser reconstruído bit a bit. A
+  v1 não é editada; a v2 acrescenta: em `players`, a ficha estática
+  inteira em blob e o potencial; em `clubs`, força e formação de origem;
+  em `matches`, chutes e chutes no alvo dos dois lados.
+  - **Teste extra da migração:** um save criado pelo código da 7A (um
+    arquivo v1 de verdade, guardado como fixture) é aberto pelo código da
+    7B: migra para v2 sem quebrar, com os dados intactos.
+  - **Save sem mundo** (todo save da 7A): `world.load` **recusa com
+    mensagem clara** (erro `no-world`), sem quebrar; a tela diz que o
+    save não tem mundo e oferece criar um nele.
+  - Operações novas no Worker de banco: `world.create` (o mundo
+    recém-gerado, numa transação), `world.load` (o necessário para
+    reconstruir o mundo, blobs transferidos), `world.commitDay`
+    (resultados do dia, estado dinâmico dos 500 jogadores e o dia novo em
+    `meta`, **numa transação**: se a aba morrer no meio, o save está no
+    dia anterior, inteiro).
+  - A classificação não é gravada: é consulta sobre `matches`.
+- **Progresso visível.** O Worker de mundo manda uma mensagem por
+  partida terminada (dia, rodada, feitas, totais, estimativa pelo tempo
+  médio das já simuladas); a página mostra a barra ("Rodada 12 — 4 de 10
+  partidas — ~1 s").
+- **Tela da 7B:** mínima, em `?view=world`: criar mundo (seed e clube),
+  "Avançar dia" com a barra, dia e rodada atuais, resultados da última
+  rodada, classificação em tabela crua. As telas de verdade são da 7C.
+  - **A navegação fecha visualmente:** a tela de saves tem link para o
+    mundo (abrir o mundo de um save) e a tela do mundo tem link de volta
+    para os saves — mesmo sem o roteador, que é da 7C.
+- **Testes.**
+  - Nativo: mesma seed, mesmo mundo; 380 partidas, cada par duas vezes
+    com mandos opostos, cada clube uma vez por rodada; simular N dias
+    duas vezes dá o mesmo estado; codificar, decodificar e continuar dá o
+    mesmo que seguir direto; pontos e saldo batem com os resultados.
+  - Determinismo pelo navegador: criar o mundo, avançar ao dia 10,
+    recarregar, avançar ao dia 20; um segundo save vai direto ao dia 20;
+    os dois têm o mesmo `save.digest`.
+  - Crash: matar o Worker de mundo no meio de uma rodada e reabrir; o
+    save está no dia anterior e a rodada refeita dá o mesmo resultado.
+  - Progresso: as 10 mensagens da rodada, em ordem.
+  - `test_cross_lod_consistency`, paridade nativo × WASM e bench do
+    motor não são tocados.
+- **Ordem dos commits:** (1) este SPEC; (2) `fm-world` nativo com os
+  testes e a medição nativa de uma temporada; (3) `fm-persistence`,
+  migração v2 e as operações `world.*`; (4) `WorldHost`, Worker de mundo
+  e progresso, **com a medição de uma rodada e de uma temporada no WASM
+  do CI** — é aqui que o pool se decide; (5) tela mínima com a navegação
+  e os testes de determinismo e crash pelo navegador.
 
 ## FASE 7 (numeração antiga; agora parte da Fase 9) — UI + Overlays Táticos
 - **Ordem (2026-10-05):** vem depois da fase "Bola longa + contraparte
