@@ -6,8 +6,9 @@ Fotografia de **2026-10-05**, no fim da sessão que escreveu estes arquivos.
 
 - Branch de trabalho: **`fase-7b`**, criada da `main` depois do merge do
   PR #9.
-- Último commit no remoto: `2a29d6b` (SPEC da 7B). CI verde em `42fd813`, o
-  último commit com código.
+- Commits no remoto, sobre a `main`: `3eeb2c0` (STATE), `42fd813` (correções
+  pós-7A), `2a29d6b` (SPEC da 7B), `80ddd99` (esta pasta) e a correção do
+  STATE. CI verde em `42fd813`, o último commit com código.
 - `main`: `4c38095` (merge da 7A).
 - Não há PR aberto da 7B. **O PR da 7B só é aberto quando os cinco commits
   estiverem prontos** (pedido do dono).
@@ -25,8 +26,9 @@ Fotografia de **2026-10-05**, no fim da sessão que escreveu estes arquivos.
 ?? crates/fm-world/src/squad.rs
 ?? crates/fm-world/src/world.rs
 ?? crates/fm-world/tests/season.rs
-?? docs/handoff/            (estes arquivos)
 ```
+
+(A pasta `docs/handoff/` já está commitada.)
 
 O `fm-world` está pronto e testado localmente: 13 testes nativos passando,
 clippy nativo e wasm32 limpos. **Não foi commitado porque há uma decisão

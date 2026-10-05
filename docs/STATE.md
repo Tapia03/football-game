@@ -2,7 +2,11 @@
 
 Resumo de uma tela que sobrevive a compactações de sessão. A fonte de verdade
 de arquitetura e regras é o [`docs/SPEC.md`](SPEC.md); este arquivo só diz
-*onde estamos*. Atualizado em **2026-10-05** (Fases 6 e 7A mergeadas; Fase 7B — mundo mínimo e calendário — em desenho, branch `fase-7b`).
+*onde estamos*. Atualizado em **2026-10-05** (Fases 6 e 7A mergeadas; Fase 7B — mundo mínimo e calendário — **em implementação**, branch `fase-7b`: desenho aprovado e no SPEC; `fm-world` escrito e ainda não commitado, à espera de uma decisão sobre as formações).
+
+**Para quem chega agora:** comece por [`docs/handoff/`](handoff/00-LEIA-PRIMEIRO.md).
+As seções deste arquivo abaixo de "Fase anterior — Fase 5 (c1)" são o
+registro daquela fase: os números de lá são do motor de `f17b1d9`.
 
 ## Ordem geral (redefinida pelo usuário em 2026-10-05)
 Fases 0–6 fechadas. A ordem nova, que **substitui** a anterior ("Bola
@@ -95,7 +99,7 @@ projeto".
 Sem lugar na ordem ainda: (c2) e (d) da Fase 5 (das quais depende o
 6C-bis), fadiga, IA tática.
 
-## Fase 6 (render) — completa, em PR
+## Fase 6 (render) — completa e mergeada (PR #7, `9a27cab`)
 **Fase 6 — Snapshot + Renderer2D + Canvas**, branch `fase-6` (criada de
 `main` em `6ae001a`, depois do merge do PR #6). Partes: **6A** infra de
 render (worker + SAB + interpolação) → 6B HUD e overlays → 6C painel
@@ -388,7 +392,10 @@ iniciados.
 - Contadores de diagnóstico (só com a feature `diagnostics`).
 
 ### Dívidas conhecidas
-- **Custo:** 590,4M instruções (590.430.506, commit `f17b1d9`) ≈ 44,8 ms:
+- **Custo (número da Fase 5):** 590,4M instruções (590.430.506, commit
+  `f17b1d9`) ≈ 44,8 ms. **A referência atual do bench é 582.952.421**
+  (`crates/fm-match/golden/instructions.txt`, atualizada no fim do 6C; ver
+  "Bench" na seção da Fase 6). Na época:
   **dentro da meta desejável de 45 ms (593M)** — a dívida de custo
   registrada desde a física no lance não existe mais. O job de bench
   guarda o perfil (artefato `callgrind`), dentro do critério de saída de (c)
@@ -426,8 +433,9 @@ iniciados.
 ### Branches vivas
 | Branch | Papel |
 |---|---|
-| `main` | o que está mergeado (até a Fase 4, `d0a6823`) |
-| `fase-5` | branch de trabalho; PR só no fim da fase |
+| `main` | o que está mergeado: Fases 0 a 6 e a 7A (`4c38095`, merge do PR #9). É a branch padrão do repositório desde 2026-10-05 |
+| `fase-7b` | **branch de trabalho atual** (Fase 7B); PR só quando os cinco commits estiverem prontos |
+| `fase-5`, `fase-6`, `fase-7a` | já mergeadas; não commitar nelas |
 | `fase-6-v0` | spike de render sobre o motor de antes da física; **nunca mergeia** |
 | `spike-render-v2` | render da `fase-6-v0` sobre o motor de `5d34253` (só arquivos de render, motor e `docs/` intactos); **nunca mergeia** |
 | `spike-render` | primeiro spike (frame estático); **nunca mergeia** |
@@ -515,7 +523,10 @@ estiver ocupada (`strictPort`); nesse caso `npx vite --port 5174`.
 | Tapia03/football-game#4 | Fase 3 + SPEC v2.1 + glow | mergeado |
 | Tapia03/football-game#5 | Fase 4 | mergeado |
 | Tapia03/football-game#6 | Fase 5 (c1) | mergeado (`6ae001a`) |
-| — | Fase 6 (`fase-6`) | abre quando a fase fechar com CI verde |
+| Tapia03/football-game#7 | Fase 6 (render: 6A, 6B, 6C, 6D) | mergeado (`9a27cab`) |
+| Tapia03/football-game#8 | Fase 7A aberta por engano contra a branch errada | fechado sem merge |
+| Tapia03/football-game#9 | Fase 7A (persistência local) | mergeado (`4c38095`) |
+| — | Fase 7B (`fase-7b`) | abre quando os cinco commits estiverem prontos, com CI verde |
 
 Branch `spike-render`: nunca mergeia (spike visual do render).
 
@@ -552,7 +563,11 @@ Ver SPEC, Seção 0 e decisões das Fases 3–5. Os que mais pesam no dia a dia:
   bola, "OK (5754 vértices)").
 
 ## Previews
-- Spike visual atual (motor de `5d34253`):
+- Cada branch `fase-*` tem o seu:
+  `https://<branch>.football-game-b5k.pages.dev` (por exemplo
+  https://fase-7b.football-game-b5k.pages.dev; a tela de saves fica em
+  `/?view=saves`).
+- Spike visual antigo (motor de `5d34253`):
   https://spike-render-v2.football-game-b5k.pages.dev
 - Spike de render: https://spike-render.football-game-b5k.pages.dev (o sufixo
   `-b5k` do subdomínio é do Cloudflare).

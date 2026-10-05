@@ -68,9 +68,10 @@ foi testado.
 7. Esperar o merge.
 
 Mensagens de commit em português, no formato
-`fase-7b (7B.2): o que mudou`. A `main` é a base dos PRs. (A branch padrão
-do repositório no GitHub era `claude/fervent-meitner-r4q36d`; o dono disse
-que ia trocar para `main`. Conferir a base ao abrir PR.)
+`fase-7b (7B.2): o que mudou`. A `main` é a base dos PRs e, desde
+2026-10-05, a branch padrão do repositório no GitHub (antes era
+`claude/fervent-meitner-r4q36d`, e um PR chegou a ser aberto contra ela por
+engano). Conferir a base ao abrir PR.
 
 ## Comandos
 
