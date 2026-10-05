@@ -2309,6 +2309,60 @@ recalibrar contra a coluna "Real". As constantes estão em `AnchorTuning`,
       do CI idênticos byte a byte aos commitados.
     - A malha e o desenho passaram a receber a palavra de fases do
       snapshot (fases + período), os bits dos overlays e o elenco.
+- **6C — painel tático em tempo real (aprovado 2026-10-05):**
+  - **6C é controle; 6C-2 é informação.** Os overlays "zonas de pressing"
+    e "opções de passe" ficam num 6C-2 separado, com desenho próprio: o
+    primeiro exige amostrar o campo, o segundo exige expor a avaliação de
+    passes do motor, que hoje não sai do tick.
+  - **Critérios (aceites 3 e 5), medidos no motor nativo antes de
+    qualquer UI — se um não cumprir, parar:**
+    - **3, mentalidade:** Defensive → Attacking, o centro de massa do
+      time sobe ≥ 5 m em ≤ 5 s de jogo (critério 19 da Seção 9).
+    - **5, pressing:** trocar o nível move a distância do defensor mais
+      próximo ao portador em ≤ 5 s de jogo.
+  - **Mentalidade:** já existe no motor (desloca o bloco: ±8,4 m entre
+    Balanced e os extremos). Falta trocar durante a partida:
+    `MatchEngine::set_tactics(side, tactics)`, que vale a partir do
+    próximo tick.
+  - **Pressing (versão mínima):** `Pressing { Low, Medium, High,
+    UltraHigh }` em `Tactics`. Escala a distância de contenção nas zonas
+    média e distante (a área fica como está) e a urgência de quem
+    contém. **É constante sobre o modelo de contenção que já existe, não
+    modelo novo.** `Medium` é o comportamento de hoje **bit a bit**
+    (referência de paridade e goldens do motor não mudam).
+    - **Só `Medium` está calibrado** (70,8 botes e 19,4 faltas por
+      partida). `Low` e `UltraHigh` são medidos e reportados (botes,
+      faltas, gols), não calibrados.
+    - **Dívida:** o motor não tem fadiga, então pressing alto não custa
+      nada ao time (ver STATE).
+  - **Tempo:** não existe no motor e **não entra agora**. É pergunta de
+    modelo (retenção? risco do passe? velocidade de circulação?), e a
+    alavanca mais à mão é a soltura forçada, dívida aberta da (c1). No
+    painel: controle visível e desabilitado, com a dica "o motor ainda
+    não suporta".
+  - **Input: `postMessage`, não SAB reverso.** `{type: 'tactics', side,
+    mentality, pressing}` → `EngineHost::set_tactics`. Comando é raro,
+    discreto e não pode se perder nem reordenar; `postMessage` já
+    garante ordem e chega em menos de um passo do worker (4 ms).
+  - **Determinismo:** a partida é função de (seed, lista de comandos com
+    o tick de cada um). O worker guarda a lista. Teste: `runTo(N)` →
+    comando → `runTo(M)` bate bit a bit com um motor novo que recebe o
+    mesmo comando no mesmo tick. Ao vivo, o tick em que o comando cai
+    depende do relógio, como qualquer input.
+  - **SAB versão 4:** a palavra 55 do slot (reservada) passa a levar as
+    táticas dos dois times: `casa | visitante << 16`; em cada 16 bits,
+    mentalidade nos bits 0–3 (0 Defensive … 4 Attacking), bits 4–7
+    reservados para o tempo, pressing nos bits 8–11 (0 Low … 3
+    UltraHigh). O slot continua com 288 bytes.
+  - **Painel (DOM), abaixo das estatísticas:** seletor Casa/Visitante
+    (padrão Casa), mentalidade, tempo (desabilitado), pressing. **Mostra
+    o que o snapshot diz**, não o que foi clicado: se o comando não
+    chegou, o painel não mente.
+  - **Latência clique → efeito:** clique → worker ≤ 4 ms; worker → tick
+    em que vale ≤ 100 ms de jogo; reação do time: medida nos commits de
+    motor.
+  - **Goldens:** os três de pixel são refeitos (o painel entra na
+    página), no fluxo de dois pushes.
 - `MatchSnapshot` POD em `SharedArrayBuffer`, com ring buffer duplo
   (`ffi/sab.rs`).
 - `fm-wasm` expõe `init_engine(seed)`, `tick_logic()`,

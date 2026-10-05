@@ -30,9 +30,25 @@ TS, malha como função WASM pura. Latência tick → desenho a 1×: média
   defensor, testado bit a bit) e F4 linhas de formação por setor; terceiro
   golden (`match-overlays.png`). Custo de F3 + F4: +186 vértices, sem
   diferença mensurável por quadro no Chromium.
-- **Próximo: 6C** (painel de mentalidade/tempo/pressão; o motor hoje só
-  tem mentalidade, largura e altura da linha). Desenho aprovado antes do
-  código.
+- **Em andamento: 6C** painel tático (desenho aprovado em 2026-10-05, no
+  SPEC): mentalidade (já no motor, falta trocar ao vivo), pressing em
+  versão mínima (escala a contenção; só Medium calibrado), tempo visível
+  e desabilitado. Input por `postMessage`, SAB versão 4. Critérios 3 e 5
+  medidos no motor antes da UI. Depois: **6C-2** (overlays de zonas de
+  pressing e opções de passe), **6D** câmera.
+
+**Dívidas do painel tático (registradas no 6C):**
+- **Pressing sem fadiga.** No futebol real, pressing alto cobra o time
+  aos 60–70 min. O motor não tem fadiga: UltraHigh tende a ser
+  estritamente melhor que Low e o controle perde significado. Candidato
+  a (c2) ou a uma fase de fadiga.
+- **Sem IA tática.** Quando o usuário muda um time, o outro continua com
+  as táticas padrão: não responde a Attacking com Cautious, não muda com
+  o placar nem com o relógio. Fase futura "IA tática" ou (d).
+- **Seletor Casa/Visitante é provisório.** Na Fase 7 só o lado do clube
+  do usuário é controlável; o seletor some ou trava.
+- **Tempo** não existe no motor (pergunta de modelo; encosta na soltura
+  forçada, dívida da (c1)).
 
 **Piso do teste de latência:** mais de 15 quadros em 3 s (amostra mínima,
 não taxa de quadros); o WebKit do CI desenha 27–46 quando divide o runner
