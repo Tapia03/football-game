@@ -1,5 +1,16 @@
 import { readFile } from 'node:fs/promises';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
+import {
+  ask,
+  digestOf,
+  exportSave,
+  importSave,
+  open,
+  setBackend,
+  start,
+  type Hooks,
+  type SaveInfo,
+} from './support/db';
 
 /** Schema version the game writes today (v2 since Fase 7B). */
 const CURRENT = 2;
@@ -9,129 +20,12 @@ const GAME_MIGRATIONS = ['world', 'world-v2'];
 const V1_FIXTURE = 'tests/fixtures/save-v1-7a.sqlite';
 
 // Fase 7A: the database worker (SQLite WASM). Every test runs over both
-// kinds of storage: `opfs` (the `opfs-sahpool` VFS) and `idb` (the
-// IndexedDB fallback, forced). Each test has a fresh browser context, so a
-// fresh origin private file system and a fresh IndexedDB.
-
-type Backend = 'opfs' | 'idb';
-type Options = {
-  storage?: 'idb';
-  test?: { migrations?: 'next' | 'next-then-broken'; stopImport?: 'before-swap' | 'after-swap' };
-};
-/** The storage the tests of the running `describe` ask for. */
-let wanted: Backend = 'opfs';
-type SaveInfo = {
-  id: string;
-  name: string;
-  activeFile: string;
-  schemaVersion: number;
-  createdAt: string;
-  lastOpenedAt: string;
-};
-type Client = { request(op: string, args: unknown, transfer?: Transferable[]): Promise<unknown> };
-type Database = { client: Client; connect(): MessagePort; terminate(): void };
-type Hooks = {
-  fmSave: {
-    startDatabase(options?: Options): Promise<Database>;
-    DbClient: new (line: MessagePort) => Client;
-  };
-  /** The database the test is talking to. */
-  db: Database;
-};
-
-/** Starts (or restarts, after killing it) the database worker of the page. */
-async function start(page: Page, options: Options = { test: {} }): Promise<void> {
-  await page.evaluate(
-    async (o) => {
-      const hooks = globalThis as unknown as Partial<Hooks> & Pick<Hooks, 'fmSave'>;
-      hooks.db?.terminate();
-      hooks.db = await hooks.fmSave.startDatabase(o);
-    },
-    wanted === 'idb' ? { ...options, storage: 'idb' as const } : options,
-  );
-}
-
-/** One request; a failed one comes back as `{ error: code }`. */
-async function ask<T>(page: Page, op: string, args: unknown = {}): Promise<T> {
-  return page.evaluate(
-    async ([o, a]) => {
-      const { db } = globalThis as unknown as Hooks;
-      try {
-        return (await db.client.request(o as string, a)) as never;
-      } catch (err: unknown) {
-        return { error: (err as { code?: string }).code ?? String(err) } as never;
-      }
-    },
-    [op, args] as const,
-  );
-}
-
-type Storage = { backend: Backend | 'none'; sqlite: string; detail?: string };
-
-/** Exports save `id`; the bytes travel to the test as plain numbers. */
-async function exportSave(page: Page, id: string): Promise<{ fileName: string; bytes: number[] }> {
-  return page.evaluate(async (save) => {
-    const { db } = globalThis as unknown as Hooks;
-    const out = (await db.client.request('save.export', { id: save })) as { fileName: string; bytes: ArrayBuffer };
-    return { fileName: out.fileName, bytes: Array.from(new Uint8Array(out.bytes)) };
-  }, id);
-}
-
-/**
- * Imports `bytes` over save `id` (transferring the buffer). With `wait`
- * false the answer is not awaited: the worker is about to be stopped.
- */
-async function importSave(page: Page, id: string, bytes: number[], wait = true): Promise<unknown> {
-  return page.evaluate(
-    async ([save, content, awaited]) => {
-      const { db } = globalThis as unknown as Hooks;
-      const buffer = new Uint8Array(content as number[]).buffer;
-      const asked = db.client
-        .request('save.import', { id: save, bytes: buffer }, [buffer])
-        .catch((err: unknown) => ({ error: (err as { code?: string }).code ?? String(err) }));
-      if (awaited) return asked;
-      // Long enough for the worker to reach the point it stops at.
-      await new Promise((resolve) => setTimeout(resolve, 1_000));
-      return 'not awaited';
-    },
-    [id, bytes, wait] as const,
-  );
-}
-
-/** Opens save `id` and returns the digest of its content. */
-async function digestOf(page: Page, id: string): Promise<string> {
-  await ask(page, 'save.open', { id });
-  return ask<string>(page, 'save.digest');
-}
-
-/**
- * Opens the quiet page and the database. Asked for OPFS, a browser without
- * it falls back to IndexedDB by itself: that is checked, logged, and the
- * test skipped (the `idb` run of the same test covers that browser).
- */
-async function open(page: Page, project: string): Promise<Storage> {
-  await page.goto('/?view=blank');
-  await expect(page.getByTestId('blank')).toBeVisible();
-  await start(page);
-  const storage = await ask<Storage>(page, 'storage.info');
-  console.log(
-    `[7A storage ${project}] asked ${wanted}, got ${storage.backend}, sqlite ${storage.sqlite}${storage.detail === undefined ? '' : ` — ${storage.detail}`}`,
-  );
-  if (wanted === 'idb') {
-    expect(storage.backend).toBe('idb');
-  } else if (storage.backend !== 'opfs') {
-    // No OPFS: the worker must have fallen back, saying why.
-    expect(storage.backend).toBe('idb');
-    expect(storage.detail).toMatch(/^sem OPFS: /);
-  }
-  test.skip(storage.backend !== wanted, `no OPFS in this browser: ${storage.detail ?? ''}`);
-  return storage;
-}
+// kinds of storage (see `support/db.ts`).
 
 for (const backend of ['opfs', 'idb'] as const) {
 test.describe(`Fase 7A: local persistence (SQLite WASM in the database worker, ${backend})`, () => {
   test.beforeEach(() => {
-    wanted = backend;
+    setBackend(backend);
   });
 
   test('saves: create, list, open, delete; the catalog points at one file a save', async ({

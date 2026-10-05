@@ -53,6 +53,109 @@ export type OpenedSave = {
 
 export type MetaValue = string | number | null;
 
+// The world inside a save (Fase 7B). The blobs are laid out by the Rust
+// side (`fm-persistence`): sheets 60 bytes a player, dynamic states 14,
+// line-ups 44 a club, match seeds 8 a match (u64, little-endian).
+
+export type MatchResult = {
+  readonly homeGoals: number;
+  readonly awayGoals: number;
+  readonly homeShots: number;
+  readonly awayShots: number;
+  readonly homeOnTarget: number;
+  readonly awayOnTarget: number;
+};
+
+/** A club; its id is its place in the list. Tactics as level codes. */
+export type WorldClub = {
+  readonly name: string;
+  readonly shortName: string;
+  readonly strength: number;
+  readonly formation: number;
+  readonly mentality: number;
+  readonly pressing: number;
+  readonly width: number;
+  readonly lineHeight: number;
+};
+
+/** What the screens query about a player; its id is its place in the list. */
+export type WorldPlayer = {
+  readonly club: number | null;
+  readonly name: string;
+  readonly position: number;
+  readonly birthYear: number;
+  readonly overall: number;
+  readonly potential: number;
+  /** Basis points, 0..10000. */
+  readonly condition: number;
+  readonly morale: number;
+  readonly injuryWeeks: number;
+};
+
+/** A match of the season; its id is its place in the list. */
+export type WorldFixture = {
+  readonly round: number;
+  readonly day: number;
+  readonly home: number;
+  readonly away: number;
+  readonly result: MatchResult | null;
+};
+
+export type WorldSave = {
+  /** The world seed: a u64 in decimal (JavaScript numbers keep 53 bits). */
+  readonly seed: string;
+  readonly day: number;
+  readonly seasonYear: number;
+  readonly userClub: number;
+  readonly clubs: readonly WorldClub[];
+  /** The starting elevens, one after the other, in club order. */
+  readonly lineups: ArrayBuffer;
+  readonly players: readonly WorldPlayer[];
+  /** The static sheets and the dynamic states, in player order. */
+  readonly sheets: ArrayBuffer;
+  readonly dynamics: ArrayBuffer;
+  readonly fixtures: readonly WorldFixture[];
+  /** The match seeds, in match order. */
+  readonly matchSeeds: ArrayBuffer;
+};
+
+/** The end of a day: what `world.commitDay` writes in one transaction. */
+export type DayCommit = {
+  /** The day the world is on once this is written: the stored day + 1. */
+  readonly day: number;
+  /** The matches of the day that ended, all of them. */
+  readonly results: readonly (MatchResult & { readonly id: number })[];
+  /** Every player's dynamic state, in player order. */
+  readonly dynamics: ArrayBuffer;
+  /** Every player's display columns, in player order. */
+  readonly players: readonly {
+    readonly condition: number;
+    readonly morale: number;
+    readonly injuryWeeks: number;
+  }[];
+};
+
+export type StandingRow = {
+  readonly club: number;
+  readonly name: string;
+  readonly shortName: string;
+  readonly played: number;
+  readonly won: number;
+  readonly drawn: number;
+  readonly lost: number;
+  readonly goalsFor: number;
+  readonly goalsAgainst: number;
+  readonly points: number;
+};
+
+export type RoundMatch = {
+  readonly id: number;
+  readonly day: number;
+  readonly home: number;
+  readonly away: number;
+  readonly result: MatchResult | null;
+};
+
 /** Operations: `args` → `result`. */
 export type DbOps = {
   'storage.info': { args: Record<string, never>; result: StorageInfo };
@@ -89,6 +192,27 @@ export type DbOps = {
    * look like byte by byte. `applied_at` of the migrations is left out.
    */
   'save.digest': { args: Record<string, never>; result: string };
+  /**
+   * Writes a new world into the current save, in one transaction. Refused
+   * (`world-exists`) when the save already has one. Transfer the buffers.
+   */
+  'world.create': { args: { readonly world: WorldSave }; result: null };
+  /**
+   * The world of the current save as last committed; its buffers are
+   * transferred. A save without a world (every save of Fase 7A) answers
+   * `no-world`.
+   */
+  'world.load': { args: Record<string, never>; result: WorldSave };
+  /**
+   * Ends a day in one transaction. Only the day right after the stored one
+   * is accepted (`out-of-order` otherwise): a commit sent twice changes
+   * nothing.
+   */
+  'world.commitDay': { args: { readonly commit: DayCommit }; result: null };
+  /** The league table, worked out from the results. */
+  'world.standings': { args: Record<string, never>; result: readonly StandingRow[] };
+  /** The matches of a round (0-based). */
+  'world.round': { args: { readonly round: number }; result: readonly RoundMatch[] };
   /**
    * Test only (`DbOptions.test`): writes a `meta` key inside a transaction
    * that is never committed, and answers. Killing the worker afterwards is
@@ -138,6 +262,9 @@ export type DbError = {
     | 'newer-version'
     | 'not-a-save'
     | 'migration-failed'
+    | 'no-world'
+    | 'world-exists'
+    | 'out-of-order'
     | 'invalid'
     | 'internal';
   readonly message: string;
@@ -162,6 +289,12 @@ export type DbOptions = {
      * is a crash at that exact point.
      */
     readonly stopImport?: 'before-swap' | 'after-swap';
+    /**
+     * `world.commitDay` writes the day and stops for good right before the
+     * commit of its transaction: killing the worker then is a crash in the
+     * middle of ending a day.
+     */
+    readonly stopCommitDay?: boolean;
   };
 };
 

@@ -7,7 +7,9 @@
 // for SQL.
 
 import sqlite3InitModule, { type Database, type SqlValue } from '@sqlite.org/sqlite-wasm';
+import { OpError } from '../save/errors';
 import { openIdb, openOpfs, type Files } from '../save/files';
+import * as worldDb from '../save/world-db';
 import {
   MigrationFailedError,
   NewerVersionError,
@@ -42,15 +44,7 @@ const CATALOG_FILE = '/catalog.sqlite';
 /** Suffix of the copy of a save made before its migration chain runs. */
 const BACKUP_SUFFIX = '.bak';
 
-/** An error with a code the caller can act on. */
-class OpError extends Error {
-  constructor(
-    readonly code: DbError['code'],
-    message: string,
-  ) {
-    super(message);
-  }
-}
+// (`OpError` lives in `../save/errors`.)
 
 type Storage = {
   readonly files: Files;
@@ -285,8 +279,10 @@ const handlers: { [O in DbOp]: (args: DbOps[O]['args']) => DbOps[O]['result'] | 
       sql: 'UPDATE saves SET last_opened_at = ?, schema_version = ? WHERE id = ?',
       bind: [new Date().toISOString(), schemaVersion(wrap(db)), id],
     });
-    await files.flush([{ name: CATALOG_FILE, db: catalog }]);
     current = { id, name: file, db };
+    // What the catalog shows about the world (club, season, day) follows
+    // the file: if a crash left the two apart, this puts them together.
+    await syncCatalog();
     const opened: OpenedSave = { save: findSave(catalog, id), migrated, tables, migrations: applied };
     return opened;
   },
@@ -412,6 +408,34 @@ const handlers: { [O in DbOp]: (args: DbOps[O]['args']) => DbOps[O]['result'] | 
     return hex(new Uint8Array(digest));
   },
 
+  'world.create': async ({ world }) => {
+    const open = needCurrent();
+    worldDb.createWorld(open.db, world);
+    await need().files.flush([open]);
+    await syncCatalog();
+    return null;
+  },
+
+  'world.load': () => worldDb.loadWorld(needCurrent().db),
+
+  'world.commitDay': async ({ commit }) => {
+    const open = needCurrent();
+    if (options.test?.stopCommitDay === true) {
+      worldDb.commitDay(open.db, commit, true);
+      return new Promise<never>(() => undefined);
+    }
+    worldDb.commitDay(open.db, commit);
+    await need().files.flush([open]);
+    // The file first, then the catalog: two files cannot share a
+    // transaction, and the next `save.open` puts them together if needed.
+    await syncCatalog();
+    return null;
+  },
+
+  'world.standings': () => worldDb.standings(needCurrent().db),
+
+  'world.round': ({ round }) => worldDb.round(needCurrent().db, round),
+
   'test.writeWithoutCommit': ({ key, value }) => {
     testOnly();
     const { db } = needCurrent();
@@ -459,6 +483,20 @@ const handlers: { [O in DbOp]: (args: DbOps[O]['args']) => DbOps[O]['result'] | 
   },
 };
 
+/** Copies the world's club, season and day of the current save to the catalog. */
+async function syncCatalog(): Promise<void> {
+  if (current === undefined) return;
+  const { files, catalog } = need();
+  const world = worldDb.summary(current.db);
+  if (world !== undefined) {
+    catalog.exec({
+      sql: 'UPDATE saves SET club_name = ?, season = ?, day = ? WHERE id = ?',
+      bind: [world.clubName, world.season, world.day, current.id],
+    });
+  }
+  await files.flush([{ name: CATALOG_FILE, db: catalog }]);
+}
+
 function testOnly(): void {
   if (options.test === undefined) throw new OpError('invalid', 'operação só de teste');
 }
@@ -487,11 +525,10 @@ async function serve<O extends DbOp>(request: DbRequest<O>): Promise<DbResponse<
 
 type Reply = (message: DbResponse | DbReady, transfer?: Transferable[]) => void;
 
-/** Buffers of a response that are handed over instead of copied. */
+/** Buffers of a response (its top-level fields) that are handed over instead of copied. */
 function transferOf(response: DbResponse): Transferable[] {
   if (!response.ok || response.result === null || typeof response.result !== 'object') return [];
-  const { bytes } = response.result as { bytes?: unknown };
-  return bytes instanceof ArrayBuffer ? [bytes] : [];
+  return Object.values(response.result).filter((v): v is ArrayBuffer => v instanceof ArrayBuffer);
 }
 
 function listen(reply: Reply): (e: MessageEvent<DbControl | DbRequest>) => void {
