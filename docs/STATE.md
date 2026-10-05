@@ -2,7 +2,7 @@
 
 Resumo de uma tela que sobrevive a compactações de sessão. A fonte de verdade
 de arquitetura e regras é o [`docs/SPEC.md`](SPEC.md); este arquivo só diz
-*onde estamos*. Atualizado em **2026-10-05** (Fase 6 mergeada; Fase 7A — persistência local — pronta, em PR).
+*onde estamos*. Atualizado em **2026-10-05** (Fases 6 e 7A mergeadas; Fase 7B — mundo mínimo e calendário — em desenho, branch `fase-7b`).
 
 ## Ordem geral (redefinida pelo usuário em 2026-10-05)
 Fases 0–6 fechadas. A ordem nova, que **substitui** a anterior ("Bola
@@ -38,10 +38,21 @@ para orientar a próxima rodada de refinamento.
   domínio por `MessagePort`. **A fonte de verdade local passou a ser o
   SQLite em OPFS** (era IndexedDB); o sync por chunk será redesenhado na
   Fase 10. Branch `fase-7a`, da `main` depois do merge do PR #7.
-  **Feita (2026-10-05), em PR.** O que o CI mostrou: Chromium e Firefox
+  **Feita e mergeada (2026-10-05, PR #9).** O que o CI mostrou: Chromium e Firefox
   têm OPFS; o WebKit do Playwright não tem `navigator.storage` e roda só
   no fallback. Tela mínima em `?view=saves` (`&storage=idb` força o
   fallback). Detalhes e achados no SPEC.
+  - **O IndexedDB não é um caminho de segunda classe.** No WebKit do
+    Playwright ele é o **único** caminho. Decisão do usuário
+    (2026-10-05): tratar o IndexedDB como o backend que vai carregar toda
+    uma fatia de usuários, e a **Fase 10 (auth/sync) tem de assumir
+    IndexedDB como backend primário no Safari, não OPFS**.
+    - Ressalva registrada: isso foi medido no WebKit do Playwright, que
+      não tem `navigator.storage`. O Safari real pode ter OPFS (a
+      documentação pública diz que tem desde a versão 15.2, e o
+      `opfs-sahpool` pede 16.4 ou mais novo; aba privada não). **Não
+      verificado.** Até alguém medir num Safari de verdade, vale a
+      premissa conservadora acima.
   - **A verificar no Safari real** (não há como no CI): se o OPFS
     funciona, e se o Worker carrega logo depois de recarregar a página (no
     WebKit do Playwright falha por ~1 s; o cliente tenta de novo).
