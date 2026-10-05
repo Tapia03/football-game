@@ -14,6 +14,7 @@ import type {
   WorldError,
   WorldOp,
   WorldOps,
+  WorldProgress,
   WorldReady,
   WorldRequest,
   WorldResponse,
@@ -204,6 +205,22 @@ function commitOf(h: WorldHost): { commit: DayCommit; transfer: ArrayBuffer[] } 
   return { commit, transfer: [dynamics] };
 }
 
+// Giving the event loop a turn between two matches, so that a message that
+// arrived meanwhile is handled. A message channel, not `setTimeout`, which
+// browsers hold back for 4 ms once calls nest.
+const turn = new MessageChannel();
+let resume: (() => void) | undefined;
+turn.port1.onmessage = () => resume?.();
+function yieldTurn(): Promise<void> {
+  return new Promise((resolve) => {
+    resume = resolve;
+    turn.port2.postMessage(0);
+  });
+}
+
+/** Matches played and time spent playing them in the advance under way. */
+type Pace = { matches: number; ms: number };
+
 /** Loads the world of the open save from the database. */
 async function open(): Promise<WorldHost> {
   const loaded = hostOf(await database().request('world.load', {}));
@@ -216,13 +233,34 @@ async function open(): Promise<WorldHost> {
  * Lives one day. If the database refuses the end of the day, the world in
  * memory is one day ahead of the truth: it is thrown away and loaded again.
  */
-async function liveDay(h: WorldHost): Promise<DayTiming | undefined> {
+async function liveDay(h: WorldHost, daysLeft: number, pace: Pace): Promise<DayTiming | undefined> {
   const day = h.day();
   const round = h.next_round();
   const matches = h.matches_today();
   const started = performance.now();
-  for (const id of matches) h.play(id);
-  const simulated = performance.now();
+  let simulating = 0;
+  for (const [index, id] of matches.entries()) {
+    const before = performance.now();
+    h.play(id);
+    const took = performance.now() - before;
+    simulating += took;
+    pace.matches += 1;
+    pace.ms += took;
+    const done = index + 1;
+    const progress: WorldProgress = {
+      type: 'progress',
+      day,
+      round,
+      done,
+      total: matches.length,
+      daysLeft,
+      etaMs: (pace.ms / pace.matches) * (matches.length - done),
+    };
+    postMessage(progress);
+    // One match at a time: the page hears about each as it ends.
+    await yieldTurn();
+  }
+  const simulated = started + simulating;
   h.finish_day();
   const { commit, transfer } = commitOf(h);
   const committing = performance.now();
@@ -240,7 +278,7 @@ async function liveDay(h: WorldHost): Promise<DayTiming | undefined> {
     day,
     round,
     matches: matches.length,
-    simulateMs: simulated - started,
+    simulateMs: simulating,
     commitMs: ended - committing,
     totalMs: ended - started,
   };
@@ -270,9 +308,10 @@ const handlers: { [O in WorldOp]: (args: WorldOps[O]['args']) => Promise<WorldOp
   'world.advance': async ({ days }) => {
     if (!Number.isInteger(days) || days < 1) throw new WorldOpError('invalid', 'avançar pede ao menos um dia');
     const timing: DayTiming[] = [];
+    const pace: Pace = { matches: 0, ms: 0 };
     let daysLived = 0;
     while (daysLived < days && !world().finished()) {
-      const lived = await liveDay(world());
+      const lived = await liveDay(world(), days - daysLived - 1, pace);
       if (lived !== undefined) timing.push(lived);
       daysLived += 1;
     }

@@ -91,3 +91,24 @@ export type WorldControl =
   { readonly type: 'start'; readonly db: MessagePort };
 
 export type WorldReady = { readonly type: 'ready' };
+
+/**
+ * Sent after every match of a `world.advance`, outside the request /
+ * response envelope: what the progress bar shows.
+ */
+export type WorldProgress = {
+  readonly type: 'progress';
+  /** The day being lived and its round (0-based). */
+  readonly day: number;
+  readonly round: number;
+  /** Matches of the day already played, and how many the day has. */
+  readonly done: number;
+  readonly total: number;
+  /** Days of this advance still to be lived after this one. */
+  readonly daysLeft: number;
+  /**
+   * Estimate of what is left of this day's matches (ms), from the mean
+   * time of the matches this advance has played.
+   */
+  readonly etaMs: number;
+};

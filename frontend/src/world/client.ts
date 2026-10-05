@@ -6,6 +6,7 @@ import type {
   WorldError,
   WorldOp,
   WorldOps,
+  WorldProgress,
   WorldReady,
   WorldRequest,
   WorldResponse,
@@ -23,6 +24,8 @@ export class WorldOpError extends Error {
 
 export type WorldHandle = {
   request<O extends WorldOp>(op: O, args: WorldOps[O]['args']): Promise<WorldOps[O]['result']>;
+  /** Calls `listener` after every match of an advance; returns how to stop listening. */
+  onProgress(listener: (progress: WorldProgress) => void): () => void;
   /** Kills the worker (what a crash or a closed tab does). */
   terminate(): void;
 };
@@ -58,7 +61,12 @@ function startOnce(database: Database): Promise<WorldHandle> {
   });
   let nextId = 1;
   const pending = new Map<number, { resolve: (value: never) => void; reject: (reason: WorldOpError) => void }>();
+  const listeners = new Set<(progress: WorldProgress) => void>();
   const handle: WorldHandle = {
+    onProgress: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
     request: (op, args) => {
       const id = nextId;
       nextId += 1;
@@ -71,10 +79,11 @@ function startOnce(database: Database): Promise<WorldHandle> {
     terminate: () => worker.terminate(),
   };
   return new Promise((resolve, reject) => {
-    worker.addEventListener('message', (e: MessageEvent<WorldResponse | WorldReady>) => {
+    worker.addEventListener('message', (e: MessageEvent<WorldResponse | WorldReady | WorldProgress>) => {
       const message = e.data;
       if ('type' in message) {
-        resolve(handle);
+        if (message.type === 'ready') resolve(handle);
+        else for (const listener of listeners) listener(message);
         return;
       }
       const waiting = pending.get(message.id);

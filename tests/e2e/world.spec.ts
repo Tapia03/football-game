@@ -17,7 +17,12 @@ type Summary = {
 };
 type Timing = { day: number; round: number; matches: number; simulateMs: number; commitMs: number; totalMs: number };
 type Advance = { summary: Summary; daysLived: number; timing: Timing[] };
-type WorldHandle = { request(op: string, args: unknown): Promise<unknown>; terminate(): void };
+type Progress = { type: 'progress'; day: number; round: number; done: number; total: number; daysLeft: number; etaMs: number };
+type WorldHandle = {
+  request(op: string, args: unknown): Promise<unknown>;
+  onProgress(listener: (progress: Progress) => void): () => void;
+  terminate(): void;
+};
 type WorldHooks = Hooks & {
   fmWorld: { startWorld(db: Hooks['db']): Promise<WorldHandle> };
   /** The world worker the test is talking to. */
@@ -142,6 +147,51 @@ for (const backend of ['opfs', 'idb'] as const) {
       expect(table.reduce((sum, row) => sum + row.goalsFor, 0)).toBe(goals);
       expect(table.reduce((sum, row) => sum + row.goalsAgainst, 0)).toBe(goals);
       expect(await ask<SaveInfo[]>(page, 'save.list')).toMatchObject([{ id: save.id, day: 7 }]);
+    });
+
+    test('progress: one message for each match, in order, while the day is lived', async ({ page }, testInfo) => {
+      await open(page, testInfo.project.name);
+      await openSave(page, 'Progresso');
+      await startWorld(page);
+      await world(page, 'world.new', { seed: '2026', userClub: 0 });
+      // Two weeks: twelve days off and two rounds. What the page hears, and
+      // where the world was (as the database had it) when it heard it.
+      const heard = await page.evaluate(async () => {
+        const hooks = globalThis as unknown as WorldHooks;
+        const events: (Progress & { storedDay: number })[] = [];
+        const reads: Promise<void>[] = [];
+        const stop = hooks.world.onProgress((p) => {
+          const at = events.push({ ...p, storedDay: -1 }) - 1;
+          reads.push(
+            hooks.db.client.request('meta.get', { key: 'day' }).then((day) => {
+              events[at]!.storedDay = Number(day);
+            }),
+          );
+        });
+        const result = (await hooks.world.request('world.advance', { days: 14 })) as Advance;
+        stop();
+        await Promise.all(reads);
+        return { events, day: result.summary.day };
+      });
+      expect(heard.day).toBe(14);
+      // Twenty matches, ten a round; nothing on the days off.
+      expect(heard.events.map((e) => [e.day, e.round, e.done, e.total])).toEqual(
+        [6, 13].flatMap((day, round) => Array.from({ length: 10 }, (_, i) => [day, round, i + 1, 10])),
+      );
+      // Days left of the advance after the one being lived.
+      expect(heard.events.slice(0, 10).every((e) => e.daysLeft === 7)).toBe(true);
+      expect(heard.events.slice(10).every((e) => e.daysLeft === 0)).toBe(true);
+      // The estimate is what is left of the day: it never grows by more
+      // than a match's worth and ends at zero.
+      for (const round of [heard.events.slice(0, 10), heard.events.slice(10)]) {
+        expect(round.every((e) => e.etaMs >= 0)).toBe(true);
+        expect(round[0]!.etaMs).toBeGreaterThan(0);
+        expect(round[9]!.etaMs).toBe(0);
+      }
+      // The page heard about the matches while the day was being lived, not
+      // after: the database was still on the day before for the early ones.
+      expect(heard.events[0]!.storedDay).toBe(6);
+      expect(heard.events[10]!.storedDay).toBe(13);
     });
 
     test('world.open loads the world back; a save without a world says no-world', async ({ page }, testInfo) => {
