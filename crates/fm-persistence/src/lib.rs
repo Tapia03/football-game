@@ -510,6 +510,9 @@ mod tests {
             decode_database(&one_bad, &dynamics),
             Err(DecodeError::Version(7))
         );
-        assert!(!DecodeError::Version(7).to_string().is_empty());
+        assert_eq!(
+            DecodeError::Version(7).to_string(),
+            "layout version 7, this build knows 1"
+        );
     }
 }
