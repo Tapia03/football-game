@@ -3111,6 +3111,30 @@ depois. O jogo ainda não tem nome ("o jogo", "o projeto").
   - **Sub-commits:** (1) `WorldHost`; (2) Worker de mundo e os dois
     protocolos; (3) progresso; (4) cancelamento, recarga e prazo; (5)
     medição no CI.
+- **7B.4, primeiras medições (2026-10-05, máquina do dono, 16 núcleos,
+  um teste por vez, cinco rodadas seguidas no mesmo Worker de mundo):**
+
+  | Navegador | Rodada inteira | Por partida | Commit do dia |
+  |---|---|---|---|
+  | Chromium | 1,07–1,79 s | 106–178 ms | 6–11 ms |
+  | WebKit | 1,48–2,27 s | 146–226 ms | 11–16 ms |
+  | Firefox | 7,9–9,7 s | 790–960 ms | 16–22 ms |
+
+  - O custo é a simulação: mensagens, `finish_day` e `commitDay` somam
+    menos de 2% da rodada.
+  - **Dívida — Firefox do CI roda o WASM da 7B cerca de 7× mais devagar
+    que o Chromium** (8 s por rodada contra 1,1 s na máquina do dono, 16
+    núcleos). Não é aquecimento: as cinco rodadas ficam em ~8 s. Causa
+    não investigada. Se confirmado num Firefox real (não o do
+    Playwright), vira item da Fase 8, junto com o WASM 3,4× mais lento
+    que o nativo. Enquanto isso, os testes longos do Worker de mundo têm
+    prazo maior **só no Firefox**, com o motivo anotado no código.
+  - No Chromium e no WebKit as rodadas 3 e 4 saíram mais lentas que as
+    duas primeiras (178 contra 106 ms por partida no Chromium). Causa
+    não investigada.
+  - **O número que decide o pool continua sendo o do CI** (sub-commit
+    5); o da máquina do dono é contexto.
+  - O WASM cresceu de 322 para 408 kB com `fm-world` e `fm-persistence`.
 
 ## FASE 7 (numeração antiga; agora parte da Fase 9) — UI + Overlays Táticos
 - **Ordem (2026-10-05):** vem depois da fase "Bola longa + contraparte

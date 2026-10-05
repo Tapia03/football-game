@@ -3,6 +3,7 @@ import App from './app/App.svelte';
 import Saves from './app/Saves.svelte';
 import './app/global.css';
 import { DbClient, startDatabase } from './save/client';
+import { startWorld } from './world/client';
 
 const target = document.getElementById('app');
 if (target === null) {
@@ -13,6 +14,8 @@ if (target === null) {
 // with the options each one needs (on the blank view, where nothing else
 // holds the save files).
 (globalThis as { fmSave?: unknown }).fmSave = { startDatabase, DbClient };
+// …and the world worker over it (Fase 7B).
+(globalThis as { fmWorld?: unknown }).fmWorld = { startWorld };
 
 // `?view=saves`: the saves screen. `?view=blank`: nothing at all — a quiet
 // page for tests that drive a worker directly. Otherwise, the match.

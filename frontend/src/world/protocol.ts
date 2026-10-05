@@ -1,0 +1,93 @@
+// Protocol of the world worker (spec Fase 7B, 7B.4). The world worker is
+// the only place the world lives: it simulates the days and asks the
+// database worker to write them. The page sends it operations in the same
+// envelope the database worker uses:
+//
+//   request:  { id, op, args }
+//   response: { id, ok: true, result } | { id, ok: false, error }
+
+import type { DbError } from '../save/protocol';
+
+/** Where the world is. */
+export type WorldSummary = {
+  /** The world seed: a u64 in decimal. */
+  readonly seed: string;
+  /** Days of the season already lived: today is this day. */
+  readonly day: number;
+  readonly seasonYear: number;
+  readonly userClub: number;
+  /** Round (0-based) of the next match to be played; 38 when there is none. */
+  readonly nextRound: number;
+  /** Matches to be played today (0 on a day off). */
+  readonly matchesToday: number;
+  /** The season is over. */
+  readonly finished: boolean;
+};
+
+/** How long a day with matches took (real milliseconds), for measurement. */
+export type DayTiming = {
+  /** The day that was lived (the world was on it before). */
+  readonly day: number;
+  readonly round: number;
+  readonly matches: number;
+  /** The calls that play the matches, nothing else. */
+  readonly simulateMs: number;
+  /** Ending the day in the database (`world.commitDay`), round trip. */
+  readonly commitMs: number;
+  /** The whole day: matches, ending it, the commit. */
+  readonly totalMs: number;
+};
+
+export type WorldOps = {
+  /**
+   * Makes the world of `seed` and writes it into the save that is open in
+   * the database worker. Refused, as the database refuses it, when the
+   * save already has a world.
+   */
+  'world.new': { args: { readonly seed: string; readonly userClub: number }; result: WorldSummary };
+  /**
+   * Loads the world of the open save as last committed. A save without a
+   * world fails with `no-world`, as the database says it.
+   */
+  'world.open': { args: Record<string, never>; result: WorldSummary };
+  /**
+   * Lives `days` days, one at a time: the matches of the day, the end of
+   * the day, its commit to the database, then the next day. Stops early
+   * when the season ends.
+   */
+  'world.advance': {
+    args: { readonly days: number };
+    result: {
+      readonly summary: WorldSummary;
+      /** Days lived by this call. */
+      readonly daysLived: number;
+      /** One entry for each day lived that had matches. */
+      readonly timing: readonly DayTiming[];
+    };
+  };
+};
+
+export type WorldOp = keyof WorldOps;
+
+export type WorldRequest<O extends WorldOp = WorldOp> = {
+  readonly id: number;
+  readonly op: O;
+  readonly args: WorldOps[O]['args'];
+};
+
+/** `no-world-loaded`: an operation that needs a world before one was made or opened. */
+export type WorldError = {
+  readonly code: DbError['code'] | 'no-world-loaded';
+  readonly message: string;
+};
+
+export type WorldResponse<O extends WorldOp = WorldOp> =
+  | { readonly id: number; readonly ok: true; readonly result: WorldOps[O]['result'] }
+  | { readonly id: number; readonly ok: false; readonly error: WorldError };
+
+/** Control messages of the worker, besides requests. */
+export type WorldControl =
+  /** The line to the database worker (`Database.connect()`); sent first. */
+  { readonly type: 'start'; readonly db: MessagePort };
+
+export type WorldReady = { readonly type: 'ready' };
