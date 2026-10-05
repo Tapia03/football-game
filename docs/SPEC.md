@@ -3164,6 +3164,67 @@ depois. O jogo ainda não tem nome ("o jogo", "o projeto").
     `commitDay` (ignorado por decisão; não há como acertar essa janela de
     milissegundos num teste). A temporada inteira no CI (só por disparo
     manual; não disparada ainda).
+- **7B.4b — pool de Workers de partida (desenho aprovado em 2026-10-05).**
+  Entra antes do commit 5, porque a medição passou de 1 s.
+  - **Metas (os 500 ms eram o critério de decisão, não a meta):**
+    1. **Determinismo (crítico):** o mesmo `save.digest` com 1, 2 e 4
+       jogadores. Se falhar, o pool está errado e o ganho não interessa.
+       É o primeiro teste do sub-commit 3.
+    2. **Ganho real no Chromium do CI:** de 1.453 ms para **≤ 700 ms**
+       (os 4 núcleos do runner são o gargalo físico: três levas de
+       ~141 ms mais o `commitDay` ≈ 470 ms, e a medição flutua acima).
+       **Acima de 1 s com o pool: parar e trazer o número.**
+    3. **Máquinas reais:** com 8 núcleos, rodada ≤ 300 ms; medir na
+       máquina do dono e registrar.
+    4. **Sem regressão com 1 núcleo:** o comportamento é o de hoje, sem
+       pool.
+  - **Firefox fica fora da meta:** uma partida custa 871 ms no CI; com
+    pool a rodada fica em ~2,7 s no runner e nunca abaixo de uma partida.
+    É a dívida do WASM lento (wasm-opt, perfil), não falha do pool.
+  - **Um só `WorldHost`, um só caminho de código.** O tipo continua
+    guardando o mundo, mas deixa de guardar "partidas jogadas e não
+    aplicadas": `play(id)` só lê e devolve o resultado; `finish_day
+    (resultados)` aplica o que receber (exatamente as partidas do dia, em
+    qualquer ordem; aplica em ordem de id); `sync_day(...)` sobrescreve o
+    que muda de um dia para o outro (dia, estado dos jogadores, táticas e
+    onzes). Sem pool, o Worker de mundo chama `play` ele mesmo; com pool,
+    quem chama são os Workers de partida. O resto é igual.
+  - **Arquitetura.**
+    - O Worker de mundo continua dono do mundo e coordena: distribui as
+      partidas, junta os resultados, encerra o dia, faz o `commitDay`.
+    - **Com pool, o coordenador não joga.** Uma partida bloqueia o Worker
+      ~141 ms, e nesse intervalo ele não entregaria a próxima partida a
+      um jogador livre. São `min(núcleos, 10)` Workers de partida; com 1
+      núcleo não há pool e o coordenador joga sozinho.
+    - Cada Worker de partida tem um `WorldHost` carregado uma vez das
+      peças do save e, antes de cada rodada, sincronizado com o dia
+      (~8 kB: estado dos 500 jogadores, táticas e onzes). Devolve sete
+      números por partida.
+    - A main cria os Workers e entrega ao Worker de mundo uma
+      `MessagePort` para cada um (como faz com o banco); nada de Worker
+      criado dentro de Worker.
+  - **Fila dinâmica:** cada jogador pega a próxima partida ao ficar
+    livre. Progresso: uma mensagem por partida, na ordem em que terminam.
+  - **Cancelamento:** o coordenador para de distribuir, espera as
+    partidas em curso e abandona o dia; nada é gravado.
+  - **Falhas:** prazo por partida; estourou, o coordenador joga aquela
+    partida ele mesmo e tira o Worker do pool. Pool que não sobe: o
+    Worker de mundo segue sozinho.
+  - **Medição (mesmo passo do CI), com e sem pool lado a lado.**
+    - **A primeira rodada com o pool é medida à parte** (cada Worker
+      compila o WASM de 408 kB ao nascer e carrega o mundo) e **não entra
+      na mediana**.
+    - **Memória:** heap WASM de cada Worker e o total com o pool de 4
+      (num runner de 4 núcleos são 4 Workers de partida + mundo + banco).
+  - **Registrado para a 7D:** quando o Worker de engine estiver ativo
+    (partida em LOD Full), o pool de partidas reduz para
+    `min(núcleos − 1, 9)` ou pausa até a partida terminar. Na 7B isso não
+    acontece.
+  - **Sub-commits:** (1) este SPEC; (2) `WorldHost` com `play` puro,
+    `finish_day(resultados)` e `sync_day`, testes nativos de
+    equivalência; (3) Worker de partida, pool e fila — 1, 2 e 4 jogadores
+    dão o mesmo digest; (4) cancelamento e falhas com o pool; (5)
+    medição.
 
 ## FASE 7 (numeração antiga; agora parte da Fase 9) — UI + Overlays Táticos
 - **Ordem (2026-10-05):** vem depois da fase "Bola longa + contraparte
