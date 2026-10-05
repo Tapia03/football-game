@@ -34,7 +34,7 @@
   // Fase 6 (6A): the match runs in the engine worker; the page only reads
   // the snapshot ring.
   const seed = Number(new URLSearchParams(location.search).get('seed') ?? '7') || 7;
-  const speeds = [1, 10, 30, 60] as const;
+  const speeds = [1, 2, 5, 10, 30, 60] as const;
   let speed: number = $state(10);
   let clock = $state('00:00');
   let score = $state('0 × 0');

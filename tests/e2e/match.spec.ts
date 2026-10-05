@@ -643,7 +643,7 @@ test.describe('Fase 6 (6A): the match runs in the engine worker', () => {
     const halfCost = await measure();
     await page.keyboard.press('F1');
     await expect(labels.locator('.label')).toHaveCount(22);
-    const placed = await page.evaluate(() => {
+    const where = async () => page.evaluate(() => {
       const hooks = globalThis as unknown as Hooks;
       const { reader } = hooks.fmMatch;
       const words = reader.rawSlot(reader.sequence() - 1);
@@ -663,11 +663,14 @@ test.describe('Fase 6 (6A): the match runs in the engine worker', () => {
         disc: 1.15 * pxPerM,
       };
     });
+    // The labels exist as soon as F1 is on but are only placed by the next
+    // frame drawn (100 ms away in WebKit on CI): poll until they are. To a
+    // few pixels: the page draws one sample (17 ms) behind the newest
+    // snapshot read here.
+    await expect.poll(async () => Math.abs((await where())?.dx ?? Infinity)).toBeLessThan(6);
+    const placed = await where();
     expect(placed).toBeDefined();
     if (placed === undefined) return;
-    // To a few pixels: the page draws one sample (17 ms) behind the newest
-    // snapshot read here.
-    expect(Math.abs(placed.dx)).toBeLessThan(6);
     // Its top edge is just under the disc (radius 1.15 m at this zoom).
     expect(placed.below).toBeGreaterThan(placed.disc - 4);
     expect(placed.below).toBeLessThan(placed.disc + 10);
