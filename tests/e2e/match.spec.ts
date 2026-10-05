@@ -370,6 +370,18 @@ test.describe('Fase 6 (6A): the match runs in the engine worker', () => {
       plain,
     );
     await expect(page).toHaveScreenshot('match-toggles.png', { maxDiffPixelRatio: 0.01 });
+
+    // The same instant with F3 (offside line) and F4 (formation lines) on
+    // instead: 17 dashes and 14 segments of 6 vertices over the plain mesh.
+    await page.keyboard.press('F1');
+    await page.keyboard.press('F2');
+    await expect(page.getByTestId('labels')).toHaveCount(0);
+    await page.keyboard.press('F3');
+    await page.keyboard.press('F4');
+    await expect
+      .poll(() => page.evaluate(() => (globalThis as unknown as Hooks).fmPerf.verts))
+      .toBe(plain + 17 * 6 + 14 * 6);
+    await expect(page).toHaveScreenshot('match-overlays.png', { maxDiffPixelRatio: 0.01 });
   });
 
   test('tick-to-draw latency stays under 50 ms at 1× (95% of the frames)', async ({ page }, testInfo) => {
