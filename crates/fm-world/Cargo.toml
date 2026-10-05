@@ -9,6 +9,7 @@ publish.workspace = true
 fm-core.workspace = true
 fm-entities.workspace = true
 fm-match.workspace = true
+fm-persistence.workspace = true
 
 [lints]
 workspace = true

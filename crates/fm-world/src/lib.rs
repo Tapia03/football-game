@@ -7,6 +7,7 @@
 
 pub mod fixtures;
 pub mod names;
+pub mod save;
 pub mod squad;
 pub mod world;
 
@@ -15,6 +16,7 @@ pub use fixtures::{
     SEASON_DAYS,
 };
 pub use names::{player_name, CLUB_NAMES};
+pub use save::{ClubRow, PlayerRow, SaveError, WorldSave};
 pub use squad::{fits, overall, pick_lineup};
 pub use world::{
     Club, Played, Standing, World, LEAGUE_FORMATION, PLAYERS, SEASON_YEAR, SQUAD_SIZE,
