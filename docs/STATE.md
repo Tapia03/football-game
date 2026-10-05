@@ -40,7 +40,11 @@ TS, malha como função WASM pura. Latência tick → desenho a 1×: média
   depois da troca 4,07 / 3,46 / 2,20 m (Low / Medium / UltraHigh; pela
   página: 2,37 → 1,39 m). Partida = função de (seed, comandos com tick),
   testado bit a bit pela página. Três goldens refeitos.
-- **Próximo: 6D** câmera (desenho antes do código). **Pendente: 6C-2**
+- **Em andamento: 6D** câmera (desenho aprovado em 2026-10-05, no SPEC):
+  FullPitch, HalfPitch (2×, segue a bola com zona morta), Tactical
+  (zoom-out + rótulos e linhas de formação automáticos); tecla `C` e
+  `1`/`2`/`3`, botões; blend exponencial de ~150 ms; zoom/pan manuais
+  ficam para a Fase 7. **Pendente: 6C-2**
   (overlays de zonas de pressing e opções de passe; trabalho de motor +
   render, desenho próprio).
 
@@ -363,8 +367,8 @@ a própria referência antiga. Então:
 2. push que **remove** as referências afetadas (`git rm`) — vermelho, e o
    artefato `golden-chromium` traz as novas;
 3. push com as novas — verde.
-Para economizar um push: remover as referências **no mesmo commit** da
-mudança visual.
+**Padrão do projeto (6C-2, 6D, Fase 7):** remover as referências **no
+mesmo commit** da mudança visual reduz de dois para um push vermelho.
 
 **Playwright local (instalado em 2026-10-04):** `npx playwright install`
 foi rodado nesta máquina; `npx playwright test` roda os e2e localmente

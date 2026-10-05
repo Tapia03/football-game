@@ -2413,6 +2413,49 @@ recalibrar contra a coluna "Real". As constantes estão em `AnchorTuning`,
       → 1,66 ms) sem mudança de código; a malha + desenho do WebKit do CI
       oscila 0,6–1,7 ms entre medições. O limite de 1 ms passa a valer só
       no Chromium (onde é a regra); o WebKit só reporta no log.
+- **6D — câmera (aprovado 2026-10-05):**
+  - **A câmera é a vista da malha com outros números.** A malha já é
+    gerada na CPU em coordenadas de tela a partir de uma vista (centro e
+    escala); nada de matriz na GPU, nada no motor, nada no SAB (continua
+    na versão 4). O que cai fora da tela a GPU recorta. Os rótulos do F1
+    usam a mesma vista.
+  - **Três modos:**
+
+    | Modo | Janela (m) | Centro |
+    |---|---|---|
+    | FullPitch (padrão) | 113 × 76, como antes | centro do campo |
+    | HalfPitch | 56,5 × 38 (zoom 2×, "zoom de TV") | segue a bola com margem |
+    | Tactical | 125 × 84 (zoom-out leve) | centro do campo |
+
+    - **HalfPitch, "com margem":** a bola anda livre nos 40% centrais da
+      janela sem mover a câmera; fora dessa zona morta o alvo acompanha.
+      A janela nunca sai dos limites da vista FullPitch.
+    - **Tactical:** liga rótulos (número + posição) e linhas de formação
+      enquanto o modo está ativo, **sem alterar** o estado dos toggles
+      F1/F4; ao sair, vale de novo o que eles diziam. Sem isso o modo
+      seria redundante com o FullPitch.
+  - **Estado na main**, como os toggles (modo, centro e zoom atuais):
+    apresentação pura, fora da lista de comandos e do determinismo da
+    partida.
+  - **Alvo: função WASM pura** de (modo, bola, centro anterior) → centro
+    e zoom desejados (zona morta e limites). `draw` e `pitch_view`
+    recebem centro x, centro y e zoom.
+  - **Troca de modo: blend, não corte seco.** Suavização exponencial em
+    tempo real, constante de ~150 ms, independente da taxa de quadros; a
+    mesma suavização segue a bola no HalfPitch. A menos de 1 cm e 0,1%
+    de zoom do alvo, salta para o alvo exato (quadro final reproduzível
+    com a partida pausada). Corte seco só no primeiro quadro. **Assentar
+    em ≤ 1 s, senão parar.**
+  - **Zoom e pan manuais: fora do 6D** (sem critério de aceite; exigem
+    ponteiro, roda e toque). Candidato à Fase 7.
+  - **Input:** `C` cicla FullPitch → HalfPitch → Tactical; `1`/`2`/`3`
+    vão direto; três botões "Câmera" no rodapé.
+  - **Limites:** bench em +0,00%; custo por quadro de HalfPitch e de
+    Tactical contra FullPitch abaixo de 1 ms no Chromium (WebKit só
+    reporta).
+  - **Goldens:** os três atuais refeitos (os botões entram no rodapé) e
+    dois novos (HalfPitch e Tactical, seed 7, tick 6.000, câmera
+    assentada).
 - `MatchSnapshot` POD em `SharedArrayBuffer`, com ring buffer duplo
   (`ffi/sab.rs`).
 - `fm-wasm` expõe `init_engine(seed)`, `tick_logic()`,
