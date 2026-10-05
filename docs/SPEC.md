@@ -2335,6 +2335,35 @@ recalibrar contra a coluna "Real". As constantes estão em `AnchorTuning`,
       faltas, gols), não calibrados.
     - **Dívida:** o motor não tem fadiga, então pressing alto não custa
       nada ao time (ver STATE).
+    - **Tabelas (6C.2):** fator da distância de contenção `[1,6; 1,0;
+      0,7; 0,45]` (Low … UltraHigh) fora da zona da área; urgência de
+      quem contém `[0,8; 1,0; 1,0; 1,0]`.
+    - **Critério 3 medido (6C.1):** Defensive → Attacking contra a mesma
+      partida deixada em Defensive, 24 trocas (3 seeds × 2 times × 4
+      instantes): depois de 5 s o centro de massa dos 10 de linha está
+      10,0 m à frente no pior caso (mediana 14,5; máximo 25,9), e já
+      passa de 5 m aos 3 s nos 24 casos.
+    - **Critério 5 medido (6C.2):** distância do portador (fora da zona
+      da área) ao defensor de linha mais próximo, nos 5 s depois da
+      troca, 12 trocas: Low 4,07 m, Medium 3,46 m, UltraHigh 2,20 m. Em
+      96 trocas, já no primeiro segundo: 3,28 → 2,48 m (UltraHigh) e
+      3,28 → 3,78 m (Low).
+    - **Extremos medidos, não calibrados** (12 partidas inteiras, seeds
+      1–12, só o mandante muda; visitante em Medium):
+
+      | Mandante | Distância | Botes do mandante | Faltas (os dois) | Gols pró | Gols contra | Passe do visitante |
+      |---|---|---|---|---|---|---|
+      | Low | 4,41 m | 32,8 | 21,4 | 1,58 | 4,00 | 54,9% |
+      | Medium | 3,32 m | 39,8 | 21,5 | 2,75 | 2,67 | 58,9% |
+      | High | 2,62 m | 44,8 | 23,5 | 3,42 | 2,75 | 62,3% |
+      | UltraHigh | 1,96 m | 42,1 | 26,5 | 2,42 | 6,58 | 63,6% |
+
+      Com os dois times no mesmo nível, botes somados: 57,7 / 88,3 /
+      107,3 / 80,9. **Leitura:** a distância responde de forma monótona;
+      o resultado não. `UltraHigh` não é estritamente melhor: sofre 6,58
+      gols (quem contém a 1–2 m é batido e sobra espaço atrás) — "use por
+      sua conta". `Low` também sofre mais (4,00). 12 partidas é amostra
+      pequena para gols; serve para dar a ordem de grandeza.
   - **Tempo:** não existe no motor e **não entra agora**. É pergunta de
     modelo (retenção? risco do passe? velocidade de circulação?), e a
     alavanca mais à mão é a soltura forçada, dívida aberta da (c1). No
@@ -2363,6 +2392,10 @@ recalibrar contra a coluna "Real". As constantes estão em `AnchorTuning`,
     motor.
   - **Goldens:** os três de pixel são refeitos (o painel entra na
     página), no fluxo de dois pushes.
+  - **Bench depois do 6C.2:** 582.952.421 instruções (**−1,27%** sobre a
+    referência de 590.430.506), com a referência de paridade inalterada:
+    a mesma partida, código gerado diferente em `containment_point`. A
+    referência do bench não foi atualizada (decisão do usuário).
 - `MatchSnapshot` POD em `SharedArrayBuffer`, com ring buffer duplo
   (`ffi/sab.rs`).
 - `fm-wasm` expõe `init_engine(seed)`, `tick_logic()`,
