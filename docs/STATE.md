@@ -2,7 +2,7 @@
 
 Resumo de uma tela que sobrevive a compactações de sessão. A fonte de verdade
 de arquitetura e regras é o [`docs/SPEC.md`](SPEC.md); este arquivo só diz
-*onde estamos*. Atualizado em **2026-10-05** (Fases 6 e 7A mergeadas; Fase 7B — mundo mínimo e calendário — **em implementação**, branch `fase-7b`: commits 1 (SPEC) e 2 (`fm-world` nativo) feitos; próximo: commit 3, `fm-persistence` + migração v2 + operações `world.*`, com desenho a aprovar antes).
+*onde estamos*. Atualizado em **2026-10-05** (Fases 6 e 7A mergeadas; Fase 7B — mundo mínimo e calendário — **em implementação**, branch `fase-7b`: commits 1 (SPEC), 2 (`fm-world` nativo) e 3 (`fm-persistence`, migração v2, operações `world.*`) feitos; próximo: commit 4, `WorldHost` + Worker de mundo + progresso, com a medição no WASM do CI que decide o pool).
 
 **Para quem chega agora:** comece por [`docs/handoff/`](handoff/00-LEIA-PRIMEIRO.md).
 As seções deste arquivo abaixo de "Fase anterior — Fase 5 (c1)" são o
@@ -74,6 +74,16 @@ para orientar a próxima rodada de refinamento.
     dia, classificação; 13 testes). **Todos os clubes em 4-4-2**, por
     decisão do usuário depois do achado abaixo. Temporada nativa em
     17,4–18,9 s; rodada com mediana de 455–494 ms.
+  - **7B.3 feito:** codecs em `fm-persistence` (ficha 60 bytes, dinâmico
+    14, onze 44), `WorldSave` em `fm-world`, migração v2 (recria
+    `players`, `clubs` e `matches`, com guarda; `seed` vira BLOB),
+    operações `world.create` / `load` / `commitDay` / `standings` /
+    `round`. Save com mundo: **160 kB**. Save da 7A migra e responde
+    `no-world`.
+  - **Fica para o commit 5:** comparar a classificação do Rust com a do
+    banco (precisa do `WorldHost`); a tela `?view=world` e a navegação
+    saves ↔ mundo; os testes de determinismo e de crash com o mundo de
+    verdade.
 - **Achado da 7B.2 — desequilíbrio entre formações (item da Fase 8):**
   4-3-3 contra 4-3-3 dá 12,5 gols por partida; com as formações sorteadas
   a formação decide a tabela (correlação força × posição final 0,19–0,65;

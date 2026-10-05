@@ -2972,6 +2972,50 @@ depois. O jogo ainda não tem nome ("o jogo", "o projeto").
     disso, parar e conversar.
   - **Sub-commits:** (1) codecs; (2) `WorldSave`; (3) migração v2 com a
     guarda; (4) operações `world.*`; (5) medições no SPEC e no STATE.
+- **7B.3 implementado (2026-10-05), como ficou e o que o CI mostrou:**
+  - **Tamanho do save com mundo: 163.840 bytes (160 kB)**, igual nos
+    três navegadores e nos dois armazenamentos (500 jogadores, 380
+    partidas, duas rodadas jogadas). Um save vazio da 7A tem 90 kB (cada
+    tabela e cada índice ocupam uma página). Fica bem abaixo do limite de
+    1 MB para regravar o arquivo inteiro por dia no fallback IndexedDB; o
+    teste falha se passar de 1 MB.
+  - **Testes:** 3 nativos dos codecs e 3 do `WorldSave`; no navegador, 2
+    da migração v2 e 5 das operações `world.*`, cada um sobre OPFS e
+    sobre IndexedDB. Totais do e2e no CI: Chromium 51, Firefox 49, WebKit
+    35 (16 pulados no WebKit, que não tem OPFS). Bench de instruções em
+    +0,00% (o motor não foi tocado).
+  - **A fixture da 7A** (`tests/fixtures/save-v1-7a.sqlite`, 90 kB,
+    exportada pelo código da 7A antes de a v2 existir) migra para v2 pelo
+    import e também pelo open no lugar; o que a 7A tinha gravado em
+    `meta` continua lá; `world.load` responde `no-world` com a mensagem
+    "este save não tem mundo; foi criado antes da Fase 7B"; e o save
+    aceita um mundo depois.
+  - **A guarda da v2**, exercitada com um v1 que ganhou 2 clubes e 3
+    jogadores: o open falha com `migration-failed` e a mensagem traz
+    "players: 3 linhas, clubs: 2 linhas"; o arquivo fica em v1, com as
+    linhas, sem cópia sobrando.
+  - **Crash no meio de `world.commitDay`** (o Worker é morto com a
+    transação escrita e não commitada): o save está no dia anterior,
+    inteiro, o catálogo também, e o dia pode ser encerrado de novo.
+  - **`world.commitDay` confere mais do que a ordem:** além de só aceitar
+    o dia seguinte, exige exatamente as partidas do dia que termina (nem
+    a menos, nem de outro dia) e um estado por jogador; qualquer desvio é
+    recusado sem escrever nada.
+  - **As migrações de teste da 7A foram renumeradas:** elas ocupavam a
+    versão 2; agora ficam sempre uma e duas versões à frente do jogo
+    (`testMigrations()`), para a cadeia continuar sendo exercitada.
+  - **Os testes do Worker de banco** passaram a compartilhar
+    `tests/e2e/support/db.ts`. Ganchos novos só de teste: `test.sql` (SQL
+    direto num arquivo, sem migrá-lo), `test.plantFile` com bytes, e
+    `stopCommitDay`.
+  - **O que o banco não valida:** o conteúdo dos blobs. Ele confere os
+    tamanhos; os layouts são do Rust (`fm-persistence`), que valida ao
+    decodificar. Os mundos destes testes são feitos à mão; o mundo de
+    verdade encontra o banco no commit 4.
+  - **Um detalhe da fixture:** ela tem uma chave `day` em `meta`, gravada
+    como dado qualquer pelo código da 7A. A v2 usa `day` para o dia do
+    mundo; não há conflito, porque um save só tem mundo quando existe
+    `world_seed`, e `world.create` regrava `day`.
 
 ## FASE 7 (numeração antiga; agora parte da Fase 9) — UI + Overlays Táticos
 - **Ordem (2026-10-05):** vem depois da fase "Bola longa + contraparte

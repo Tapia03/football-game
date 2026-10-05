@@ -58,8 +58,11 @@ pendente** (abaixo).
 
 > Atualização de 2026-10-05: o dono escolheu a opção 1. O `fm-world` foi
 > ajustado (`LEAGUE_FORMATION`) e commitado; o trabalho listado acima como
-> "não commitado" já está no git. O próximo passo é o **desenho do commit
-> 3**, a aprovar antes de qualquer código.
+> "não commitado" já está no git. Depois disso o **commit 3 também foi
+> feito** (codecs, `WorldSave`, migração v2, operações `world.*`; save com
+> mundo de 160 kB). O próximo passo é o **commit 4**: `WorldHost`, Worker
+> de mundo e progresso, com a medição no WASM do CI que decide o pool. O
+> STATE e o SPEC (seção 7B) têm o registro completo.
 
 Simulando temporadas inteiras (380 partidas, nativo):
 
