@@ -2,7 +2,7 @@
 
 Resumo de uma tela que sobrevive a compactações de sessão. A fonte de verdade
 de arquitetura e regras é o [`docs/SPEC.md`](SPEC.md); este arquivo só diz
-*onde estamos*. Atualizado em **2026-10-05** (Fases 6 e 7A mergeadas; Fase 7B — mundo mínimo e calendário — **em implementação**, branch `fase-7b`: commits 1 a 4 feitos (SPEC, `fm-world`, persistência do mundo, Worker de mundo com progresso e cancelamento) e o **pool de Workers de partida (7B.4b) feito**, obrigatório porque a rodada mediu 1.453 ms no Chromium do CI. **Medição do pool no CI pendente.** Próximo: o commit 6 (tela `?view=world`), com desenho a aprovar antes do código).
+*onde estamos*. Atualizado em **2026-10-06** (Fases 6 e 7A mergeadas; Fase 7B — mundo mínimo e calendário — **em implementação**, branch `fase-7b`: feitos o `fm-world`, a persistência do mundo, o Worker de mundo, o **pool de Workers de partida (7B.4b), medido e aprovado** (435 a 674 ms por rodada no Chromium do CI, contra 939 a 1.495 ms sem pool) e o **pool observável (7B.4c), encerrado**. Achado do 7B.4c: **um trap no motor no WebKit do CI**, item da Fase 8. **Resta da 7B o commit 6** (tela `?view=world`), com desenho a aprovar antes do código).
 
 **Para quem chega agora:** comece por [`docs/handoff/`](handoff/00-LEIA-PRIMEIRO.md).
 As seções deste arquivo abaixo de "Fase anterior — Fase 5 (c1)" são o
@@ -137,13 +137,12 @@ para orientar a próxima rodada de refinamento.
     3, `"play 0: o Worker de partida não respondeu em 30.0 s"`); o teste
     exige zero retirados e reprovou. A suíte normal passou nos três
     navegadores. **Causa indeterminada.**
-  - **7B.4c em andamento (pool observável, desenho aprovado em
+  - **7B.4c feito e encerrado (pool observável, desenho aprovado em
     2026-10-06, no SPEC):** confirmação de recebimento (`started`),
     `error` e `messageerror` escutados a vida toda, prazo de confirmação
     de 5 s, prazo da partida adaptativo (10× a mediana das últimas 20,
     piso 3 s, teto 30 s), medição repetida 20 vezes no WebKit do CI, e a
     correção do `FM_WORLD_SEASON` (a temporada rodava em todo push).
-    **A tela (commit 6) espera isto fechar.**
     - **Feito:** sub-commits 1 a 4 (SPEC, confirmação e observabilidade,
       prazos, repetição no WebKit). Bench em +0,00% em todos.
     - **Custo:** nenhum mensurável. Chromium do CI com pool de 4: 667 ms
@@ -170,15 +169,39 @@ para orientar a próxima rodada de refinamento.
       original e o pedido em que falhou antes de liberar a cópia; `free()`
       protegido. As 20 repetições rodam de novo. Não é correção.
     - **O piso (3 s), o teto (30 s) e o multiplicador (10×) do prazo só
-      mudam por decisão do dono**, com o motivo e o tempo na mão. Até
-      aqui nenhuma retirada por prazo foi observada com motivo impresso.
+      mudam por decisão do dono**, com o motivo e o tempo na mão.
+      Nenhuma retirada por prazo foi observada com motivo impresso.
+    - **Resultado do 7B.4c.6 (`82ec259`): o erro original apareceu — um
+      trap no motor.** `RuntimeError: Unreachable code should not be
+      executed`, em `TickFrame::compute_anchors` ← `MatchEngine::tick_logic`
+      ← `WorldHost::play`, na suíte do WebKit do CI (pool de 2, partida 1).
+      **O Worker mudo do primeiro run não era do pool: era do motor.**
+      Medição do WebKit: 18 de 20 repetições passaram; as 2 falhas foram
+      morte de página, sem motivo. Chromium com pool de 4: 667 ms;
+      Firefox: 5.691 ms. Bench em +0,00%; nenhum golden mudou.
+    - **Encerrado por decisão do dono (2026-10-06):** a investigação para
+      aqui. O trap vira item da Fase 8 (seção da Fase 8, abaixo; registro
+      completo no SPEC). O motor não foi tocado.
+    - **Medição do pool: aprovada.** Meta 1 (mesmo digest com qualquer
+      pool): cumprida e testada. Meta 2 (≤ 700 ms no Chromium do CI):
+      cumprida nos seis runs — 435 ms no runner rápido, 659–674 ms no
+      lento, contra 939–1.495 ms sem pool. Meta 3 (≤ 300 ms com 8 núcleos
+      ou mais): não atingida, dívida da Fase 8. Meta 4 (sem regressão com
+      1 núcleo): coberta pelos testes sem pool e com pool de 1.
+    - **Fica ligado no CI:** a medição repetida 20 vezes no WebKit, que
+      exige zero Workers retirados. Com o trap e as mortes de página, o
+      job do WebKit fica vermelho de vez em quando (5 e 2 de 20
+      repetições nos dois runs; 1 teste da suíte em dois dos seis runs do
+      dia). Mudar isso é decisão do dono.
+    - **Detalhe conhecido, não corrigido:** o motivo da retirada sai com
+      o prefixo duas vezes (`play 1: play 1: …`).
     - **Runners do GitHub normalizados em 2026-10-06:** a regra provisória
       de "cancelado por infra não conta" deixou de ser necessária. Os
       sub-commits 4 e 5 foram num push só, por tempo de retorno do CI
       (exceção pontual).
-  - **Fica para o commit 6** (o "commit 5" do desenho original; o pool
-    entrou antes; desenho apresentado em 2026-10-05, ainda não
-    aprovado): a tela `?view=world` e a navegação saves ↔ mundo;
+  - **O que resta da 7B — o commit 6** (o "commit 5" do desenho
+    original; o pool entrou antes; desenho apresentado em 2026-10-05,
+    ainda não aprovado): a tela `?view=world` e a navegação saves ↔ mundo;
     comparar a classificação do Rust com a do banco (precisa do
     `WorldHost`); os testes de determinismo e de crash com o mundo de
     verdade. **Desenho a aprovar antes do código.**
@@ -374,6 +397,23 @@ fechar (c1) no motor do 5D-2 (`f17b1d9`); PR #6 mergeado em `6ae001a`.
   formações** (4-3-3 × 4-3-3 com 12,5 gols por partida; a formação
   decidindo a tabela) e a ausência de vantagem de mando. Enquanto isso
   não for corrigido, o mundo usa só 4-4-2.
+- **Também entra, vindo do MVP (7B.4c): um trap no motor no WebKit do
+  CI.** `RuntimeError: Unreachable code should not be executed` em
+  `TickFrame::compute_anchors` ← `MatchEngine::tick_logic` ←
+  `WorldHost::play`, numa partida jogada por um Worker recém-criado.
+  Uma ocorrência com a pilha e três compatíveis sem prova, em seis runs
+  do WebKit num dia (amostra pequena). Só no WebKit do Playwright do CI;
+  **não verificado no Safari real**. Causa desconhecida: o WebKit
+  executando o código errado em alguma condição, ou um dado chegando ao
+  motor diferente do que deveria (erro de lógica do Rust apareceria
+  sempre e em todo lugar). Possivelmente ligada, sem prova: a página do
+  WebKit do CI morrendo durante a medição com pool. **Primeiro passo
+  proposto, não feito:** `fm-wasm` registrar a mensagem e a linha de um
+  pânico antes do trap. Registro completo no SPEC ("Item da Fase 8 — trap
+  no motor no WebKit do CI").
+- **Também entram, de desempenho:** o WASM ~3,4× mais lento que o
+  nativo, o Firefox ~7× mais lento que o Chromium neste WASM, e o pool
+  acima da meta de 300 ms em máquina com muitos núcleos.
 - **Pré-requisito:** aplicar o patch acima.
 - **Escopo:** (1) goleiro saindo do gol (interceptar, cortar cruzamento,
   líbero) — o antigo passo 2.5; (2) impedimento apitado, com tiro livre;

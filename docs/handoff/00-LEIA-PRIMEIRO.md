@@ -43,8 +43,10 @@ próprio navegador, em SQLite. O jogo ainda **não tem nome**: nos documentos,
   - **7B (mundo mínimo e calendário): em andamento**, branch `fase-7b`.
   - 7C (telas de gerenciamento) e 7D (assistir a partida) não começaram.
 - **Na 7B já estão feitos** o `fm-world`, a persistência do mundo, o Worker
-  de mundo e o pool de Workers de partida. Falta a tela `?view=world`, com
-  desenho a aprovar antes do código. Ver o arquivo 03.
+  de mundo e o pool de Workers de partida (medido e aprovado). Falta a tela
+  `?view=world`, com desenho a aprovar antes do código. Ver o arquivo 03.
+- **Achado mais recente:** um trap no motor que só apareceu no WebKit do CI
+  (item da Fase 8; o job do WebKit fica vermelho de vez em quando por isso).
 
 ## A decisão das formações (tomada em 2026-10-05)
 

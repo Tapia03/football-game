@@ -167,4 +167,14 @@ Ver o arquivo 03: é onde o trabalho está parado. O que já aconteceu:
   workers. Na máquina do dono: 1.676 ms → 567 ms com 10 workers (a meta de
   300 ms não foi atingida; dívida da Fase 8).
 - **Incidente do GitHub (2026-10-05):** runners em fila, jobs cancelados sem
-  rodar. A medição do pool no CI ainda não existe por causa disso.
+  rodar; normalizou no dia seguinte.
+- **Pool medido no CI (2026-10-06):** 435 a 674 ms por rodada no Chromium
+  com pool de 4, contra 939 a 1.495 ms sem pool. Aprovado.
+- **Pool observável (7B.4c).** Na primeira medição, o WebKit do CI teve um
+  Worker de partida mudo por 30 s. A investigação pôs confirmação de
+  recebimento, escuta de erros e prazo adaptativo no pool, e achou a causa
+  em três passos: não era o prazo; o `catch` do Worker escondia o erro
+  original atrás de um `free()` que lançava outro; e o erro original era
+  **um trap dentro do motor** (`TickFrame::compute_anchors`), só no WebKit
+  do CI. O dono encerrou ali: o trap foi para a Fase 8, sem tocar no motor.
+  Lição: um catch que limpa antes de reportar pode esconder o que importa.

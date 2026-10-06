@@ -3458,7 +3458,118 @@ depois. O jogo ainda não tem nome ("o jogo", "o projeto").
     pool não mudam. As 20 repetições do WebKit rodam de novo neste push.
     **Não testado:** não há teste que provoque a falha dentro do
     `WorldHost`; o caminho só é exercitado quando ela acontece.
-  - **Resultado do push do 7B.4c.6: a registrar.**
+  - **Resultado do push do 7B.4c.6 (`82ec259`, run 37478346792): o erro
+    original apareceu.** Tudo verde menos o WebKit. Bench em +0,00%;
+    nenhum golden mudou. Chromium com pool de 4: **667 ms** (sem pool
+    1.449 ms) — a mudança de diagnóstico não mexeu no tempo. Firefox:
+    5.691 ms com pool de 4 (12.473 ms sem). A temporada continua fora de
+    todo push (medição do WebKit: 8,6 min; o job, 12,4 min).
+    - **Suíte do WebKit: 52 passaram, 1 falhou — o trap** (item da Fase 8,
+      abaixo). O Worker foi retirado na hora (a rodada levou 1.871 ms com
+      2 Workers; a seguinte, 1.589 ms com 1), com o prazo em vigor no piso
+      de 3 s.
+    - **Medição do WebKit, 20 repetições: 18 passaram, 2 falharam**, as
+      duas por morte de página, sem motivo (#14 com pool de 4, #15 com
+      pool de 3). Zero Workers retirados nas 57 medições impressas; zero
+      retiradas por prazo; zero `messageerror`.
+    - **Detalhe conhecido, não corrigido:** o motivo sai com o prefixo
+      duas vezes (`play 1: play 1: …`): o Worker de partida e o pool
+      acrescentam cada um o seu.
+- **7B.4c encerrado (decisão do usuário, 2026-10-06).** O pool observável
+  está feito. O Worker mudo do primeiro run **não era do pool: era um
+  trap no motor**, escondido pelo `free()` no `catch` do Worker de
+  partida. A investigação para aqui: defeito do motor é medido,
+  documentado e resolvido na fase do motor (como o desequilíbrio entre
+  formações), não na Fase 7.
+  - **O que o 7B.4c deixou no lugar:** um Worker que falha é retirado na
+    hora, com o erro original e a pilha no motivo, e o Worker de mundo
+    joga a partida — a rodada segue e o save sai o mesmo.
+  - **Medição do pool: aprovada.** Runner de 4 núcleos, Chromium do CI,
+    mediana de cinco rodadas, a primeira à parte:
+
+    | Run | Sem pool | Pool de 4 |
+    |---|---|---|
+    | rerun de `b9326d5` (runner mais rápido) | 939 ms | 435 ms |
+    | `0e4735f` | 1.442 ms | 667 ms |
+    | `f60740b` | 1.495 ms | 674 ms |
+    | `76ffa87` | 1.442 ms | 660 ms |
+    | `ec1fde3` | 1.289 ms | 659 ms |
+    | `82ec259` | 1.449 ms | 667 ms |
+
+    - **Meta 1** (mesmo `save.digest` com qualquer tamanho de pool):
+      cumprida e testada (0, 1, 2 e 4 Workers, nos três navegadores).
+    - **Meta 2** (≤ 700 ms no Chromium do CI): **cumprida nos seis
+      runs.** A folga é grande no runner rápido (435 ms) e pequena no
+      lento (659–674 ms).
+    - **Meta 3** (≤ 300 ms com 8 núcleos ou mais): não atingida (567 ms
+      com 10 Workers na máquina do dono); dívida da Fase 8.
+    - **Meta 4** (sem regressão com 1 núcleo): sem pool o Worker de mundo
+      joga sozinho, pelo mesmo caminho; coberto pelos testes sem pool e
+      com pool de 1.
+  - **O que fica no CI e pode incomodar:** a medição repetida 20 vezes no
+    WebKit continua ligada e exige zero Workers retirados. Enquanto o
+    trap e as mortes de página existirem, o job do WebKit fica vermelho
+    de vez em quando (5 de 20 e 2 de 20 repetições nos dois runs; 1 teste
+    da suíte em dois dos seis runs do dia). Mexer nisso é decisão do
+    usuário; nada foi mudado.
+  - **Resta da 7B:** o commit 6 (a tela `?view=world`), com desenho a
+    aprovar antes do código.
+- **Item da Fase 8 — trap no motor no WebKit do CI (achado do 7B.4c,
+  2026-10-06).** Mora junto com o Firefox ~7× mais lento neste WASM e o
+  WASM ~3,4× mais lento que o nativo. **O motor não foi tocado.**
+  - **Mensagem e pilha (run 37478346792, `82ec259`):**
+
+    ```
+    play 1: RuntimeError: Unreachable code should not be executed
+    (evaluating 'G.worldhost_play(this.__wbg_ptr,e)')
+    fm_match::tick_frame::TickFrame::compute_anchors   wasm-function[304]
+    < fm_match::engine::MatchEngine::tick_logic        wasm-function[106]
+    < wasm-function[146]
+    < fm_wasm::world::WorldHost::play                  wasm-function[183]
+    < worldhost_play                                   wasm-function[243]
+    < play (match.worker)
+    ```
+
+  - **Contexto:** WebKit do Playwright no runner do CI (Linux, 4
+    núcleos); suíte normal, teste "1, 2 e 4 Workers, ou nenhum, dão o
+    mesmo save", IndexedDB, pool de 2, partida de id 1, primeira rodada
+    do Worker (WASM frio), mundo de seed 2026.
+  - **Quantas vezes:** uma ocorrência com a pilha (acima). Três outras
+    são compatíveis com o mesmo defeito, sem prova: o Worker mudo do
+    primeiro run (`b9326d5`, `play 0`), a retirada sem motivo na suíte em
+    `76ffa87`, e o erro do wasm-bindgen na repetição #16 de `ec1fde3`
+    (`play 0`) — as duas com motivo conhecido foram na primeira partida
+    do Worker. Seis runs do WebKit no dia; **amostra pequena, sem
+    tendência a ler.**
+  - **O que é:** um `unreachable` do WASM. Em Rust compilado para WASM é
+    o que um pânico vira (índice fora dos limites, `unwrap` em vazio,
+    `unreachable!`), ou uma instrução que o compilador pôs num caminho
+    que julgou impossível. O build de release não leva a mensagem do
+    pânico: não se sabe a linha de `compute_anchors` nem se foi pânico.
+    **Não é estouro de pilha** (no WebKit seria um `RangeError`).
+  - **Hipóteses, nenhuma verificada:** (1) o WebKit do Playwright executa
+    esse código errado em alguma condição — por exemplo, um nível do JIT
+    com o WASM ainda frio; (2) um dado chega ao motor diferente do que
+    deveria só nesse caso. Um erro de lógica do Rust apareceria sempre e
+    em todo lugar, e a mesma partida joga sem erro no Chromium, no
+    Firefox, no nativo e quase sempre no próprio WebKit.
+  - **O que não se sabe sobre o alcance:** a paridade nativo × WASM do
+    motor é testada no Chrome (`test-wasm`), não no WebKit. **Ninguém
+    verificou se o Safari real tem o trap** (o WebKit do Playwright no
+    Linux é outra compilação). No jogo, o caminho é o de qualquer
+    partida simulada; com pool, o Worker é retirado e a rodada segue; sem
+    pool (um núcleo), o trap aconteceria no Worker de mundo, e esse caso
+    não foi observado nem testado.
+  - **Possivelmente ligado, sem prova — a página morre no WebKit do CI:**
+    4 e 2 vezes em 20 repetições da medição, 25–30 s depois do começo da
+    medição com pool, sem motivo no log. O log não liga as duas coisas.
+  - **Primeiro passo proposto para a Fase 8 (não feito):** a fronteira
+    `fm-wasm` registrar a mensagem e a linha de um pânico do Rust antes
+    do trap. A ocorrência seguinte diria se foi pânico (qual, em que
+    linha) ou trap sem pânico, o que separa "dado errado chegou ao motor"
+    de "o WebKit executou errado". Custa um pouco de tamanho no WASM e
+    uma mudança em `fm-wasm`, não em `fm-match`. A medição repetida do
+    WebKit já existe para dar a taxa.
 
 ## FASE 7 (numeração antiga; agora parte da Fase 9) — UI + Overlays Táticos
 - **Ordem (2026-10-05):** vem depois da fase "Bola longa + contraparte

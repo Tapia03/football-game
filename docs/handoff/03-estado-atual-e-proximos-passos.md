@@ -1,7 +1,8 @@
 # 03 — Estado atual e próximos passos
 
-Fotografia de **2026-10-05**, atualizada depois do pool de Workers de
-partida (7B.4b).
+Fotografia de **2026-10-06**, depois de o pool de Workers de partida
+(7B.4b) ser medido e aprovado e de o pool observável (7B.4c) ser encerrado.
+**O que resta da 7B é o commit 6, a tela `?view=world`.**
 
 ## Git
 
@@ -55,7 +56,7 @@ ficam vermelhos por infra.
   suíte normal verde nos três navegadores; **pool medido no Chromium do CI
   em 435 ms (meta 2 atingida)**; e a medição do WebKit falhou com um Worker
   de partida mudo por 30 s, de causa indeterminada.
-- **Em andamento: 7B.4c, pool observável** (desenho e resultados no SPEC):
+- **Feito e encerrado: 7B.4c, pool observável** (desenho e resultados no SPEC):
   confirmação de recebimento, `error` e `messageerror` escutados a vida
   toda, prazo adaptativo, medição repetida 20 vezes no WebKit do CI. O
   código está feito e não custou tempo mensurável (Chromium do CI com pool
@@ -67,11 +68,22 @@ ficam vermelhos por infra.
   esse `free()` lançava um erro novo que escondia o original — antes do
   7B.4c isso matava o Worker em silêncio por 30 s, que é o Worker mudo do
   primeiro run. As outras quatro foram a página morrendo, sem motivo no
-  log; fenômeno separado, em aberto. **Em curso:** o 7B.4c.6 faz o Worker
-  dizer o erro original antes de liberar a cópia, e as 20 repetições rodam
-  de novo. A falha original dentro do `WorldHost` ainda é desconhecida. Os
-  números do prazo (piso 3 s, teto 30 s, 10×) só mudam por decisão do
-  dono. A tela espera isto fechar.
+  log; fenômeno separado, em aberto. **O 7B.4c.6** fez o Worker dizer o
+  erro original antes de liberar a cópia, e na rodada seguinte (`82ec259`)
+  ele apareceu: **um trap no motor** — `RuntimeError: Unreachable code
+  should not be executed` em `TickFrame::compute_anchors` ←
+  `MatchEngine::tick_logic` ← `WorldHost::play`, na suíte do WebKit do CI.
+  O Worker mudo não era do pool. Nessa rodada a medição do WebKit passou em
+  18 de 20 repetições (as duas falhas, morte de página). **O dono encerrou a
+  investigação aqui:** o trap é item da Fase 8 (registro completo no SPEC,
+  "Item da Fase 8 — trap no motor no WebKit do CI") e o motor não foi
+  tocado. Os números do prazo (piso 3 s, teto 30 s, 10×) só mudam por
+  decisão do dono.
+- **Para quem for mexer no CI:** a medição repetida 20 vezes no WebKit
+  continua ligada e exige zero Workers retirados. Com o trap e as mortes de
+  página, o job do WebKit fica vermelho de vez em quando sem que nada tenha
+  mudado no código. Antes de tratar um vermelho do WebKit como regressão,
+  ler o motivo impresso nas linhas `[7B drops …]`.
 - Os runners do GitHub voltaram ao normal em 2026-10-06; a regra provisória
   acima deixou de ser necessária.
 
@@ -155,13 +167,15 @@ ruído do draft (`DRAFT_NOISE`).
 | Idem, WebKit / Firefox | 1.536 ms / 8.784 ms | CI |
 | Rodada no navegador, sem pool | 1.676 ms | Chromium, máquina do dono |
 | Rodada no navegador, **pool de 10** | 567 ms | Chromium, máquina do dono |
-| Rodada no navegador, com pool | **pendente** (sub-commit 5) | Chromium do CI |
+| Rodada no navegador, **pool de 4** | **435–674 ms** (seis runs; 939–1.495 ms sem pool nos mesmos) | Chromium do CI, 4 núcleos |
+| Idem, Firefox / WebKit | 3,7–5,7 s / 520–690 ms | CI |
 
 - O WASM está ~3,4× mais lento que o nativo e o Firefox roda este WASM ~6–7×
   mais devagar que o Chromium. São **dívidas de desempenho para a Fase 8;
   não mexer agora**. Alavanca conhecida: `wasm-opt`, desligado de propósito.
 - **Metas do pool** (SPEC, 7B.4b): (1) mesmo digest com qualquer tamanho de
-  pool — cumprida; (2) rodada ≤ 700 ms no Chromium do CI — **a medir**;
+  pool — cumprida; (2) rodada ≤ 700 ms no Chromium do CI — **cumprida** (435 ms no runner
+  rápido, 659–674 ms no lento);
   (3) ≤ 300 ms em máquina de 8 núcleos ou mais — **não atingida** (567 ms com
   10 workers em 16 núcleos: os Workers não escalam linearmente), dívida da
   Fase 8; (4) sem regressão com 1 núcleo.
@@ -173,11 +187,9 @@ ruído do draft (`DRAFT_NOISE`).
 
 ## Próximos passos
 
-1. **Obter e ler a medição do pool no CI** (o push dos sub-commits 4 e 5
-   não a produziu; ver o incidente acima) e registrar
-   no SPEC e no STATE: mediana da rodada com e sem pool, por partida, custo
-   do `commitDay`, núcleos do runner, memória do pool; WebKit e Firefox só
-   informam.
+1. ~~Medir o pool no CI~~ — feito e aprovado: 435 a 674 ms por rodada no
+   Chromium do CI com pool de 4, contra 939 a 1.495 ms sem pool (tabela no
+   SPEC).
 2. **Commit 6 — a tela** (o "commit 5" do desenho original da 7B; o pool
    entrou antes). **Desenho apresentado ao dono em 2026-10-05, ainda não
    aprovado; nada codificado.** Resumo do que foi proposto: rota
@@ -232,7 +244,9 @@ A Fase 8 vai receber também o que o MVP descobrir. Já na lista:
 - ausência de vantagem de mando;
 - o WASM 3,4× mais lento que o nativo;
 - o Firefox ~7× mais lento que o Chromium neste WASM;
-- o pool acima da meta de 300 ms em máquina com muitos núcleos.
+- o pool acima da meta de 300 ms em máquina com muitos núcleos;
+- **um trap no motor no WebKit do CI** (`TickFrame::compute_anchors`),
+  achado do 7B.4c; não verificado no Safari real.
 
 ## Fases 9 e 10
 
@@ -259,5 +273,6 @@ A Fase 8 vai receber também o que o MVP descobrir. Já na lista:
 | WASM 3,4× mais lento que o nativo | Fase 8 |
 | Firefox ~7× mais lento que o Chromium neste WASM | Fase 8 |
 | Pool: 567 ms com 10 workers em 16 núcleos (meta 300 ms) | Fase 8 |
+| Trap no motor no WebKit do CI (`compute_anchors`); página do WebKit do CI morrendo na medição | Fase 8 |
 | OPFS e recarga da página nunca verificados no Safari real | verificação manual |
 | Pênaltis 0,005 por partida; kickoff sobreposto; bola parada 3% | (c2) / Fase 8 |
