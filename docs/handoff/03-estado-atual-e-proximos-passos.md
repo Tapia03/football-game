@@ -59,11 +59,19 @@ ficam vermelhos por infra.
   confirmação de recebimento, `error` e `messageerror` escutados a vida
   toda, prazo adaptativo, medição repetida 20 vezes no WebKit do CI. O
   código está feito e não custou tempo mensurável (Chromium do CI com pool
-  de 4: 660–674 ms). **Em aberto:** com o prazo adaptativo, o WebKit do CI
-  retirou um Worker na primeira rodada de um teste da suíte, sem imprimir o
-  motivo; o push seguinte existe para imprimi-lo. Os números do prazo (piso
-  3 s, teto 30 s, 10×) só mudam por decisão do dono. A tela espera isto
-  fechar.
+  de 4: 659–674 ms). **O que as 20 repetições do WebKit mostraram
+  (`ec1fde3`):** 15 passaram e 5 falharam, e o prazo não foi a causa. Uma
+  falha foi um Worker retirado com um erro do wasm-bindgen (`attempted to
+  take ownership of Rust value while it was borrowed`): o `catch` do Worker
+  de partida liberava a cópia do mundo depois de uma chamada que falhou, e
+  esse `free()` lançava um erro novo que escondia o original — antes do
+  7B.4c isso matava o Worker em silêncio por 30 s, que é o Worker mudo do
+  primeiro run. As outras quatro foram a página morrendo, sem motivo no
+  log; fenômeno separado, em aberto. **Em curso:** o 7B.4c.6 faz o Worker
+  dizer o erro original antes de liberar a cópia, e as 20 repetições rodam
+  de novo. A falha original dentro do `WorldHost` ainda é desconhecida. Os
+  números do prazo (piso 3 s, teto 30 s, 10×) só mudam por decisão do
+  dono. A tela espera isto fechar.
 - Os runners do GitHub voltaram ao normal em 2026-10-06; a regra provisória
   acima deixou de ser necessária.
 

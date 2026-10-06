@@ -150,14 +150,28 @@ para orientar a próxima rodada de refinamento.
       antes, 674 ms com a confirmação, 660 ms com o prazo adaptativo (sem
       pool: 1.442–1.495 ms). A meta 2 (≤ 700 ms) é atendida, com folga
       pequena no runner lento (435 ms no runner rápido).
-    - **Em aberto — WebKit do CI:** com o prazo adaptativo (`76ffa87`) a
-      suíte falhou: um Worker de partida foi retirado durante a primeira
-      rodada com pool de 4, em poucos segundos, e **o motivo não foi
-      impresso**. Pode ser falso positivo do prazo novo (piso de 3 s com
-      os Workers frios e os núcleos disputados), o Worker mudo de novo, ou
-      outra coisa. O push dos sub-commits 4 e 5 existe para imprimir o
-      motivo. **O piso, o teto e o multiplicador só mudam por decisão do
-      dono, com o motivo e o tempo na mão.**
+    - **WebKit do CI, 20 repetições da medição (`ec1fde3`): 15 passaram,
+      5 falharam; o prazo não foi a causa** (nenhuma retirada por prazo
+      nem `messageerror`). Uma repetição: Worker retirado na hora com
+      `attempted to take ownership of Rust value while it was borrowed`.
+      Quatro: a página morreu, 25–28 s depois do começo da medição com
+      pool, sem motivo no log. Chromium com pool de 4: 659 ms; Firefox:
+      5.145 ms. A correção do `FM_WORLD_SEASON` tirou a temporada de todo
+      push (job do Firefox de ~17 para 12,8 min).
+    - **Descoberta: o `catch` do Worker de partida escondia o erro
+      original.** Uma chamada ao `WorldHost` falha e o deixa emprestado; o
+      `catch` chamava `free()`, que lança o erro acima e mata o Worker —
+      antes do 7B.4c, em silêncio, por 30 s: **é o Worker mudo do primeiro
+      run.** A falha original dentro do `WorldHost` continua desconhecida
+      (intermitente, só no WebKit do CI). Passo a passo no SPEC.
+    - **Em aberto, separado: a morte de página no WebKit do CI.** O log
+      não a liga ao erro do Worker.
+    - **7B.4c.6 (diagnóstico):** o `catch` responde `failed` com o erro
+      original e o pedido em que falhou antes de liberar a cópia; `free()`
+      protegido. As 20 repetições rodam de novo. Não é correção.
+    - **O piso (3 s), o teto (30 s) e o multiplicador (10×) do prazo só
+      mudam por decisão do dono**, com o motivo e o tempo na mão. Até
+      aqui nenhuma retirada por prazo foi observada com motivo impresso.
     - **Runners do GitHub normalizados em 2026-10-06:** a regra provisória
       de "cancelado por infra não conta" deixou de ser necessária. Os
       sub-commits 4 e 5 foram num push só, por tempo de retorno do CI

@@ -3399,7 +3399,66 @@ depois. O jogo ainda não tem nome ("o jogo", "o projeto").
     causa do Firefox). Não é precedente. Os runners do GitHub voltaram ao
     normal neste dia; a regra provisória do incidente deixou de ser
     necessária.
-  - **Resultado do push dos sub-commits 4 e 5: a registrar.**
+  - **Resultado do push dos sub-commits 4 e 5 (`ec1fde3`, run
+    37475202090):** tudo verde menos a medição do WebKit. Bench em +0,00%;
+    nenhum golden mudou. Chromium com pool de 4: **659 ms** (sem pool
+    1.289 ms; 667, 674 e 660 ms nos três runs anteriores do dia). Firefox:
+    5.145 ms com pool de 4 (11.924 ms sem).
+    - **`FM_WORLD_SEASON` corrigido:** a temporada deixou de rodar em todo
+      push. O passo de medição do Firefox caiu de 4,3–6,4 min para 2,5 min
+      (o job, de ~17 para 12,8 min). No WebKit as 20 repetições levaram
+      7,9 min e o job 11,3 min.
+    - **WebKit, 20 repetições da medição: 15 passaram, 5 falharam.** A
+      suíte normal passou (53 testes, zero retirados). Nenhuma retirada
+      por prazo ("sem confirmação", "confirmado, sem resultado") nem por
+      `messageerror`: **o prazo não foi a causa.** Nas 15 que passaram, o
+      prazo em vigor depois das rodadas era o piso de 3 s.
+
+      | Repetição | Onde | O que aconteceu |
+      |---|---|---|
+      | #16 | pool de 3, primeira partida | Worker retirado na hora: `play 0: o Worker falhou: Error: attempted to take ownership of Rust value while it was borrowed` |
+      | #2, #3 | pool de 4 | a página morreu (`Target page, context or browser has been closed`) |
+      | #15, #18 | pool de 3 | idem |
+
+  - **Descoberta — o `catch` do Worker de partida escondia o erro
+    original, e isso é o Worker mudo do primeiro run.**
+    1. Uma chamada ao `WorldHost` dentro do Worker (`sync_day` ou `play`)
+       sai de forma anormal e deixa o objeto marcado como emprestado (o
+       wasm-bindgen não desfaz a marca quando a chamada não retorna).
+    2. O `catch` de `match.worker.ts` chamava `host.free()` para descartar
+       a cópia.
+    3. Liberar um objeto emprestado lança `attempted to take ownership of
+       Rust value while it was borrowed` — de dentro do `catch`. O erro
+       original se perde e este sobe sem ser capturado.
+    4. Antes do 7B.4c, o ouvinte de `error` deixado por `spawn` terminava
+       o Worker em silêncio, e o Worker de mundo esperava os 30 s: o
+       sintoma exato do primeiro run. Com o 7B.4c a página ouve o erro e a
+       retirada é imediata (a rodada da #16 levou 962 ms contra ~830 ms).
+    - **O que continua desconhecido é o passo 1:** qual foi a falha
+      dentro do `WorldHost`. É intermitente e só apareceu no WebKit do
+      CI, o que não combina com um erro de lógica do Rust (seria
+      determinístico e nos três navegadores). Candidatas não verificadas:
+      estouro de pilha no Worker com o WASM frio; defeito do WebKit do
+      Playwright.
+  - **Fenômeno separado, em aberto — a página morre no WebKit do CI.**
+    Quatro vezes em 20 repetições, 25 a 28 s depois do começo da medição
+    com pool, sem linha de motivo (a página some antes de o teste ler
+    qualquer coisa). Não é o limite do teste (600 s). **O log não liga as
+    mortes de página ao erro do Worker; não se afirma que têm a mesma
+    raiz.**
+  - **A retirada vista na suíte em `76ffa87`** (motivo não impresso) não
+    se repetiu. Pode ter sido este mesmo erro do Worker; não há como
+    saber.
+  - **7B.4c.6 — diagnóstico (2026-10-06):** o `catch` do Worker de
+    partida passa a responder `failed` com o erro original — tipo,
+    mensagem, o topo da pilha e o pedido em que falhou (`sync`, `play N`)
+    — **antes** de tentar liberar a cópia, e o `free()` fica protegido
+    (uma cópia que não pode ser liberada fica na memória do Worker, que é
+    retirado). É diagnóstico, não correção: motor, prazos e tamanho do
+    pool não mudam. As 20 repetições do WebKit rodam de novo neste push.
+    **Não testado:** não há teste que provoque a falha dentro do
+    `WorldHost`; o caminho só é exercitado quando ela acontece.
+  - **Resultado do push do 7B.4c.6: a registrar.**
 
 ## FASE 7 (numeração antiga; agora parte da Fase 9) — UI + Overlays Táticos
 - **Ordem (2026-10-05):** vem depois da fase "Bola longa + contraparte
