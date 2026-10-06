@@ -2,7 +2,7 @@
 
 Resumo de uma tela que sobrevive a compactações de sessão. A fonte de verdade
 de arquitetura e regras é o [`docs/SPEC.md`](SPEC.md); este arquivo só diz
-*onde estamos*. Atualizado em **2026-10-06** (Fases 6 e 7A mergeadas; Fase 7B — mundo mínimo e calendário — **em implementação**, branch `fase-7b`: feitos o `fm-world`, a persistência do mundo, o Worker de mundo, o **pool de Workers de partida (7B.4b), medido e aprovado** (435 a 674 ms por rodada no Chromium do CI, contra 939 a 1.495 ms sem pool) e o **pool observável (7B.4c), encerrado**. Achado do 7B.4c: **um trap no motor no WebKit do CI**, item da Fase 8. **Resta da 7B o commit 6** (tela `?view=world`), com desenho a aprovar antes do código).
+*onde estamos*. Atualizado em **2026-10-06** (Fases 6 e 7A mergeadas; Fase 7B — mundo mínimo e calendário — **em implementação**, branch `fase-7b`: feitos o `fm-world`, a persistência do mundo, o Worker de mundo, o **pool de Workers de partida (7B.4b), medido e aprovado** (435 a 674 ms por rodada no Chromium do CI, contra 939 a 1.495 ms sem pool) o **pool observável (7B.4c), encerrado**, e a **persistência instrumentada (7B.5)**. Achado do 7B.4c: **um trap no motor no WebKit do CI**, item da Fase 8. Em aberto: um `SQLITE_CORRUPT` visto uma vez no WebKit do CI, de causa desconhecida. **Resta da 7B o commit 6** (tela `?view=world`), com desenho a aprovar antes do código).
 
 **Para quem chega agora:** comece por [`docs/handoff/`](handoff/00-LEIA-PRIMEIRO.md).
 As seções deste arquivo abaixo de "Fase anterior — Fase 5 (c1)" são o
@@ -224,6 +224,47 @@ para orientar a próxima rodada de refinamento.
       de "cancelado por infra não conta" deixou de ser necessária. Os
       sub-commits 4 e 5 foram num push só, por tempo de retorno do CI
       (exceção pontual).
+  - **Push da regra provisória (`fb46521`, só documentos):** Chromium e
+    Firefox verdes, bench em +0,00%. WebKit: suíte verde; medição 14 de
+    20 — quatro mortes de página, o trap de novo (`play 0`, a mesma
+    pilha) e **um motivo novo, fora da regra: `SQLITE_CORRUPT: database
+    disk image is malformed`**, uma vez, no Worker de banco, no fallback
+    IndexedDB, logo ao abrir a página de uma medição.
+  - **O `SQLITE_CORRUPT` — o que se sabe.** A leitura do código afastou
+    o nosso código de gravação (o `flush` é uma transação atômica,
+    confirmada antes da resposta; o teste só navega depois). Sobram duas
+    hipóteses que o código não separa: o WebKit do Playwright executando
+    o SQLite-WASM errado, ou o IndexedDB do WebKit devolvendo um blob
+    diferente do gravado. **Não entra na regra provisória do WebKit:**
+    cada ocorrência é lida no relatório do push.
+  - **7B.5 feito — persistência instrumentada (desenho e resultado no
+    SPEC).** É instrumentação, não correção.
+    - No fallback IndexedDB, cada arquivo é gravado com o **SHA-256 dos
+      bytes** e, na abertura, passa pela soma e depois por `PRAGMA
+      integrity_check`. Quem falha é recusado com o erro `corrupt`, que
+      diz a operação, o arquivo e qual verificação.
+    - Um erro inesperado do SQLite diz a operação, os argumentos e o
+      estado de cada arquivo aberto.
+    - **Arquivo sem soma (gravado antes do 7B.5) abre como sempre** e
+      ganha a soma na gravação seguinte: ausência de soma não é
+      corrupção.
+    - **Custo na abertura** (save de 160 kB, Chromium, máquina do dono):
+      SHA-256 0,78 ms, `integrity_check` 1,91 ms; roda em toda abertura
+      (boot, abrir save, import — nunca por dia de jogo).
+    - **Como ler a próxima ocorrência:** soma não bate → o IndexedDB
+      devolveu outra coisa; soma confere e banco malformado → gravado
+      ruim ou estragou em memória; tabela no SPEC.
+  - **Dívidas da persistência (registradas, sem código):**
+    1. **A limpeza de órfãos confia no catálogo, que não tem cópia:** um
+       catálogo que abre mas perdeu linhas faria o boot apagar saves
+       verdadeiros. **Dívida da Fase 7, antes da Fase 9.** Se a
+       instrumentação apontar um `SQLITE_CORRUPT` no catálogo, a cópia
+       vira o próximo sub-commit, na frente do commit 6.
+    2. O `flush` regrava a imagem como estiver, mesmo malformada. Sem
+       prazo.
+    3. A transação do IndexedDB não pede `durability: 'strict'`. Sem
+       prazo.
+    4. O `SQLITE_CORRUPT` em si: sintoma em aberto, lido caso a caso.
   - **O que resta da 7B — o commit 6** (o "commit 5" do desenho
     original; o pool entrou antes; desenho apresentado em 2026-10-05,
     ainda não aprovado): a tela `?view=world` e a navegação saves ↔ mundo;

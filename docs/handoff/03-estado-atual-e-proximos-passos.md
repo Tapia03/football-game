@@ -1,7 +1,8 @@
 # 03 — Estado atual e próximos passos
 
 Fotografia de **2026-10-06**, depois de o pool de Workers de partida
-(7B.4b) ser medido e aprovado e de o pool observável (7B.4c) ser encerrado.
+(7B.4b) ser medido e aprovado, de o pool observável (7B.4c) ser encerrado e de a
+persistência ser instrumentada (7B.5).
 **O que resta da 7B é o commit 6, a tela `?view=world`.**
 
 ## Git
@@ -113,6 +114,29 @@ no SPEC (seção 7B).
   ligada; nada foi mudado no CI nem nos testes.
 - Os runners do GitHub voltaram ao normal em 2026-10-06; a regra provisória
   acima deixou de ser necessária.
+
+### O `SQLITE_CORRUPT` e a persistência instrumentada (7B.5, 2026-10-06)
+
+- No push da regra provisória (`fb46521`) o WebKit do CI trouxe, uma vez,
+  um motivo que **não** está na regra: `SQLITE_CORRUPT: database disk image
+  is malformed`, no Worker de banco, no fallback IndexedDB, logo ao abrir a
+  página de uma medição.
+- A leitura do código afastou o nosso código de gravação (transação
+  atômica, confirmada antes da resposta). Sobram duas hipóteses: o WebKit do
+  Playwright executando o SQLite-WASM errado, ou o IndexedDB do WebKit
+  devolvendo um blob diferente do gravado.
+- **O 7B.5 instrumentou a persistência para a próxima ocorrência dizer qual
+  das duas é:** no fallback IndexedDB o arquivo é gravado com o SHA-256 dos
+  bytes e, na abertura, passa pela soma e por `PRAGMA integrity_check`;
+  quem falha é recusado com o erro `corrupt`, que diz a operação, o arquivo
+  e qual verificação; um erro inesperado do SQLite diz a operação e o
+  estado dos arquivos abertos. Arquivo sem soma (anterior ao 7B.5) abre
+  como sempre. A tabela "como ler a próxima ocorrência" está no SPEC.
+- **Não é correção**, e o `SQLITE_CORRUPT` **não** é motivo da regra
+  provisória do WebKit: cada ocorrência é lida no relatório do push.
+- **Dívida que pode furar a fila:** a limpeza de órfãos confia no catálogo,
+  que não tem cópia. Se um `SQLITE_CORRUPT` for apontado no catálogo, a
+  cópia do catálogo vira o próximo sub-commit, antes do commit 6.
 
 ## O que o `fm-world` já faz
 
@@ -303,5 +327,8 @@ A Fase 8 vai receber também o que o MVP descobrir. Já na lista:
 | Firefox ~7× mais lento que o Chromium neste WASM | Fase 8 |
 | Pool: 567 ms com 10 workers em 16 núcleos (meta 300 ms) | Fase 8 |
 | Trap no motor no WebKit do CI (`compute_anchors`); página do WebKit do CI morrendo na medição | Fase 8 |
+| Limpeza de órfãos confia no catálogo, que não tem cópia | Fase 7, antes da Fase 9 (antes do commit 6 se o `SQLITE_CORRUPT` for no catálogo) |
+| `flush` regrava imagem malformada; IndexedDB sem `durability: 'strict'` | sem prazo |
+| `SQLITE_CORRUPT` visto uma vez no WebKit do CI, causa desconhecida | em aberto, lido caso a caso |
 | OPFS e recarga da página nunca verificados no Safari real | verificação manual |
 | Pênaltis 0,005 por partida; kickoff sobreposto; bola parada 3% | (c2) / Fase 8 |

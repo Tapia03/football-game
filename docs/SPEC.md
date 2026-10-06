@@ -3744,6 +3744,59 @@ depois. O jogo ainda não tem nome ("o jogo", "o projeto").
      lida caso a caso, com o que a instrumentação disser.
   - (A quinta fragilidade da leitura, erros sem contexto, é o que o
     7B.5 resolve.)
+- **7B.5 implementado (2026-10-06), como ficou.**
+  - **Onde:** `frontend/src/save/files.ts` (o valor guardado, `sha256`,
+    a soma e o `integrity_check` em `open`, a soma em `flush`, `write` e
+    `copy`); `save/errors.ts` (`FileCorruptError`); `save/protocol.ts` (o
+    código `corrupt`, `OpenCheck`, `lastOpen` em `storage.info`);
+    `workers/db.worker.ts` (`toError` com a operação, `argsOf`,
+    `openFilesNow`).
+  - **Custo da verificação na abertura (save com mundo, 163.840 bytes,
+    Chromium, máquina do dono):** SHA-256 em **0,78 ms**,
+    `integrity_check` em **1,91 ms**. Um arquivo é aberto no boot (o
+    catálogo), ao abrir um save e num import — nunca por dia de jogo.
+    **Ficou em toda abertura.** Os números do CI por navegador saem na
+    linha `[7B open checks …]` do teste do tamanho do save.
+  - **Os três casos plantados** (`tests/e2e/save-checks.spec.ts`):
+    - soma errada → `corrupt`: `save.open (id=…): arquivo
+      /save-….sqlite: a soma de verificação não bate: o IndexedDB
+      devolveu N bytes com SHA-256 …, e a soma gravada com eles é …`;
+    - soma certa de um banco com a segunda página estragada → `corrupt`:
+      `… a soma de verificação confere (N bytes), mas o banco está
+      malformado — integrity_check: …`;
+    - erro do SQLite numa operação → `internal`: `test.sql
+      (file=/catalog.sqlite, sql=…): … no such table: … [catálogo
+      /catalog.sqlite: ok | save aberto /save-….sqlite: ok]`.
+    - Mais: arquivo sem soma abre e ganha a soma na gravação seguinte;
+      catálogo com soma errada deixa o armazenamento indisponível,
+      nomeando o catálogo.
+  - **O que o desenho não dizia e ficou assim:**
+    - a soma é gravada **dentro do valor** (`{ bytes, sha256 }`), não
+      numa chave ao lado: uma gravação só, e a lista de arquivos (de que
+      a limpeza de órfãos depende) não muda;
+    - a cópia de um arquivo (`.bak` antes de uma migração) leva a soma
+      junto e só é conferida quando for aberta;
+    - **`read` não confere a soma**: exportar um save fechado entrega os
+      bytes como estão guardados;
+    - no import, um arquivo que o SQLite recusa continua respondendo
+      `not-a-save` ("o arquivo está corrompido"), como antes;
+    - `storage.info` ganhou `lastOpen` (o que a última abertura conferiu
+      e quanto custou), para a medição.
+  - **Não testado:** os dois ramos em que o `integrity_check` não
+    responde (o SQLite lança em vez de devolver linhas); a soma e a
+    verificação no OPFS (não existem lá, por desenho); e, claro, o
+    `SQLITE_CORRUPT` de verdade — o que isto faz é dizer o que ele é na
+    próxima vez.
+  - **Como ler a próxima ocorrência no WebKit do CI:**
+
+    | O que o erro disser | Leitura |
+    |---|---|
+    | `corrupt` … `a soma de verificação não bate` | o IndexedDB devolveu outra coisa (hipótese 3) |
+    | `corrupt` … `a soma de verificação confere … malformado` | foi gravado ruim, ou estragou em memória antes do `flush` (hipótese 2) |
+    | `internal` … `[catálogo …: <não ok>` ou `save aberto …: <não ok>` | estragou em memória depois de aberto, e em qual arquivo (hipótese 2); **se for o catálogo, a cópia do catálogo vira o próximo sub-commit** |
+    | `internal` … os dois arquivos `ok` | a instrução falhou com os arquivos sãos: outra coisa |
+
+  - **Resultado do push do 7B.5 no CI: a registrar.**
 
 ## FASE 7 (numeração antiga; agora parte da Fase 9) — UI + Overlays Táticos
 - **Ordem (2026-10-05):** vem depois da fase "Bola longa + contraparte

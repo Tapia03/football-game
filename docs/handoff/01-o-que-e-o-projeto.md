@@ -124,6 +124,10 @@ Worker de engine                          Main thread
   atrás da interface de `frontend/src/save/files.ts`.
 - **Um arquivo por save** mais um `catalog.sqlite` com a lista de saves e o
   ponteiro "arquivo ativo" de cada um.
+- No fallback IndexedDB, cada arquivo é guardado com o **SHA-256 dos
+  bytes** e conferido na abertura (soma, depois `PRAGMA integrity_check`);
+  um arquivo que falha é recusado com o erro `corrupt`. Arquivos anteriores
+  a essa mudança não têm soma e abrem como sempre (7B.5).
 - Schema como **cadeia de migrações** (`schema.ts`, `migrate.ts`):
   `PRAGMA user_version` + tabela `migrations`, cada migração na sua
   transação, `.bak` antes da cadeia, arquivo de versão mais nova recusado.
