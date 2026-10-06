@@ -119,8 +119,17 @@ para orientar a próxima rodada de refinamento.
     - **Regra provisória, enquanto durar a fila:** job cancelado por
       infra não conta como vermelho; só conta job que rodou e falhou.
       Com o GitHub normalizado, volta a regra normal.
+    - **O push 4+5 (`b9326d5`, run 37370161249) também ficou sem
+      testes:** `bench` passou (582.952.421 instruções, +0,00%) e
+      `stable-canary` passou; `test-rust`, `test-wasm` e os três
+      `test-e2e` foram cancelados por infra. **Os e2e do 7B.4b.4 e do
+      7B.4b.5 nunca rodaram no CI e a medição do pool no CI não existe.**
+      Localmente, `cargo test --workspace --release` e o clippy passam.
+      Pendente com o dono: reexecutar só os jobs cancelados desse run ou
+      medir no próximo push.
   - **Fica para o commit 6** (o "commit 5" do desenho original; o pool
-    entrou antes): a tela `?view=world` e a navegação saves ↔ mundo;
+    entrou antes; desenho apresentado em 2026-10-05, ainda não
+    aprovado): a tela `?view=world` e a navegação saves ↔ mundo;
     comparar a classificação do Rust com a do banco (precisa do
     `WorldHost`); os testes de determinismo e de crash com o mundo de
     verdade. **Desenho a aprovar antes do código.**
@@ -505,7 +514,7 @@ iniciados.
 | Branch | Papel |
 |---|---|
 | `main` | o que está mergeado: Fases 0 a 6 e a 7A (`4c38095`, merge do PR #9). É a branch padrão do repositório desde 2026-10-05 |
-| `fase-7b` | **branch de trabalho atual** (Fase 7B); PR só quando os cinco commits estiverem prontos |
+| `fase-7b` | **branch de trabalho atual** (Fase 7B); PR só quando todos os commits estiverem prontos (falta a tela) |
 | `fase-5`, `fase-6`, `fase-7a` | já mergeadas; não commitar nelas |
 | `fase-6-v0` | spike de render sobre o motor de antes da física; **nunca mergeia** |
 | `spike-render-v2` | render da `fase-6-v0` sobre o motor de `5d34253` (só arquivos de render, motor e `docs/` intactos); **nunca mergeia** |
@@ -513,7 +522,7 @@ iniciados.
 
 ### Comandos para retomar
 ```sh
-git checkout fase-6
+git checkout fase-7b
 cargo test --workspace --release
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo fmt --all -- --check

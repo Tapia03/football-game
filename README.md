@@ -1,9 +1,12 @@
 # Football Game
 
 Simulador/gerenciador de futebol que roda no navegador: motor em Rust → WASM,
-frontend Svelte 5 + Vite, persistência offline-first (IndexedDB + Supabase).
+frontend Svelte 5 + Vite, saves locais em SQLite (OPFS, com fallback para
+IndexedDB).
 
-Status: **Fase 6 — render** (ver [`docs/STATE.md`](docs/STATE.md)). A página
+Status: **Fase 7B — mundo mínimo e calendário**, em andamento (ver
+[`docs/STATE.md`](docs/STATE.md); quem chega agora começa por
+[`docs/handoff/`](docs/handoff/00-LEIA-PRIMEIRO.md)). A página sem `?view`
 mostra uma partida ao vivo: o motor roda num Web Worker, publica snapshots num
 `SharedArrayBuffer` e a main thread desenha (WebGL2) e mostra o HUD.
 

@@ -34,6 +34,11 @@ quando há citação.
 - **Algo diferente do desenho aprovado: parar e reportar antes de
   commitar**, mesmo que pareça detalhe.
 - **Teste que falha é informação.** Nunca ajustar o esperado para passar.
+- **Regra provisória (2026-10-05, enquanto os runners do GitHub estiverem em
+  fila):** job cancelado por infra ("The job was not acquired by Runner of
+  type hosted") não conta como vermelho; só conta job que rodou e falhou.
+  Jobs cancelados de runs anteriores não são reexecutados. Não é precedente;
+  detalhes no arquivo 03 e no STATE.
 - Na dúvida entre escolher sozinho e perguntar, em coisa que muda o estado
   do jogo: "PARA e reporta. Não escolhe sozinho."
 
@@ -82,6 +87,9 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo clippy -p fm-match --all-features --all-targets -- -D warnings
 cargo clippy -p fm-wasm --target wasm32-unknown-unknown -- -D warnings
 cargo test --workspace
+
+# Medição da rodada no navegador, com e sem pool (sozinha, um worker)
+FM_WORLD_TIMING=1 npx playwright test tests/e2e/world-timing.spec.ts --workers=1
 
 # Temporada inteira no nativo (só quando pedido)
 cargo test --release -p fm-world --test season -- --ignored --nocapture
@@ -170,8 +178,9 @@ Localmente o teste de golden é pulado (rodar com `FM_GOLDEN=1` se precisar).
 
 Expostos em `globalThis`: `fmMatch` (controle da partida e leitor do anel),
 `fmReferenceSlot(seed, tick, comandos?)` (o slot que um motor novo
-produziria), `fmLatency`, `fmPerf`, `fmCamera`, e `fmSave`
-(`startDatabase`, `DbClient`).
+produziria), `fmLatency`, `fmPerf`, `fmCamera`, `fmSave`
+(`startDatabase`, `DbClient`) e `fmWorld` (`startWorld`: o Worker de mundo
+e o pool).
 
 ## Como reportar um achado do motor
 

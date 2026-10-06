@@ -44,6 +44,16 @@ ficam vermelhos por infra.
 - **Regra provisória, enquanto durar a fila:** job cancelado por infra não
   conta como vermelho; só conta job que rodou e falhou.
 - **Não é precedente.** Quando o GitHub normalizar, volta a regra normal.
+- **O push 4+5 (`b9326d5`, run 37370161249) também não rodou os testes:**
+  `bench` passou (582.952.421 instruções, +0,00%) e `stable-canary` passou;
+  `test-rust`, `test-wasm` e os três `test-e2e` foram cancelados por infra.
+  Consequências: **os e2e do 7B.4b.4 e do 7B.4b.5 nunca rodaram no CI**, e
+  **a medição do pool no CI não existe**. Localmente, `cargo test
+  --workspace --release` e o clippy passam em `b9326d5`.
+- **Pergunta feita ao dono, sem resposta ainda:** reexecutar só os jobs
+  cancelados desse run (`gh run rerun 37370161249 --failed`) para obter o
+  número, ou medir no próximo push. Os jobs cancelados dos runs anteriores
+  não são reexecutados (decisão do dono).
 
 ## O que o `fm-world` já faz
 
@@ -143,12 +153,21 @@ ruído do draft (`DRAFT_NOISE`).
 
 ## Próximos passos
 
-1. **Ler a medição do pool no CI** (push dos sub-commits 4 e 5) e registrar
+1. **Obter e ler a medição do pool no CI** (o push dos sub-commits 4 e 5
+   não a produziu; ver o incidente acima) e registrar
    no SPEC e no STATE: mediana da rodada com e sem pool, por partida, custo
    do `commitDay`, núcleos do runner, memória do pool; WebKit e Firefox só
    informam.
 2. **Commit 6 — a tela** (o "commit 5" do desenho original da 7B; o pool
-   entrou antes). **Desenho a aprovar antes do código.**
+   entrou antes). **Desenho apresentado ao dono em 2026-10-05, ainda não
+   aprovado; nada codificado.** Resumo do que foi proposto: rota
+   `?view=world&save=<id>`; `World.svelte` com o mesmo lock de aba única da
+   tela de saves; clube escolhido por número na criação do mundo (os nomes
+   só existem depois de o mundo ser gerado); uma operação de leitura nova
+   no Worker de mundo para a classificação do Rust (o `WorldHost` já tem
+   `standings()`, o Worker não a expõe); a tela lê resultados e tabela
+   direto do banco. Depois de aprovado, o desenho entra no SPEC antes do
+   código.
    - Tela mínima `?view=world`: criar mundo (seed e clube), "Avançar dia"
      com a barra de progresso, dia e rodada atuais, resultados da última
      rodada, classificação em tabela crua.

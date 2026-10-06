@@ -150,6 +150,21 @@ mostrar a partida (`?view=save` sem o "s" mostrava a partida e confundiu o
 dono), link da tela de saves para a partida, e tolerância de ±2 por canal no
 smoke test do WebGL2.
 
-## Fase 7B — começo
+## Fase 7B — em andamento
 
-Ver o arquivo 03: é onde o trabalho está parado.
+Ver o arquivo 03: é onde o trabalho está parado. O que já aconteceu:
+
+- **`fm-world` nativo.** A primeira temporada inteira mostrou que a formação
+  decidia o campeonato (4-3-3 × 4-3-3 com 12,5 gols por partida); o dono
+  fixou todos os clubes em 4-4-2 e o defeito foi para a Fase 8.
+- **Persistência do mundo:** codecs em `fm-persistence`, migração v2 (a
+  primeira de verdade, testada com um save v1 exportado pelo código da 7A),
+  operações `world.*`. Save com mundo: 160 kB.
+- **Worker de mundo**, com progresso e cancelamento. A medição no CI deu
+  1.453 ms por rodada no Chromium (4 núcleos), acima do limite de 1 s
+  combinado: o pool virou obrigatório.
+- **Pool de Workers de partida (7B.4b).** Mesmo save com 0, 1, 2 e 4
+  workers. Na máquina do dono: 1.676 ms → 567 ms com 10 workers (a meta de
+  300 ms não foi atingida; dívida da Fase 8).
+- **Incidente do GitHub (2026-10-05):** runners em fila, jobs cancelados sem
+  rodar. A medição do pool no CI ainda não existe por causa disso.

@@ -37,17 +37,19 @@ crates/
   fm-entities/     jogadores: atributos, ficha estática, estado dinâmico, gerador
   fm-match/        O MOTOR DE PARTIDA (o coração do projeto)
   fm-render/       formas → malha de triângulos; único lugar com `unsafe` (ffi/)
-  fm-wasm/         a fronteira wasm-bindgen: EngineHost, malha, câmera, SAB
-  fm-world/        o mundo (liga, clubes, calendário) — em construção na 7B
-  fm-persistence/  codificação dos blobs do save — vazio, entra na 7B
+  fm-wasm/         a fronteira wasm-bindgen: EngineHost, WorldHost, malha, câmera, SAB
+  fm-world/        o mundo: liga, clubes, calendário, simulação do dia, WorldSave
+  fm-persistence/  codecs dos blobs do save (ficha 60 bytes, dinâmico 14, onze 44)
   fm-economy/      vazio, Fase 9
   fm-test-utils/   alocador contador para testes
 frontend/src/
   app/             App.svelte (a partida), Saves.svelte (tela de saves)
   engine-bridge/   ponte TS ↔ WASM; leitura do SharedArrayBuffer
   render/          interpolação de quadros
-  save/            protocolo, cliente, schema e migrações do banco
-  workers/         engine.worker.ts (partida) e db.worker.ts (banco)
+  save/            protocolo, cliente, schema e migrações do banco; world-db.ts
+  world/           cliente e protocolos do Worker de mundo e do pool de partida
+  workers/         engine.worker.ts (partida ao vivo), db.worker.ts (banco),
+                   world.worker.ts (mundo), match.worker.ts (partida do pool)
 tests/e2e/         Playwright
 tests/golden/chromium/   goldens de pixel (só Chromium)
 docs/              SPEC.md, STATE.md, patches/, handoff/
@@ -130,7 +132,27 @@ Worker de engine                          Main thread
 - Os outros Workers falam com o banco por `MessagePort`, com pedidos de
   domínio `{id, op, args}` (`save/protocol.ts`), nunca SQL cru.
 - Telas: `?view=saves` (tela mínima), `?view=blank` (página vazia para
-  testes), sem `view` a partida demo.
+  testes), sem `view` a partida demo. A tela `?view=world` ainda não existe.
+
+## O mundo (Fase 7B)
+
+- **`fm-world`** gera o mundo inteiro de uma seed (20 clubes, 500 jogadores
+  sintéticos, 380 partidas, todos os clubes em 4-4-2) e simula um dia:
+  `matches_today()` → `play(id)` (puro, LOD Abstract) →
+  `finish_day(resultados)`.
+- **Schema v2** do save: `players` com a ficha em blob, `clubs`, `matches`
+  (a seed de cada partida em BLOB de 8 bytes), `tactics`, `meta`. Operações
+  `world.create`, `world.load`, `world.commitDay` (um dia = uma transação),
+  `world.standings`, `world.round`.
+- **Worker de mundo** (`world.worker.ts`): o único dono do `WorldHost`.
+  Vive o dia e pede o `commitDay` ao Worker de banco por `MessagePort`. O
+  banco é sempre a verdade: se o commit falha, o mundo é recarregado dele.
+- **Pool de Workers de partida** (`match.worker.ts`): `min(núcleos, 10)`
+  Workers, cada um com um `WorldHost` sincronizado antes da rodada; fila
+  dinâmica; com pool o Worker de mundo coordena e não joga. O save é o
+  mesmo, bit a bit (`save.digest`), com qualquer tamanho de pool.
+- A main cria todos os Workers e distribui as portas; nenhum Worker cria
+  outro.
 
 ## Invariantes (o que nunca pode quebrar)
 
