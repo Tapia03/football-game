@@ -41,6 +41,16 @@ function serve(request: MatchRequest, memory: WebAssembly.Memory): MatchReply | 
   }
 }
 
+/**
+ * An error as it is worth reading far from here: its kind, its message and
+ * the top of its stack (the frames say which call into the WASM it was in).
+ */
+function describe(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const stack = (err.stack ?? '').split('\n').slice(0, 12).join(' < ').slice(0, 1500);
+  return `${err.name}: ${err.message}${stack === '' ? '' : ` [${stack}]`}`;
+}
+
 // The script loaded: the page may hand over the port now.
 postMessage({ type: 'loaded' } satisfies WorldLoaded);
 
@@ -63,10 +73,23 @@ addEventListener('message', (e: MessageEvent<MatchControl>) => {
           }
           reply = serve(message.data, wasm.memory);
         } catch (err: unknown) {
+          // What failed is said first, whole, and with the request it failed
+          // in — before anything else here can fail and hide it.
+          const request = message.data;
+          const where = request.kind === 'play' ? `play ${request.id}` : request.kind;
+          port.postMessage({ kind: 'failed', message: `${where}: ${describe(err)}` } satisfies MatchReply);
           // A copy that could not follow the world is no copy: forget it.
-          host?.free();
+          // When the call that failed left the host borrowed (a trap inside
+          // it), the host cannot be freed: freeing throws, and thrown from
+          // here that error was all anyone ever saw (SPEC, 7B.4c). The copy
+          // is then left to the worker's memory.
+          try {
+            host?.free();
+          } catch {
+            // Said already: the request failed, and why.
+          }
           host = undefined;
-          reply = { kind: 'failed', message: err instanceof Error ? err.message : String(err) };
+          return;
         }
         if (reply !== undefined) port.postMessage(reply);
       };
