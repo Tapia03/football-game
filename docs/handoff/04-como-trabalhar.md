@@ -34,11 +34,21 @@ quando há citação.
 - **Algo diferente do desenho aprovado: parar e reportar antes de
   commitar**, mesmo que pareça detalhe.
 - **Teste que falha é informação.** Nunca ajustar o esperado para passar.
-- **Regra provisória (2026-10-05, enquanto os runners do GitHub estiverem em
-  fila):** job cancelado por infra ("The job was not acquired by Runner of
-  type hosted") não conta como vermelho; só conta job que rodou e falhou.
-  Jobs cancelados de runs anteriores não são reexecutados. Não é precedente;
-  detalhes no arquivo 03 e no STATE.
+- **Regra provisória do WebKit do CI (2026-10-06, até a Fase 8 resolver o
+  trap do motor):** um vermelho em `test-e2e (webkit)` não conta como
+  vermelho quando o log mostra o trap do motor (`RuntimeError: Unreachable
+  code should not be executed`, com `TickFrame::compute_anchors` na pilha)
+  ou a morte de página (`Target page, context or browser has been closed`,
+  sem motivo, 25 a 30 s depois de o pool começar). Qualquer outro vermelho
+  no WebKit, e todo vermelho em Chromium ou Firefox, é vermelho de verdade.
+  O log é lido sempre, e o relatório diz qual motivo apareceu. Não é
+  precedente e não autoriza ignorar o WebKit, remover o job nem pular
+  testes. Texto completo no arquivo 03 e no SPEC.
+- **Regra provisória da fila do GitHub (2026-10-05): encerrada.** Enquanto
+  os runners estiveram em fila, job cancelado por infra ("The job was not
+  acquired by Runner of type hosted") não contava como vermelho. Os runners
+  normalizaram em 2026-10-06. Se a fila voltar, a regra só volta por
+  decisão do dono.
 - Na dúvida entre escolher sozinho e perguntar, em coisa que muda o estado
   do jogo: "PARA e reporta. Não escolhe sozinho."
 

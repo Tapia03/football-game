@@ -189,10 +189,35 @@ para orientar a próxima rodada de refinamento.
       ou mais): não atingida, dívida da Fase 8. Meta 4 (sem regressão com
       1 núcleo): coberta pelos testes sem pool e com pool de 1.
     - **Fica ligado no CI:** a medição repetida 20 vezes no WebKit, que
-      exige zero Workers retirados. Com o trap e as mortes de página, o
-      job do WebKit fica vermelho de vez em quando (5 e 2 de 20
-      repetições nos dois runs; 1 teste da suíte em dois dos seis runs do
-      dia). Mudar isso é decisão do dono.
+      exige zero Workers retirados. Nada foi mudado no CI nem nos testes.
+    - **Push de encerramento (`b18709d`, só documentos):** bench em
+      +0,00%; Chromium e Firefox verdes; Chromium com pool de 4 em 519 ms
+      (sem pool 1.159 ms); Firefox em 5.735 ms (12.520 ms sem); nenhum
+      Worker retirado; nenhum golden mudou. **WebKit: medição 20 de 20, e
+      1 teste da suíte perdido por morte de página** (`world.spec.ts:239`,
+      pool de 3, 28,5 s, sem motivo) — a primeira vez na suíte normal.
+    - **Frequência real: 5 de 7 runs do WebKit vermelhos em 2026-10-06**
+      por trap, morte de página ou algo compatível, sem código novo que
+      explique (tabela no SPEC).
+  - **Regra provisória para o WebKit do CI (decisão do dono, 2026-10-06;
+    texto completo no SPEC).** Um vermelho em `test-e2e (webkit)` **não
+    conta como vermelho** quando o log mostra um destes dois motivos, e
+    só eles:
+    1. o trap do motor — `RuntimeError: Unreachable code should not be
+       executed`, com `TickFrame::compute_anchors` /
+       `MatchEngine::tick_logic` / `WorldHost::play` na pilha;
+    2. a morte de página — `Target page, context or browser has been
+       closed`, sem motivo impresso, 25 a 30 s depois de o pool começar.
+    - **Qualquer outro vermelho no WebKit conta como vermelho normal**
+      (outra mensagem, retirada por prazo, `messageerror`, morte de
+      página fora de teste com pool): parar e trazer o log.
+    - **O log é lido sempre**; o relatório de cada push diz qual motivo
+      apareceu, onde e quantas vezes.
+    - **Só o WebKit do CI.** Chromium e Firefox: vermelho é vermelho.
+    - **Expira** quando a Fase 8 resolver o trap, ou quando o defeito for
+      caracterizado como do WebKit do Playwright e o job for
+      reestruturado. Não é precedente; não autoriza ignorar o WebKit para
+      sempre, remover o job nem pular testes.
     - **Detalhe conhecido, não corrigido:** o motivo da retirada sai com
       o prefixo duas vezes (`play 1: play 1: …`).
     - **Runners do GitHub normalizados em 2026-10-06:** a regra provisória
@@ -397,8 +422,8 @@ fechar (c1) no motor do 5D-2 (`f17b1d9`); PR #6 mergeado em `6ae001a`.
   formações** (4-3-3 × 4-3-3 com 12,5 gols por partida; a formação
   decidindo a tabela) e a ausência de vantagem de mando. Enquanto isso
   não for corrigido, o mundo usa só 4-4-2.
-- **Também entra, vindo do MVP (7B.4c): um trap no motor no WebKit do
-  CI.** `RuntimeError: Unreachable code should not be executed` em
+- **Também entra, vindo do MVP (7B.4c): defeito do motor no WebKit do
+  CI — o trap e a morte de página.** `RuntimeError: Unreachable code should not be executed` em
   `TickFrame::compute_anchors` ← `MatchEngine::tick_logic` ←
   `WorldHost::play`, numa partida jogada por um Worker recém-criado.
   Uma ocorrência com a pilha e três compatíveis sem prova, em seis runs
@@ -406,11 +431,15 @@ fechar (c1) no motor do 5D-2 (`f17b1d9`); PR #6 mergeado em `6ae001a`.
   **não verificado no Safari real**. Causa desconhecida: o WebKit
   executando o código errado em alguma condição, ou um dado chegando ao
   motor diferente do que deveria (erro de lógica do Rust apareceria
-  sempre e em todo lugar). Possivelmente ligada, sem prova: a página do
-  WebKit do CI morrendo durante a medição com pool. **Primeiro passo
+  sempre e em todo lugar). **A morte de página** (`Target page, context
+  or browser has been closed`, 25 a 30 s depois de o pool começar, sem
+  motivo no log; vista na medição e, em `b18709d`, na suíte normal)
+  fica no mesmo item: pode ter a mesma raiz, sem prova. Frequência: 5 de
+  7 runs do WebKit vermelhos em 2026-10-06. Enquanto isto não for
+  resolvido vale a regra provisória do WebKit (seção 7B). **Primeiro passo
   proposto, não feito:** `fm-wasm` registrar a mensagem e a linha de um
-  pânico antes do trap. Registro completo no SPEC ("Item da Fase 8 — trap
-  no motor no WebKit do CI").
+  pânico antes do trap. Registro completo no SPEC ("Item da Fase 8 —
+  defeito do motor no WebKit do CI").
 - **Também entram, de desempenho:** o WASM ~3,4× mais lento que o
   nativo, o Firefox ~7× mais lento que o Chromium neste WASM, e o pool
   acima da meta de 300 ms em máquina com muitos núcleos.

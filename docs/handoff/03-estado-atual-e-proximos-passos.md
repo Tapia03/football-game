@@ -76,14 +76,41 @@ ficam vermelhos por infra.
   O Worker mudo não era do pool. Nessa rodada a medição do WebKit passou em
   18 de 20 repetições (as duas falhas, morte de página). **O dono encerrou a
   investigação aqui:** o trap é item da Fase 8 (registro completo no SPEC,
-  "Item da Fase 8 — trap no motor no WebKit do CI") e o motor não foi
+  "Item da Fase 8 — defeito do motor no WebKit do CI") e o motor não foi
   tocado. Os números do prazo (piso 3 s, teto 30 s, 10×) só mudam por
   decisão do dono.
-- **Para quem for mexer no CI:** a medição repetida 20 vezes no WebKit
-  continua ligada e exige zero Workers retirados. Com o trap e as mortes de
-  página, o job do WebKit fica vermelho de vez em quando sem que nada tenha
-  mudado no código. Antes de tratar um vermelho do WebKit como regressão,
-  ler o motivo impresso nas linhas `[7B drops …]`.
+- **Push de encerramento (`b18709d`, só documentos):** Chromium e Firefox
+  verdes, bench em +0,00%, Chromium com pool de 4 em 519 ms. No WebKit a
+  medição passou 20 de 20 e **a suíte perdeu 1 teste por morte de página**
+  (`world.spec.ts:239`, pool de 3) — a primeira vez na suíte normal.
+  **5 de 7 runs do WebKit ficaram vermelhos em 2026-10-06** por este
+  defeito, sem código novo que explique.
+
+### Regra provisória para o WebKit do CI (2026-10-06)
+
+Decisão do dono, no mesmo padrão da regra da fila do GitHub. Texto completo
+no SPEC (seção 7B).
+
+- Um vermelho em `test-e2e (webkit)` **não conta como vermelho** quando o
+  log mostra um destes dois motivos, e só eles:
+  1. **o trap do motor:** `RuntimeError: Unreachable code should not be
+     executed`, com `TickFrame::compute_anchors` / `MatchEngine::tick_logic`
+     / `WorldHost::play` na pilha (aparece no motivo de retirada de um
+     Worker de partida, nas linhas `[7B drops …]`);
+  2. **a morte de página:** `Target page, context or browser has been
+     closed`, sem motivo impresso, 25 a 30 s depois de o pool começar.
+- **Qualquer outro vermelho no WebKit é vermelho normal** (outra mensagem,
+  retirada por prazo, `messageerror`, morte de página fora de teste com
+  pool): parar e trazer o log com hipótese.
+- **O log é lido sempre.** A regra diz como ler o vermelho, não dispensa a
+  leitura; o relatório do push diz qual motivo apareceu, onde e quantas
+  vezes.
+- **Só o WebKit do CI.** Em Chromium e Firefox, vermelho é vermelho.
+- **Expira** quando a Fase 8 resolver o trap, ou quando o defeito for
+  caracterizado como do WebKit do Playwright e o job for reestruturado.
+- **Não é precedente** e não autoriza ignorar o WebKit para sempre, remover
+  o job nem pular testes. A medição repetida 20 vezes no WebKit continua
+  ligada; nada foi mudado no CI nem nos testes.
 - Os runners do GitHub voltaram ao normal em 2026-10-06; a regra provisória
   acima deixou de ser necessária.
 
@@ -245,8 +272,10 @@ A Fase 8 vai receber também o que o MVP descobrir. Já na lista:
 - o WASM 3,4× mais lento que o nativo;
 - o Firefox ~7× mais lento que o Chromium neste WASM;
 - o pool acima da meta de 300 ms em máquina com muitos núcleos;
-- **um trap no motor no WebKit do CI** (`TickFrame::compute_anchors`),
-  achado do 7B.4c; não verificado no Safari real.
+- **defeito do motor no WebKit do CI**: um trap em
+  `TickFrame::compute_anchors` e a página morrendo em testes com pool
+  (possivelmente a mesma raiz, sem prova); achado do 7B.4c; não verificado
+  no Safari real.
 
 ## Fases 9 e 10
 

@@ -3506,16 +3506,79 @@ depois. O jogo ainda não tem nome ("o jogo", "o projeto").
     - **Meta 4** (sem regressão com 1 núcleo): sem pool o Worker de mundo
       joga sozinho, pelo mesmo caminho; coberto pelos testes sem pool e
       com pool de 1.
-  - **O que fica no CI e pode incomodar:** a medição repetida 20 vezes no
-    WebKit continua ligada e exige zero Workers retirados. Enquanto o
-    trap e as mortes de página existirem, o job do WebKit fica vermelho
-    de vez em quando (5 de 20 e 2 de 20 repetições nos dois runs; 1 teste
-    da suíte em dois dos seis runs do dia). Mexer nisso é decisão do
-    usuário; nada foi mudado.
+  - **O que fica no CI:** a medição repetida 20 vezes no WebKit continua
+    ligada e exige zero Workers retirados; nada foi mudado no CI nem nos
+    testes. Enquanto o defeito existir, o job do WebKit fica vermelho com
+    frequência — ver a regra provisória abaixo.
+- **Resultado do push de encerramento (`b18709d`, run 37481220928, só
+  documentos):** bench em +0,00%; Chromium (81 testes) e Firefox (79)
+  verdes; Chromium com pool de 4 em **519 ms** (sem pool 1.159 ms);
+  Firefox com pool de 4 em 5.735 ms (sem pool 12.520 ms); nenhum Worker
+  retirado em nenhum navegador; nenhum golden mudou.
+  - **WebKit: a medição passou 20 de 20, e a suíte perdeu 1 teste por
+    morte de página** — `world.spec.ts:239` ("the pool: progress counts
+    the matches as they end, whoever played them"), IndexedDB, pool de 3,
+    28,5 s, `page.evaluate: Target page, context or browser has been
+    closed`, sem motivo impresso. **É a primeira vez que a morte de
+    página aparece na suíte normal**; antes só tinha aparecido nas
+    repetições da medição. Desligar a repetição não a evitaria.
+  - **A frequência real: 5 de 7 runs do WebKit vermelhos no mesmo dia**,
+    todos por este defeito ou por algo compatível com ele, sem código
+    novo que explique:
+
+    | Run do WebKit (2026-10-06) | Resultado | Motivo |
+    |---|---|---|
+    | rerun de `b9326d5` | vermelho | Worker mudo por 30 s na medição (o trap, escondido) |
+    | `0e4735f` | verde | — |
+    | `f60740b` | verde | — |
+    | `76ffa87` | vermelho | Worker retirado na suíte, motivo não impresso |
+    | `ec1fde3` | vermelho | medição: 1 erro de Worker (o trap, escondido) e 4 mortes de página em 20 |
+    | `82ec259` | vermelho | suíte: o trap, com a pilha; medição: 2 mortes de página em 20 |
+    | `b18709d` | vermelho | suíte: 1 morte de página; medição 20 de 20 |
+
+- **Regra provisória para o WebKit do CI (decisão do usuário,
+  2026-10-06).** No mesmo padrão da regra da fila dos runners do GitHub.
+  - **O que diz:** um vermelho no job `test-e2e (webkit)` **não conta
+    como vermelho** quando o log mostra um dos dois motivos conhecidos,
+    e só eles:
+    1. **o trap do motor:** `RuntimeError: Unreachable code should not be
+       executed`, com `TickFrame::compute_anchors` /
+       `MatchEngine::tick_logic` / `WorldHost::play` na pilha. Aparece
+       no motivo de retirada de um Worker de partida (as linhas
+       `[7B drops …]` e a asserção de zero retirados);
+    2. **a morte de página:** `Target page, context or browser has been
+       closed`, sem motivo impresso, 25 a 30 s depois de o pool começar.
+  - **Qualquer outro vermelho no WebKit conta como vermelho normal:**
+    outra mensagem, outra pilha, uma retirada por prazo ("sem
+    confirmação", "confirmado, sem resultado"), `messageerror`, uma
+    morte de página fora de um teste com pool ou fora dessa janela, um
+    teste que falha por asserção sem um dos dois motivos por trás. Aí
+    vale a regra de sempre: parar e trazer o log com hipótese.
+  - **Como aplicar:** ler o log do job, sempre. A regra diz como ler o
+    vermelho; não dispensa a leitura. O relatório de cada push diz qual
+    dos dois motivos apareceu, em que teste e quantas vezes.
+  - **Alcance:** só o WebKit do CI. **Chromium e Firefox continuam
+    valendo como sempre:** vermelho neles é vermelho de verdade.
+  - **Expira** quando a Fase 8 resolver o trap, ou quando o defeito for
+    caracterizado como do WebKit do Playwright e o job for
+    reestruturado.
+  - **Não é precedente, e não autoriza** ignorar o WebKit de forma
+    permanente, remover o job nem pular testes.
+  - **Por que existe (não é conveniência):** a cobertura do WebKit é
+    real e os outros dois não a substituem do mesmo jeito (a paridade
+    nativo × WASM é testada no Chrome; o determinismo por navegador, o
+    pool e a migração v2 são testados nos três; o WebKit é o único que
+    roda só no fallback IndexedDB). Investigar a morte de página agora
+    gastaria dois ou três ciclos de CI num defeito que a Fase 8 vai
+    tratar, e o log não ajuda a caracterizá-la (não há motivo impresso).
+    A regra reconhece um custo conhecido sem fingir que ele não existe.
+  - **A regra da fila dos runners do GitHub** (2026-10-05) deixou de ser
+    necessária em 2026-10-06, quando os runners normalizaram.
   - **Resta da 7B:** o commit 6 (a tela `?view=world`), com desenho a
     aprovar antes do código.
-- **Item da Fase 8 — trap no motor no WebKit do CI (achado do 7B.4c,
-  2026-10-06).** Mora junto com o Firefox ~7× mais lento neste WASM e o
+- **Item da Fase 8 — defeito do motor no WebKit do CI: o trap e a morte
+  de página (achado do 7B.4c, 2026-10-06).** As duas coisas ficam juntas
+  porque podem ter a mesma raiz; **não há prova de que tenham.** Mora junto com o Firefox ~7× mais lento neste WASM e o
   WASM ~3,4× mais lento que o nativo. **O motor não foi tocado.**
   - **Mensagem e pilha (run 37478346792, `82ec259`):**
 
@@ -3560,9 +3623,18 @@ depois. O jogo ainda não tem nome ("o jogo", "o projeto").
     partida simulada; com pool, o Worker é retirado e a rodada segue; sem
     pool (um núcleo), o trap aconteceria no Worker de mundo, e esse caso
     não foi observado nem testado.
-  - **Possivelmente ligado, sem prova — a página morre no WebKit do CI:**
-    4 e 2 vezes em 20 repetições da medição, 25–30 s depois do começo da
-    medição com pool, sem motivo no log. O log não liga as duas coisas.
+  - **A morte de página (possivelmente a mesma raiz, sem prova):**
+    `Target page, context or browser has been closed`, 25 a 30 s depois
+    de o pool começar, sem motivo no log — a página some antes de o teste
+    ler qualquer coisa. 4 e 2 vezes em 20 repetições da medição
+    (`ec1fde3`, `82ec259`) e uma vez na suíte normal (`b18709d`,
+    `world.spec.ts:239`, pool de 3). Não é o limite de tempo do teste.
+    Pode ser o mesmo defeito derrubando o processo em vez de virar
+    exceção; o log não liga as duas coisas. Só foi vista em testes com
+    pool.
+  - **Frequência:** 5 de 7 runs do WebKit vermelhos em 2026-10-06 (tabela
+    no resultado do push de encerramento, acima). Enquanto isto não for
+    resolvido vale a regra provisória do WebKit.
   - **Primeiro passo proposto para a Fase 8 (não feito):** a fronteira
     `fm-wasm` registrar a mensagem e a linha de um pânico do Rust antes
     do trap. A ocorrência seguinte diria se foi pânico (qual, em que

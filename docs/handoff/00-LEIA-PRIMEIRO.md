@@ -45,8 +45,11 @@ próprio navegador, em SQLite. O jogo ainda **não tem nome**: nos documentos,
 - **Na 7B já estão feitos** o `fm-world`, a persistência do mundo, o Worker
   de mundo e o pool de Workers de partida (medido e aprovado). Falta a tela
   `?view=world`, com desenho a aprovar antes do código. Ver o arquivo 03.
-- **Achado mais recente:** um trap no motor que só apareceu no WebKit do CI
-  (item da Fase 8; o job do WebKit fica vermelho de vez em quando por isso).
+- **Achado mais recente:** um defeito do motor que só apareceu no WebKit do
+  CI — um trap e a página morrendo em testes com pool (item da Fase 8). O
+  job do WebKit ficou vermelho em 5 de 7 runs num dia por causa disso; há
+  uma **regra provisória** que diz como ler esse vermelho (arquivos 03 e
+  04).
 
 ## A decisão das formações (tomada em 2026-10-05)
 
