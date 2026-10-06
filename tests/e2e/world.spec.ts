@@ -196,13 +196,18 @@ for (const backend of ['opfs', 'idb'] as const) {
         expect(started).toBe(players);
         await world(page, 'world.new', { seed: '2026', userClub: 3 });
         const lived = await world<Advance>(page, 'world.advance', { days: 14 });
+        // Said before anything is asserted: when a match worker was dropped
+        // on the way, why it was is what the log must not lose.
+        const stats = await world<Stats>(page, 'world.stats');
+        console.log(
+          `[7B drops ${testInfo.project.name} ${backend}] pool ${players}: started ${started}, dropped ${stats.dropped.length}${stats.dropped.map((why) => ` | ${why}`).join('')} | rounds ${lived.timing.map((t) => `${t.totalMs.toFixed(0)} ms with ${t.players}`).join(', ')} | result deadline ${stats.resultDeadlineMs.toFixed(0)} ms`,
+        );
         expect(lived.summary.day).toBe(14);
         expect(lived.timing.map((t) => [t.round, t.matches, t.players])).toEqual([
           [0, 10, players],
           [1, 10, players],
         ]);
         // Nobody was dropped on the way, and every copy of the world is up.
-        const stats = await world<Stats>(page, 'world.stats');
         expect(stats.dropped).toEqual([]);
         expect(stats.players).toBe(players);
         expect(stats.wasmBytes.players).toHaveLength(players);

@@ -153,7 +153,10 @@ jobs:
       # season only when the workflow is dispatched by hand.
       # WebKit repeats it twenty times: a match worker once went silent
       # there, and a rate takes more than one run (docs/SPEC.md, 7B.4c).
+      # It runs even when a test of the suite above failed: what the
+      # repetitions say is wanted all the more then.
       - name: World timing (a round of matches, alone)
+        if: success() || failure()
         run: npx playwright test tests/e2e/world-timing.spec.ts --project=${{ matrix.browser }} --workers=1 --repeat-each=${{ matrix.browser == 'webkit' && 20 || 1 }}
         env:
           FM_WORLD_TIMING: '1'
