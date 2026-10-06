@@ -418,6 +418,10 @@ addEventListener('message', (e: MessageEvent<WorldControl | WorldRequest>) => {
       if (advancing) cancelRequested = true;
       return;
     }
+    if (message.type === 'player-failed') {
+      pool.fail(message.player, message.why);
+      return;
+    }
     db = new DbClient(message.db);
     if (message.dbTimeoutMs !== undefined) dbTimeoutMs = message.dbTimeoutMs;
     pool = new MatchPool(message.players ?? [], message.matchTimeoutMs ?? 30_000);

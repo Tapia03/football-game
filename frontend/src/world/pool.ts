@@ -7,20 +7,77 @@
 import type { WorldHost } from '../engine-bridge/pkg/fm_wasm.js';
 import type { MatchReply, MatchRequest } from './match-protocol';
 
+/** The request in flight to a match worker. */
+type Waiting = {
+  resolve: (reply: MatchReply) => void;
+  reject: (err: Error) => void;
+  timer: number;
+  /**
+   * A `play` whose `started` has not come yet: the match, and how long its
+   * result may take once it has.
+   */
+  unconfirmed: { readonly id: number; readonly resultMs: number } | undefined;
+};
+
+const seconds = (ms: number): string => `${(ms / 1000).toFixed(1)} s`;
+
 /** One match worker, over its port: one request in flight at a time. */
 class Player {
   /** Size of the worker's WASM memory, as it last reported it. */
   wasmBytes = 0;
-  private waiting: { resolve: (reply: MatchReply) => void; reject: (err: Error) => void; timer: number } | undefined;
+  /** Why this worker cannot be used any more, once that is known. */
+  private broken: string | undefined;
+  private waiting: Waiting | undefined;
 
-  constructor(private readonly port: MessagePort) {
+  constructor(
+    private readonly port: MessagePort,
+    /** Called when the worker fails with nothing asked of it. */
+    private readonly onIdleFailure: (player: Player, why: string) => void,
+  ) {
     port.onmessage = (e: MessageEvent<MatchReply>) => {
       const waiting = this.waiting;
       if (waiting === undefined) return;
+      const reply = e.data;
+      const unconfirmed = waiting.unconfirmed;
+      if (unconfirmed !== undefined && reply.kind === 'started' && reply.id === unconfirmed.id) {
+        // The match got there: from here on what is awaited is its result.
+        clearTimeout(waiting.timer);
+        waiting.unconfirmed = undefined;
+        waiting.timer = this.deadline(unconfirmed.resultMs, 'confirmado, sem resultado em');
+        return;
+      }
       this.waiting = undefined;
       clearTimeout(waiting.timer);
-      waiting.resolve(e.data);
+      waiting.resolve(reply);
     };
+    // A message of the worker that could not be read: whatever it said is lost.
+    port.onmessageerror = () => this.fail('messageerror');
+  }
+
+  /** Fails the request in flight with `what` and the time, when `ms` go by. */
+  private deadline(ms: number, what: string): number {
+    return setTimeout(() => {
+      const waiting = this.waiting;
+      this.waiting = undefined;
+      waiting?.reject(new Error(`${what} ${seconds(ms)}`));
+    }, ms) as unknown as number;
+  }
+
+  /**
+   * The worker is known to have failed (`why`): the request in flight fails
+   * with it, at once; with none in flight, the pool is told.
+   */
+  fail(why: string): void {
+    if (this.broken !== undefined) return;
+    this.broken = why;
+    const waiting = this.waiting;
+    if (waiting === undefined) {
+      this.onIdleFailure(this, why);
+      return;
+    }
+    this.waiting = undefined;
+    clearTimeout(waiting.timer);
+    waiting.reject(new Error(why));
   }
 
   /** A message that is not answered (`sync`). */
@@ -31,11 +88,22 @@ class Player {
   /** A message and its answer, or an error when none comes in `timeoutMs`. */
   ask(request: MatchRequest, timeoutMs: number): Promise<MatchReply> {
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.waiting = undefined;
-        reject(new Error(`o Worker de partida não respondeu em ${(timeoutMs / 1000).toFixed(1)} s`));
-      }, timeoutMs) as unknown as number;
-      this.waiting = { resolve, reject, timer };
+      const timer = this.deadline(timeoutMs, 'o Worker de partida não respondeu em');
+      this.waiting = { resolve, reject, timer, unconfirmed: undefined };
+      this.port.postMessage(request);
+    });
+  }
+
+  /**
+   * Match `id`, in two waits: `started` — the match got to the worker — in
+   * `confirmMs`, then its result in `resultMs`. The error says which of the
+   * two did not come.
+   */
+  play(id: number, confirmMs: number, resultMs: number): Promise<MatchReply> {
+    return new Promise((resolve, reject) => {
+      const timer = this.deadline(confirmMs, 'sem confirmação em');
+      this.waiting = { resolve, reject, timer, unconfirmed: { id, resultMs } };
+      const request: MatchRequest = { kind: 'play', id };
       this.port.postMessage(request);
     });
   }
@@ -54,6 +122,8 @@ export type DayPlayed = {
 
 export class MatchPool {
   private readonly players: Player[];
+  /** Every player the pool was made with, by the index the page knows it by. */
+  private readonly all: readonly Player[];
   /** The players' copies of the world are not the world any more. */
   private stale = true;
   /** Players dropped since the pool was made, and why (for the record). */
@@ -64,7 +134,18 @@ export class MatchPool {
     /** How long a player may take to answer one request (ms). */
     private readonly timeoutMs: number,
   ) {
-    this.players = ports.map((port) => new Player(port));
+    this.all = ports.map((port) => new Player(port, (player, why) => this.drop(player, `fora de partida: ${why}`)));
+    this.players = [...this.all];
+  }
+
+  /**
+   * The page saw match worker `index` fail (`why`). With a request in
+   * flight to it, that request fails now and the player is dropped there;
+   * otherwise it is dropped here. A player already dropped stays so.
+   */
+  fail(index: number, why: string): void {
+    const player = this.all[index];
+    if (player !== undefined && this.players.includes(player)) player.fail(why);
   }
 
   /** Players the pool has right now. */
@@ -162,7 +243,7 @@ export class MatchPool {
             if (id === undefined) return;
             next += 1;
             try {
-              const reply = await player.ask({ kind: 'play', id }, this.timeoutMs);
+              const reply = await player.play(id, this.timeoutMs, this.timeoutMs);
               if (reply.kind !== 'played' || reply.id !== id) {
                 throw new Error(reply.kind === 'failed' ? reply.message : `resposta inesperada: ${reply.kind}`);
               }

@@ -36,6 +36,8 @@ export type WorldHandle = {
   readonly players: number;
   /** Kills match worker `index` (what a crash does): the pool must go on without it. */
   killPlayer(index: number): void;
+  /** Test hook: makes match worker `index` throw, as a defect in it would. */
+  crashPlayer(index: number): void;
   /** Kills the world worker and its pool (what a crash or a closed tab does). */
   terminate(): void;
 };
@@ -98,22 +100,47 @@ async function spawn(create: () => Worker, what: string): Promise<Worker> {
   throw failure;
 }
 
-/** A match worker, started and holding its end of a line to the world worker. */
-async function startPlayer(): Promise<{ worker: Worker; port: MessagePort }> {
+/** A match worker of the pool, as the page holds it. */
+type StartedPlayer = {
+  readonly worker: Worker;
+  readonly port: MessagePort;
+  /** A failure seen before there was anyone to tell. */
+  failed?: string;
+  /** Tells the world worker that this worker failed (set once it can be told). */
+  report?: (why: string) => void;
+};
+
+/**
+ * A match worker, started and holding its end of a line to the world
+ * worker. The page goes on listening to it for as long as it lives: an
+ * `error` of a worker and a message of it that cannot be read are only ever
+ * heard here, and the world worker has to be told.
+ */
+async function startPlayer(): Promise<StartedPlayer> {
   const worker = await spawn(
     () => new Worker(new URL('../workers/match.worker.ts', import.meta.url), { type: 'module' }),
     'o Worker de partida',
   );
   const channel = new MessageChannel();
+  const player: StartedPlayer = { worker, port: channel.port2 };
   await new Promise<void>((resolve, reject) => {
+    let ready = false;
+    const failed = (why: string): void => {
+      if (!ready) reject(new Error(why));
+      else if (player.report !== undefined) player.report(why);
+      else player.failed ??= why;
+    };
     worker.addEventListener('message', (e: MessageEvent<MatchReady>) => {
-      if (e.data.type === 'ready') resolve();
+      if (e.data.type !== 'ready') return;
+      ready = true;
+      resolve();
     });
-    worker.addEventListener('error', (e) => reject(new Error(e.message || 'o Worker de partida falhou')));
+    worker.addEventListener('error', (e) => failed(`o Worker falhou: ${e.message || 'erro sem mensagem'}`));
+    worker.addEventListener('messageerror', () => failed('messageerror na página'));
     const start: MatchControl = { type: 'start', port: channel.port1 };
     worker.postMessage(start, [channel.port1]);
   });
-  return { worker, port: channel.port2 };
+  return player;
 }
 
 /**
@@ -156,6 +183,10 @@ export async function startWorld(database: Database, options: WorldOptions = {})
     },
     players: players.length,
     killPlayer: (index) => players[index]?.worker.terminate(),
+    crashPlayer: (index) => {
+      const crash: MatchControl = { type: 'crash' };
+      players[index]?.worker.postMessage(crash);
+    },
     terminate: () => {
       worker.terminate();
       for (const player of players) player.worker.terminate();
@@ -189,5 +220,14 @@ export async function startWorld(database: Database, options: WorldOptions = {})
       ...(options.matchTimeoutMs === undefined ? {} : { matchTimeoutMs: options.matchTimeoutMs }),
     };
     worker.postMessage(start, [db, ...ports]);
+    // From here on the world worker knows the players: a failure of one —
+    // seen meanwhile, or yet to come — is passed on.
+    players.forEach((player, index) => {
+      player.report = (why) => {
+        const failed: WorldControl = { type: 'player-failed', player: index, why };
+        worker.postMessage(failed);
+      };
+      if (player.failed !== undefined) player.report(player.failed);
+    });
   });
 }

@@ -45,12 +45,22 @@ function serve(request: MatchRequest, memory: WebAssembly.Memory): MatchReply | 
 postMessage({ type: 'loaded' } satisfies WorldLoaded);
 
 addEventListener('message', (e: MessageEvent<MatchControl>) => {
+  if (e.data.type === 'crash') throw new Error('falha pedida por um teste');
   const { port } = e.data;
   init().then(
     (wasm) => {
+      // A request that could not be read is answered all the same: the
+      // world worker must not wait for the answer to what never arrived.
+      port.onmessageerror = () => {
+        port.postMessage({ kind: 'failed', message: 'messageerror' } satisfies MatchReply);
+      };
       port.onmessage = (message: MessageEvent<MatchRequest>) => {
         let reply: MatchReply | undefined;
         try {
+          // Said before the match is played: it arrived.
+          if (message.data.kind === 'play') {
+            port.postMessage({ kind: 'started', id: message.data.id } satisfies MatchReply);
+          }
           reply = serve(message.data, wasm.memory);
         } catch (err: unknown) {
           // A copy that could not follow the world is no copy: forget it.

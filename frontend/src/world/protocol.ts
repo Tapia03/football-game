@@ -136,7 +136,14 @@ export type WorldControl =
    * that day (the window is a few milliseconds): the day ends, and the
    * cancel holds from the next day on. Ignored when nothing is advancing.
    */
-  | { readonly type: 'cancel' };
+  | { readonly type: 'cancel' }
+  /**
+   * The page saw a match worker fail — an `error` or a `messageerror` of
+   * the worker, which only the page hears. `player`: its place in the
+   * `players` of `start`. The world worker drops it at once instead of
+   * waiting for a deadline.
+   */
+  | { readonly type: 'player-failed'; readonly player: number; readonly why: string };
 
 export type WorldReady = { readonly type: 'ready' };
 

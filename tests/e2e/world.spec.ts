@@ -35,6 +35,7 @@ type WorldHandle = {
   cancel(): void;
   players: number;
   killPlayer(index: number): void;
+  crashPlayer(index: number): void;
   terminate(): void;
 };
 type WorldHooks = Hooks & {
@@ -398,7 +399,9 @@ for (const backend of ['opfs', 'idb'] as const) {
       const stats = await world<Stats>(page, 'world.stats');
       expect(stats.players).toBe(1);
       expect(stats.dropped).toHaveLength(1);
-      expect(stats.dropped[0]).toMatch(/^play \d+: o Worker de partida não respondeu em/);
+      // The reason says how far the match got: handed over and never
+      // confirmed, or confirmed and never played to the end.
+      expect(stats.dropped[0]).toMatch(/^play \d+: (sem confirmação|confirmado, sem resultado) em /);
       // The third round is played by the one left.
       const next = await world<Advance>(page, 'world.advance', { days: 7 });
       expect(next.timing.map((t) => [t.round, t.matches, t.players])).toEqual([[2, 10, 1]]);
@@ -410,6 +413,51 @@ for (const backend of ['opfs', 'idb'] as const) {
       await world(page, 'world.advance', { days: 21 });
       await ask(page, 'meta.set', { key: 'name', value: 'o mesmo' });
       expect(await ask<string>(page, 'save.digest')).toBe(withTheDead);
+    });
+
+    test('the pool: a match worker that throws is heard by the page and dropped at once, same save', async ({
+      page,
+    }, testInfo) => {
+      await open(page, testInfo.project.name);
+      await openSave(page, 'Um jogador com defeito');
+      // No deadline short enough to explain the drop: it has to come from
+      // the page hearing the worker's error and telling the world worker.
+      await startWorld(page, { players: 2 });
+      await world(page, 'world.new', { seed: '2026', userClub: 0 });
+      await world(page, 'world.advance', { days: 7 });
+      const before = Date.now();
+      const lived = await page.evaluate(async () => {
+        const hooks = globalThis as unknown as WorldHooks;
+        const stop = hooks.world.onProgress((p) => {
+          if (p.round === 1 && p.done === 3) hooks.world.crashPlayer(0);
+        });
+        const result = (await hooks.world.request('world.advance', { days: 7 })) as Advance;
+        stop();
+        return result;
+      });
+      expect(lived).toMatchObject({ daysLived: 7, cancelled: false });
+      expect(lived.summary.day).toBe(14);
+      // Give the news of the failure the time to go round, if the round
+      // ended first.
+      await expect
+        .poll(async () => (await world<Stats>(page, 'world.stats')).dropped.length, { timeout: 10_000 })
+        .toBe(1);
+      const stats = await world<Stats>(page, 'world.stats');
+      expect(stats.players).toBe(1);
+      // In the middle of a match or between two, as it happened to fall.
+      expect(stats.dropped[0]).toMatch(/^(play \d+|fora de partida): o Worker falhou: /);
+      // Well inside the 30 s a silent worker is given.
+      expect(Date.now() - before).toBeLessThan(25_000);
+      const next = await world<Advance>(page, 'world.advance', { days: 7 });
+      expect(next.timing.map((t) => [t.round, t.matches, t.players])).toEqual([[2, 10, 1]]);
+      await ask(page, 'meta.set', { key: 'name', value: 'o mesmo' });
+      const withTheBroken = await ask<string>(page, 'save.digest');
+      await openSave(page, 'Direto, sem pool');
+      await startWorld(page);
+      await world(page, 'world.new', { seed: '2026', userClub: 0 });
+      await world(page, 'world.advance', { days: 21 });
+      await ask(page, 'meta.set', { key: 'name', value: 'o mesmo' });
+      expect(await ask<string>(page, 'save.digest')).toBe(withTheBroken);
     });
 
     test('the pool: when no match worker answers, the world worker plays alone, same save', async ({
