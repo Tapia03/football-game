@@ -13,7 +13,14 @@ import { expect, test } from '@playwright/test';
 //   FM_WORLD_TIMING=1 npx playwright test tests/e2e/world-timing.spec.ts --workers=1
 //
 // `FM_WORLD_SEASON=1` adds the whole season (minutes; the CI sets it only
-// when the workflow is dispatched by hand).
+// when the workflow is dispatched by hand — and sets it to nothing
+// otherwise, which must count as not set).
+//
+// In the CI the WebKit project repeats the measurement (`--repeat-each`):
+// there a match worker once went silent in it (SPEC, 7B.4c), and one
+// failure in one run is not a rate. Every repetition says, for each pool,
+// which match workers were dropped and why — before anything is asserted,
+// so that a repetition that fails still says it.
 
 type Timing = {
   day: number;
@@ -26,7 +33,12 @@ type Timing = {
   totalMs: number;
 };
 type Advance = { summary: { day: number; finished: boolean }; daysLived: number; timing: Timing[] };
-type Stats = { players: number; dropped: string[]; wasmBytes: { world: number; players: number[] } };
+type Stats = {
+  players: number;
+  dropped: string[];
+  resultDeadlineMs: number;
+  wasmBytes: { world: number; players: number[] };
+};
 type TimingHooks = {
   fmSave: { startDatabase(options?: unknown): Promise<{ client: { request(op: string, args: unknown): Promise<unknown> } }> };
   fmWorld: {
@@ -102,6 +114,9 @@ test.describe('Fase 7B: world timing (alone, one worker)', () => {
     const digests = new Set<string>();
     for (const size of sizes) {
       const { lived, stats, digest, started, backend } = await live(page, DAYS, size);
+      console.log(
+        `[7B drops ${name} #${testInfo.repeatEachIndex}] pool ${size}: started ${started}, dropped ${stats.dropped.length}${stats.dropped.map((why) => ` | ${why}`).join('')} | rounds ${lived.timing.map((r) => r.totalMs.toFixed(0)).join(', ')} | result deadline ${stats.resultDeadlineMs.toFixed(0)} ms`,
+      );
       expect(lived.summary.day).toBe(DAYS);
       expect(started).toBe(size);
       expect(stats.dropped).toEqual([]);
@@ -141,7 +156,8 @@ test.describe('Fase 7B: world timing (alone, one worker)', () => {
   });
 
   test('the whole season, when asked for', async ({ page }, testInfo) => {
-    test.skip(process.env['FM_WORLD_SEASON'] === undefined, 'Minutes long: only with FM_WORLD_SEASON=1');
+    // Not set, or set to nothing (what the CI does outside a manual run).
+    test.skip(!process.env['FM_WORLD_SEASON'], 'Minutes long: only with FM_WORLD_SEASON=1');
     test.setTimeout(1_500_000);
     const { lived, wallMs, cores } = await live(page, 266);
     expect(lived.summary).toMatchObject({ day: 266, finished: true });

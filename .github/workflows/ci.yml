@@ -151,8 +151,10 @@ jobs:
       # running — because it is the number that decides whether the matches
       # of a day need a pool of workers (docs/SPEC.md, 7B.4). The whole
       # season only when the workflow is dispatched by hand.
+      # WebKit repeats it twenty times: a match worker once went silent
+      # there, and a rate takes more than one run (docs/SPEC.md, 7B.4c).
       - name: World timing (a round of matches, alone)
-        run: npx playwright test tests/e2e/world-timing.spec.ts --project=${{ matrix.browser }} --workers=1
+        run: npx playwright test tests/e2e/world-timing.spec.ts --project=${{ matrix.browser }} --workers=1 --repeat-each=${{ matrix.browser == 'webkit' && 20 || 1 }}
         env:
           FM_WORLD_TIMING: '1'
           FM_WORLD_SEASON: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
