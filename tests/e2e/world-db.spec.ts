@@ -443,6 +443,21 @@ for (const backend of ['opfs', 'idb'] as const) {
       );
       // Well inside what is cheap to rewrite whole every day (IndexedDB).
       expect(exported.bytes.length).toBeLessThan(1024 * 1024);
+      // What checking a save of this size costs when it is opened (7B.5;
+      // the IndexedDB fallback only): the sum and SQLite's own check.
+      await start(page);
+      await ask(page, 'save.open', { id: save.id });
+      const { lastOpen } = await ask<{
+        lastOpen?: { bytes: number; summed: boolean; sumMs: number; integrityMs: number };
+      }>(page, 'storage.info');
+      if (backend === 'idb') {
+        expect(lastOpen).toMatchObject({ bytes: exported.bytes.length, summed: true });
+        console.log(
+          `[7B open checks ${testInfo.project.name}] ${lastOpen?.bytes} bytes: SHA-256 ${lastOpen?.sumMs.toFixed(2)} ms, integrity_check ${lastOpen?.integrityMs.toFixed(2)} ms`,
+        );
+      } else {
+        expect(lastOpen).toBeUndefined();
+      }
 
       const other = await ask<SaveInfo>(page, 'save.create', { name: 'Recebe' });
       await importSave(page, other.id, exported.bytes);

@@ -7,7 +7,7 @@
 // for SQL.
 
 import sqlite3InitModule, { type Database, type SqlValue } from '@sqlite.org/sqlite-wasm';
-import { OpError } from '../save/errors';
+import { FileCorruptError, OpError } from '../save/errors';
 import { openIdb, openOpfs, type Files } from '../save/files';
 import * as worldDb from '../save/world-db';
 import {
@@ -209,7 +209,10 @@ function setMeta(db: Database, key: string, value: MetaValue): void {
 }
 
 const handlers: { [O in DbOp]: (args: DbOps[O]['args']) => DbOps[O]['result'] | Promise<DbOps[O]['result']> } = {
-  'storage.info': () => info,
+  'storage.info': () => {
+    const lastOpen = storage?.files.lastOpen();
+    return lastOpen === undefined ? info : { ...info, lastOpen };
+  },
 
   'save.list': () =>
     need().catalog.selectObjects('SELECT * FROM saves ORDER BY last_opened_at DESC, id').map(saveInfo),
@@ -501,12 +504,48 @@ function testOnly(): void {
   if (options.test === undefined) throw new OpError('invalid', 'operação só de teste');
 }
 
-function toError(err: unknown): DbError {
+/** The arguments of a request worth reading in an error: the short, plain ones. */
+function argsOf(args: unknown): string {
+  if (typeof args !== 'object' || args === null) return '';
+  const said = Object.entries(args)
+    .filter(([, v]) => (typeof v === 'string' && v.length <= 80) || typeof v === 'number')
+    .map(([k, v]) => `${k}=${String(v)}`);
+  return said.length === 0 ? '' : ` (${said.join(', ')})`;
+}
+
+/**
+ * The files that are open and whether each is a sound database right now,
+ * as SQLite itself says. Asked after an error nobody expected: it tells an
+ * error of one statement from a file gone bad in memory, and which file.
+ */
+function openFilesNow(): string {
+  const said: string[] = [];
+  const check = (what: string, name: string, db: Database): void => {
+    let sound: string;
+    try {
+      sound = db.selectValues('PRAGMA integrity_check').map(String).join('; ').slice(0, 200);
+    } catch (err: unknown) {
+      sound = `não respondeu (${reason(err)})`;
+    }
+    said.push(`${what} ${name}: ${sound}`);
+  };
+  if (storage !== undefined) check('catálogo', CATALOG_FILE, storage.catalog);
+  if (current !== undefined) check('save aberto', current.name, current.db);
+  return said.length === 0 ? 'nenhum arquivo aberto' : said.join(' | ');
+}
+
+/**
+ * `where`: the operation that failed, with its arguments. What a caller is
+ * meant to tell apart keeps its message; what nobody expected — and a file
+ * that failed its checks — says where it happened.
+ */
+function toError(err: unknown, where: string): DbError {
   if (err instanceof OpError) return { code: err.code, message: err.message };
   if (err instanceof NewerVersionError) return { code: 'newer-version', message: err.message };
   if (err instanceof NotOursError) return { code: 'not-a-save', message: err.message };
   if (err instanceof MigrationFailedError) return { code: 'migration-failed', message: err.message };
-  return { code: 'internal', message: err instanceof Error ? err.message : String(err) };
+  if (err instanceof FileCorruptError) return { code: 'corrupt', message: `${where}: ${err.message}` };
+  return { code: 'internal', message: `${where}: ${reason(err)} [${openFilesNow()}]` };
 }
 
 let booted: Promise<void> | undefined;
@@ -519,7 +558,7 @@ async function serve<O extends DbOp>(request: DbRequest<O>): Promise<DbResponse<
     const handler = handlers[request.op] as (args: DbOps[O]['args']) => DbOps[O]['result'] | Promise<DbOps[O]['result']>;
     return { id: request.id, ok: true, result: await handler(request.args) };
   } catch (err: unknown) {
-    return { id: request.id, ok: false, error: toError(err) };
+    return { id: request.id, ok: false, error: toError(err, `${request.op}${argsOf(request.args)}`) };
   }
 }
 
@@ -538,7 +577,7 @@ function listen(reply: Reply): (e: MessageEvent<DbControl | DbRequest>) => void 
       if (message.type === 'init') {
         options = message.options;
         booted ??= boot().catch((err: unknown) => {
-          info = { backend: 'none', sqlite: info.sqlite, detail: toError(err).message };
+          info = { backend: 'none', sqlite: info.sqlite, detail: toError(err, 'ao abrir o armazenamento').message };
         });
         void booted.then(() => reply({ type: 'ready' }));
       } else {

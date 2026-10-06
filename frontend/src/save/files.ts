@@ -7,9 +7,16 @@
 //    of the test runner). Databases live in memory and the whole file is
 //    stored as one blob in IndexedDB when a change is flushed; a file is a
 //    few hundred kilobytes, and an IndexedDB transaction is atomic.
+//
+// A file of the `idb` backend is checked when it is opened (spec Fase 7B,
+// 7B.5): the SHA-256 written beside its bytes says whether IndexedDB gave
+// back what was stored, and `PRAGMA integrity_check` says whether what was
+// stored is a sound database. A file that fails either is refused, saying
+// which of the two it failed.
 
 import type { Database, SAHPoolUtil, Sqlite3Static } from '@sqlite.org/sqlite-wasm';
-import type { StorageBackend } from './protocol';
+import { FileCorruptError } from './errors';
+import type { OpenCheck, StorageBackend } from './protocol';
 
 export type OpenFile = { readonly name: string; readonly db: Database };
 
@@ -35,6 +42,8 @@ export type Files = {
   export(db: Database): Uint8Array;
   /** Makes room for `saves` saves (a no-op where files need no slots). */
   reserve(saves: number): Promise<void>;
+  /** What checking the file opened last found and cost (`idb` only). */
+  lastOpen(): OpenCheck | undefined;
 };
 
 /** Pool slots kept free beyond what the saves use (journals, copies). */
@@ -93,6 +102,7 @@ export async function openOpfs(sqlite3: Sqlite3Static): Promise<Files> {
       // A save takes two slots (file and journal).
       await sah.reserveMinimumCapacity(2 * (saves + 1) + SPARE_SLOTS);
     },
+    lastOpen: () => undefined,
   };
 }
 
@@ -114,6 +124,25 @@ function done(tx: IDBTransaction): Promise<void> {
   });
 }
 
+/**
+ * A file as IndexedDB holds it: its bytes and their SHA-256 (hex). A file
+ * stored before the sum existed (Fase 7A, 7B up to 7B.4c) is the bytes
+ * alone: it has no sum to be checked against, which is not a fault.
+ */
+type Stored = { readonly bytes: Uint8Array; readonly sha256?: string };
+
+async function sha256(bytes: Uint8Array): Promise<string> {
+  // A copy with a buffer of its own: what is hashed cannot be a view of
+  // memory somebody else may change meanwhile.
+  const digest = await crypto.subtle.digest('SHA-256', new Uint8Array(bytes));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** The value kept in IndexedDB for `bytes`: with their sum. */
+async function summed(bytes: Uint8Array): Promise<Stored> {
+  return { bytes, sha256: await sha256(bytes) };
+}
+
 /** The IndexedDB fallback. Rejects when IndexedDB is unusable too. */
 export async function openIdb(sqlite3: Sqlite3Static): Promise<Files> {
   const opening = indexedDB.open(IDB_NAME, 1);
@@ -121,9 +150,15 @@ export async function openIdb(sqlite3: Sqlite3Static): Promise<Files> {
     opening.result.createObjectStore(IDB_STORE);
   };
   const idb = await request(opening);
-  const read = async (name: string): Promise<Uint8Array | undefined> => {
-    const bytes: unknown = await request(idb.transaction(IDB_STORE).objectStore(IDB_STORE).get(name));
-    return bytes instanceof Uint8Array ? bytes : undefined;
+  let lastOpen: OpenCheck | undefined;
+  /** What is stored under `name`, in either form it may have been stored in. */
+  const read = async (name: string): Promise<Stored | undefined> => {
+    const value: unknown = await request(idb.transaction(IDB_STORE).objectStore(IDB_STORE).get(name));
+    if (value instanceof Uint8Array) return { bytes: value };
+    if (typeof value !== 'object' || value === null) return undefined;
+    const { bytes, sha256: sum } = value as { bytes?: unknown; sha256?: unknown };
+    if (!(bytes instanceof Uint8Array)) return undefined;
+    return typeof sum === 'string' ? { bytes, sha256: sum } : { bytes };
   };
   return {
     backend: 'idb',
@@ -132,45 +167,87 @@ export async function openIdb(sqlite3: Sqlite3Static): Promise<Files> {
       return keys.map(String).sort();
     },
     open: async (name) => {
-      const bytes = await read(name);
+      const stored = await read(name);
       const db = new sqlite3.oo1.DB(':memory:');
-      if (bytes !== undefined && bytes.length > 0) {
-        // SQLite takes ownership of the copy (freed when the db closes).
-        const p = sqlite3.wasm.allocFromTypedArray(bytes);
-        const { capi } = sqlite3;
-        const rc = capi.sqlite3_deserialize(
-          db,
-          'main',
-          p,
-          bytes.length,
-          bytes.length,
-          capi.SQLITE_DESERIALIZE_FREEONCLOSE | capi.SQLITE_DESERIALIZE_RESIZEABLE,
+      if (stored === undefined || stored.bytes.length === 0) return db;
+      const { bytes } = stored;
+      // First: are these the bytes that were stored? The sum is computed by
+      // the browser, outside SQLite, so it holds whatever state SQLite is in.
+      const beforeSum = performance.now();
+      const sum = stored.sha256 === undefined ? undefined : await sha256(bytes);
+      const sumMs = performance.now() - beforeSum;
+      if (sum !== stored.sha256) {
+        db.close();
+        throw new FileCorruptError(
+          name,
+          'sum',
+          `a soma de verificação não bate: o IndexedDB devolveu ${bytes.length} bytes com SHA-256 ${sum?.slice(0, 16)}…, e a soma gravada com eles é ${stored.sha256?.slice(0, 16)}…`,
         );
-        db.checkRc(rc);
+      }
+      // SQLite takes ownership of the copy (freed when the db closes).
+      const p = sqlite3.wasm.allocFromTypedArray(bytes);
+      const { capi } = sqlite3;
+      const rc = capi.sqlite3_deserialize(
+        db,
+        'main',
+        p,
+        bytes.length,
+        bytes.length,
+        capi.SQLITE_DESERIALIZE_FREEONCLOSE | capi.SQLITE_DESERIALIZE_RESIZEABLE,
+      );
+      db.checkRc(rc);
+      // Then: are they a sound database? `sqlite3_deserialize` takes any
+      // bytes; without this a bad page is only found by the query that
+      // happens to touch it.
+      const said = stored.sha256 === undefined ? 'o arquivo não tem soma gravada' : 'a soma de verificação confere';
+      const beforeCheck = performance.now();
+      let sound: string;
+      try {
+        sound = db.selectValues('PRAGMA integrity_check').map(String).join('; ');
+      } catch (err: unknown) {
+        sound = err instanceof Error ? err.message : String(err);
+      }
+      const integrityMs = performance.now() - beforeCheck;
+      lastOpen = { file: name, bytes: bytes.length, summed: stored.sha256 !== undefined, sumMs, integrityMs };
+      if (sound !== 'ok') {
+        db.close();
+        throw new FileCorruptError(
+          name,
+          'integrity',
+          `${said} (${bytes.length} bytes), mas o banco está malformado — integrity_check: ${sound.slice(0, 400)}`,
+        );
       }
       return db;
     },
     flush: async (changed, removed = []) => {
+      // The sums first: an IndexedDB transaction does not wait for anything
+      // but its own requests.
+      const files = await Promise.all(
+        changed.map(async ({ name, db }) => ({ name, value: await summed(sqlite3.capi.sqlite3_js_db_export(db)) })),
+      );
       const tx = idb.transaction(IDB_STORE, 'readwrite');
       const store = tx.objectStore(IDB_STORE);
-      for (const { name, db } of changed) store.put(sqlite3.capi.sqlite3_js_db_export(db), name);
+      for (const { name, value } of files) store.put(value, name);
       for (const name of removed) store.delete(name);
       await done(tx);
     },
     copy: async (from, to) => {
-      const bytes = await read(from);
+      // As it is stored, sum and all: a copy is checked when it is opened.
+      const stored = await read(from);
       const tx = idb.transaction(IDB_STORE, 'readwrite');
-      if (bytes === undefined) tx.objectStore(IDB_STORE).delete(to);
-      else tx.objectStore(IDB_STORE).put(bytes, to);
+      if (stored === undefined) tx.objectStore(IDB_STORE).delete(to);
+      else tx.objectStore(IDB_STORE).put(stored, to);
       await done(tx);
     },
-    read: async (name) => (await read(name)) ?? new Uint8Array(0),
+    read: async (name) => (await read(name))?.bytes ?? new Uint8Array(0),
     write: async (name, bytes) => {
+      const value = await summed(bytes);
       const tx = idb.transaction(IDB_STORE, 'readwrite');
-      tx.objectStore(IDB_STORE).put(bytes, name);
+      tx.objectStore(IDB_STORE).put(value, name);
       await done(tx);
     },
     export: (db) => sqlite3.capi.sqlite3_js_db_export(db),
     reserve: () => Promise.resolve(),
+    lastOpen: () => lastOpen,
   };
 }

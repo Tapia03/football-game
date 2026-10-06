@@ -23,6 +23,23 @@ export type StorageInfo = {
   readonly sqlite: string;
   /** Why this is not `'opfs'`, when it is not. */
   readonly detail?: string;
+  /** What checking the file opened last found and cost (IndexedDB only). */
+  readonly lastOpen?: OpenCheck;
+};
+
+/**
+ * The checks a file of the IndexedDB fallback goes through when it is
+ * opened (spec Fase 7B, 7B.5), for the last one that passed them.
+ */
+export type OpenCheck = {
+  readonly file: string;
+  readonly bytes: number;
+  /** The file had a sum stored beside it (files older than 7B.5 have none). */
+  readonly summed: boolean;
+  /** Computing the SHA-256 of the bytes read back (ms; 0 without a sum). */
+  readonly sumMs: number;
+  /** `PRAGMA integrity_check` (ms). */
+  readonly integrityMs: number;
 };
 
 /** One row of the catalog: a save and the file that holds it. */
@@ -266,6 +283,11 @@ export type DbError = {
     | 'world-exists'
     | 'out-of-order'
     | 'invalid'
+    /**
+     * A file of the storage failed a check when it was opened: the message
+     * names the file and says which check (the sum, or SQLite's own).
+     */
+    | 'corrupt'
     | 'internal';
   readonly message: string;
 };
