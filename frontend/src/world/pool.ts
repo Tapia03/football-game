@@ -19,6 +19,37 @@ type Waiting = {
   unconfirmed: { readonly id: number; readonly resultMs: number } | undefined;
 };
 
+/**
+ * How long the `started` of a match may take (ms). The worker is free when
+ * it is asked — confirming takes milliseconds — and 5 s outlast a pause of
+ * the browser.
+ */
+const CONFIRM_MS = 5_000;
+/**
+ * How long the result of a confirmed match may take: `RESULT_FACTOR` times
+ * the median of the last `RESULT_HISTORY` matches the pool played, never
+ * under `RESULT_FLOOR_MS`. A fixed deadline would be too long on a fast
+ * machine or, worse, too short on a slow one: a player dropped does not
+ * come back, so a deadline a slow machine cannot meet empties the pool for
+ * the rest of the session.
+ */
+const RESULT_FACTOR = 10;
+const RESULT_HISTORY = 20;
+const RESULT_FLOOR_MS = 3_000;
+
+/**
+ * The deadline for the result of a confirmed match (ms), from the time the
+ * last matches took (`recent`, each by whoever played it). With no match
+ * played yet there is nothing to go by: the ceiling.
+ */
+export function resultDeadlineMs(recent: readonly number[], ceilingMs: number): number {
+  if (recent.length === 0) return ceilingMs;
+  const sorted = [...recent].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  const median = sorted.length % 2 === 1 ? (sorted[mid] ?? 0) : ((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2;
+  return Math.min(ceilingMs, Math.max(RESULT_FLOOR_MS, RESULT_FACTOR * median));
+}
+
 const seconds = (ms: number): string => `${(ms / 1000).toFixed(1)} s`;
 
 /** One match worker, over its port: one request in flight at a time. */
@@ -128,10 +159,16 @@ export class MatchPool {
   private stale = true;
   /** Players dropped since the pool was made, and why (for the record). */
   readonly dropped: string[] = [];
+  /** How long the last matches the players played took (ms), oldest first. */
+  private readonly recent: number[] = [];
 
   constructor(
     ports: readonly MessagePort[],
-    /** How long a player may take to answer one request (ms). */
+    /**
+     * The most a player is ever waited for (ms): for the world it is given
+     * (`load`), and for the result of a match when the time the last ones
+     * took says nothing shorter.
+     */
     private readonly timeoutMs: number,
   ) {
     this.all = ports.map((port) => new Player(port, (player, why) => this.drop(player, `fora de partida: ${why}`)));
@@ -151,6 +188,11 @@ export class MatchPool {
   /** Players the pool has right now. */
   get size(): number {
     return this.players.length;
+  }
+
+  /** How long the result of a match confirmed now would be waited for (ms). */
+  get resultDeadlineMs(): number {
+    return resultDeadlineMs(this.recent, this.timeoutMs);
   }
 
   /** Size of each player's WASM memory. */
@@ -243,10 +285,12 @@ export class MatchPool {
             if (id === undefined) return;
             next += 1;
             try {
-              const reply = await player.play(id, this.timeoutMs, this.timeoutMs);
+              const reply = await player.play(id, CONFIRM_MS, this.resultDeadlineMs);
               if (reply.kind !== 'played' || reply.id !== id) {
                 throw new Error(reply.kind === 'failed' ? reply.message : `resposta inesperada: ${reply.kind}`);
               }
+              this.recent.push(reply.ms);
+              if (this.recent.length > RESULT_HISTORY) this.recent.shift();
               record(reply.row, reply.ms);
             } catch (err: unknown) {
               // The match is not lost: `host` plays it below.

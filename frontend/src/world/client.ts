@@ -51,7 +51,11 @@ export type WorldOptions = {
    * itself, as it does whenever the pool is empty.
    */
   readonly players?: number;
-  /** How long a match worker may take to answer before it is dropped (ms; 30 s by default). */
+  /**
+   * The most a match worker is ever waited for before it is dropped (ms;
+   * 30 s by default). The wait for a match is usually far shorter: it
+   * follows the time the last matches took.
+   */
   readonly matchTimeoutMs?: number;
 };
 

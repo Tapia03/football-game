@@ -383,6 +383,7 @@ const handlers: { [O in WorldOp]: (args: WorldOps[O]['args']) => Promise<WorldOp
   'world.stats': async () => ({
     players: pool.size,
     dropped: [...pool.dropped],
+    resultDeadlineMs: pool.resultDeadlineMs,
     wasmBytes: { world: (await wasm)?.memory.buffer.byteLength ?? 0, players: pool.wasmBytes() },
   }),
 };

@@ -86,6 +86,11 @@ export type WorldStats = {
   readonly players: number;
   /** Match workers dropped since the start, and why. */
   readonly dropped: readonly string[];
+  /**
+   * How long the result of a match would be waited for right now (ms): it
+   * follows the time the last matches took (SPEC, 7B.4c).
+   */
+  readonly resultDeadlineMs: number;
   /** Size of the WASM memory of the world worker and of each match worker (bytes). */
   readonly wasmBytes: { readonly world: number; readonly players: readonly number[] };
 };
@@ -124,8 +129,10 @@ export type WorldControl =
       readonly dbTimeoutMs?: number;
       /**
        * The pool: a port to each match worker (none: the world worker plays
-       * the matches itself). `matchTimeoutMs`: how long a match worker may
-       * take to answer before it is dropped (30 s when not given).
+       * the matches itself). `matchTimeoutMs`: the most a match worker is
+       * ever waited for before it is dropped (30 s when not given) — for
+       * the world it is given, and for the result of a match while the
+       * time the last ones took says nothing shorter.
        */
       readonly players?: readonly MessagePort[];
       readonly matchTimeoutMs?: number;

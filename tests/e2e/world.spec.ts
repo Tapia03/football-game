@@ -26,7 +26,12 @@ type Timing = {
   totalMs: number;
 };
 type WorldOptions = { dbTimeoutMs?: number; players?: number; matchTimeoutMs?: number };
-type Stats = { players: number; dropped: string[]; wasmBytes: { world: number; players: number[] } };
+type Stats = {
+  players: number;
+  dropped: string[];
+  resultDeadlineMs: number;
+  wasmBytes: { world: number; players: number[] };
+};
 type Advance = { summary: Summary; daysLived: number; cancelled: boolean; timing: Timing[] };
 type Progress = { type: 'progress'; day: number; round: number; done: number; total: number; daysLeft: number; etaMs: number };
 type WorldHandle = {
@@ -202,6 +207,14 @@ for (const backend of ['opfs', 'idb'] as const) {
         expect(stats.players).toBe(players);
         expect(stats.wasmBytes.players).toHaveLength(players);
         expect(stats.wasmBytes.players.every((bytes) => bytes > 0)).toBe(true);
+        // How long a match is waited for follows the matches the pool
+        // played: the ceiling while it played none, and from then on ten
+        // times their median, 3 s at the least (SPEC, 7B.4c).
+        if (players === 0) expect(stats.resultDeadlineMs).toBe(30_000);
+        else {
+          expect(stats.resultDeadlineMs).toBeGreaterThanOrEqual(3_000);
+          expect(stats.resultDeadlineMs).toBeLessThanOrEqual(30_000);
+        }
         // The saves differ only by their names.
         await ask(page, 'meta.set', { key: 'name', value: 'o mesmo' });
         digests[`${players}`] = await ask<string>(page, 'save.digest');
