@@ -3642,6 +3642,108 @@ depois. O jogo ainda não tem nome ("o jogo", "o projeto").
     de "o WebKit executou errado". Custa um pouco de tamanho no WASM e
     uma mudança em `fm-wasm`, não em `fm-match`. A medição repetida do
     WebKit já existe para dar a taxa.
+- **Resultado do push da regra provisória (`fb46521`, run 37503535382, só
+  documentos):** bench em +0,00%; Chromium e Firefox verdes (pool de 4 em
+  674 ms e 3.676 ms); nenhum golden mudou. WebKit: suíte verde (53
+  testes); medição 14 de 20 — quatro mortes de página (#4, #10, #12, #16,
+  todas com pool de 4), o trap de novo (#17, pool de 3, `play 0`, a mesma
+  pilha) e **um motivo novo, fora da regra provisória:**
+
+  ```
+  page.evaluate: Error: SQLITE_CORRUPT: sqlite3 result code 11:
+  database disk image is malformed
+  ```
+
+  na repetição #8, 1 a 2 s depois de abrir a página da medição com pool
+  de 3, antes de qualquer partida com pool, no Worker de banco, no
+  fallback IndexedDB.
+- **O `SQLITE_CORRUPT` no WebKit do CI — o que a leitura do código disse
+  (2026-10-06).**
+  - **O nosso código de gravação não é a causa, até onde o código
+    mostra.** O `flush` do IndexedDB é uma transação só, a operação só
+    responde depois do `oncomplete`, o export é uma cópia feita depois do
+    commit do SQL, os pedidos são atendidos em fila, e o teste só navega
+    depois das respostas: quando a página troca, o Worker de banco
+    anterior está ocioso. Não há janela para um blob parcial.
+  - **O boot passou** (a mensagem veio sem "sem armazenamento"): o
+    catálogo abriu e foi lido. O erro veio de uma operação seguinte; o
+    log não diz qual, nem em qual arquivo.
+  - **Sobram duas hipóteses que o código não separa:** (2) o WebKit do
+    Playwright executando o SQLite — que também é WASM — errado em alguma
+    condição, como no trap do motor; (3) o IndexedDB do WebKit devolvendo
+    um blob diferente do gravado.
+  - **Não entra na regra provisória do WebKit** (decisão do usuário): os
+    dois motivos da regra são de código que a Fase 7 não toca; este toca
+    a persistência. Cada ocorrência é lida no relatório do push. Se a
+    instrumentação abaixo caracterizar a causa como do ambiente, o
+    usuário decide se a regra ganha um terceiro motivo.
+- **7B.5 — persistência instrumentada (desenho aprovado em 2026-10-06).**
+  Entra antes da tela, que vai abrir e gravar saves por este caminho. **É
+  instrumentação, não correção:** a causa do `SQLITE_CORRUPT` é
+  desconhecida. Só frontend; motor, Rust e goldens não mudam.
+  - **Soma de verificação ao lado do blob (fallback IndexedDB).** O
+    `flush` grava, junto dos bytes do arquivo, o SHA-256 deles (o mesmo
+    algoritmo do `save.digest`, calculado pelo navegador, fora do
+    SQLite). O valor guardado passa de `Uint8Array` para `{ bytes,
+    sha256 }`, numa transação só, como antes. Na abertura a soma é
+    refeita sobre os bytes lidos, **antes** de entregá-los ao SQLite.
+    - **Não bate:** o IndexedDB devolveu outra coisa → hipótese 3.
+    - **Bate e o banco está ruim:** foi gravado ruim ou estragou em
+      memória → hipótese 2.
+    - **Arquivo sem soma** (gravado antes do 7B.5: o catálogo e os saves
+      da 7A e da 7B até o 7B.4c): **"sem soma para conferir", nunca
+      corrupção.** Abre como sempre e ganha a soma na primeira gravação.
+      Consequência registrada: um build anterior ao 7B.5 não lê o formato
+      novo (veria um arquivo vazio); só importa para quem voltasse de
+      versão, e não há usuários.
+  - **Verificação de integridade na abertura (fallback IndexedDB).**
+    Depois da soma, `PRAGMA integrity_check` no banco recém-carregado; o
+    `sqlite3_deserialize` aceita quaisquer bytes, e sem isso uma página
+    ruim só é achada pela consulta que tocar nela. **Em toda abertura**,
+    se o custo medido for desprezível; se não for, só quando a soma não
+    bater (decidir com o número).
+  - **Arquivo que falha é recusado**, com o erro novo `corrupt`: a
+    mensagem diz a operação, o arquivo e qual das duas verificações
+    falhou. Nada é apagado nem reescrito. No catálogo, a falha acontece
+    no boot e o armazenamento fica indisponível, dizendo o porquê.
+  - **Contexto no erro.** Um erro que ninguém esperava (o código
+    `internal`) passa a dizer a operação com os argumentos curtos, o que
+    o SQLite disse, e o estado **agora** de cada arquivo aberto (catálogo
+    e save), pelo `integrity_check` de cada um — o que separa "esta
+    instrução falhou" de "este arquivo estragou em memória", e diz qual.
+    Os erros que um chamador distingue (`not-found`, `no-world`…)
+    continuam dizendo o que diziam.
+  - **Só o fallback IndexedDB ganha soma e verificação**; no OPFS o
+    arquivo é do SQLite, com o journal dele. O contexto no erro vale nos
+    dois.
+  - **Testes, com arquivos plantados pela página no IndexedDB:** soma
+    errada (recusado, diz que a soma não bateu e o arquivo); soma certa de
+    um banco malformado (recusado, diz que a soma confere e o arquivo);
+    arquivo sem soma (abre, e ganha a soma na gravação seguinte); catálogo
+    com soma errada (sem armazenamento, nomeando o catálogo); um erro do
+    SQLite numa operação (carrega a operação, os argumentos e o estado
+    dos arquivos abertos).
+  - **Sub-commits:** (1) este SPEC, com as dívidas abaixo; (2) código e
+    testes; (3) medições.
+- **Dívidas da persistência, registradas pela leitura (2026-10-06; sem
+  código agora).**
+  1. **A limpeza de órfãos confia no catálogo, e o catálogo não tem
+     cópia** (`removeOrphans`, em `db.worker.ts`). Um catálogo que abre
+     mas perdeu linhas faria o boot apagar saves verdadeiros como se
+     fossem órfãos. É a que mais pesa para o jogador. **Dívida da Fase 7,
+     a resolver antes da Fase 9.** O usuário decidiu não corrigir agora
+     (defesa contra um risco que ainda não aconteceu). **Se a
+     instrumentação apontar que um `SQLITE_CORRUPT` foi no catálogo, a
+     cópia do catálogo deixa de ser dívida e vira o próximo sub-commit,
+     na frente do commit 6.**
+  2. **O `flush` regrava a imagem como estiver**, inclusive uma que o
+     SQLite acabou de declarar malformada. Sem prazo.
+  3. **A transação do IndexedDB não pede `durability: 'strict'`**; fica
+     no padrão do navegador. Sem prazo.
+  4. **O `SQLITE_CORRUPT` em si**, sintoma em aberto: cada ocorrência é
+     lida caso a caso, com o que a instrumentação disser.
+  - (A quinta fragilidade da leitura, erros sem contexto, é o que o
+    7B.5 resolve.)
 
 ## FASE 7 (numeração antiga; agora parte da Fase 9) — UI + Overlays Táticos
 - **Ordem (2026-10-05):** vem depois da fase "Bola longa + contraparte
