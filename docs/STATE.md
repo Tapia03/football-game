@@ -125,8 +125,25 @@ para orientar a próxima rodada de refinamento.
       `test-e2e` foram cancelados por infra. **Os e2e do 7B.4b.4 e do
       7B.4b.5 nunca rodaram no CI e a medição do pool no CI não existe.**
       Localmente, `cargo test --workspace --release` e o clippy passam.
-      Pendente com o dono: reexecutar só os jobs cancelados desse run ou
-      medir no próximo push.
+      O dono autorizou reexecutar só os jobs cancelados desse run.
+  - **7B.4b medido no CI (2026-10-06, rerun, 4 núcleos):** Chromium
+    **435 ms com pool de 4**, 485 ms com 3, 939 ms sem pool — **meta 2
+    atingida (≤ 700 ms), pool aprovado por essa medida**. Firefox 3.764 ms
+    com pool (8.969 ms sem). WebKit 1.520 ms sem pool. WASM: 1,5 MB do
+    mundo + 1,3 MB por Worker de partida. Tabela no SPEC. A linha de base
+    sem pool caiu de 1.453 para 939 ms sem mudança no motor; não
+    investigado.
+  - **WebKit do CI: um Worker de partida ficou mudo na medição** (pool de
+    3, `"play 0: o Worker de partida não respondeu em 30.0 s"`); o teste
+    exige zero retirados e reprovou. A suíte normal passou nos três
+    navegadores. **Causa indeterminada.**
+  - **7B.4c em andamento (pool observável, desenho aprovado em
+    2026-10-06, no SPEC):** confirmação de recebimento (`started`),
+    `error` e `messageerror` escutados a vida toda, prazo de confirmação
+    de 5 s, prazo da partida adaptativo (10× a mediana das últimas 20,
+    piso 3 s, teto 30 s), medição repetida 20 vezes no WebKit do CI, e a
+    correção do `FM_WORLD_SEASON` (a temporada rodava em todo push).
+    **A tela (commit 6) espera isto fechar.**
   - **Fica para o commit 6** (o "commit 5" do desenho original; o pool
     entrou antes; desenho apresentado em 2026-10-05, ainda não
     aprovado): a tela `?view=world` e a navegação saves ↔ mundo;

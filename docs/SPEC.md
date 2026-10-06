@@ -3244,6 +3244,91 @@ depois. O jogo ainda não tem nome ("o jogo", "o projeto").
   por commit": os sub-commits 4 e 5 do pool foram empurrados juntos.
   Regra provisória enquanto durar a fila: job cancelado por infra não
   conta como vermelho; só conta job que rodou e falhou. Não é precedente.
+- **7B.4b medido no CI (2026-10-06, rerun dos jobs cancelados do push
+  `b9326d5`; runner de 4 núcleos; mediana de cinco rodadas, a primeira à
+  parte):**
+
+  | Navegador (CI) | Pool | Rodada inteira | Primeira rodada | Por partida, por quem jogou | `commitDay` (média) | WASM (mundo + partidas) |
+  |---|---|---|---|---|---|---|
+  | **Chromium** | sem | 939 ms | 956 ms | 91 ms | 34,4 ms | 1,5 MB |
+  | **Chromium** | 3 | 485 ms | 518 ms | 134 ms | 29,3 ms | 5,4 MB |
+  | **Chromium** | **4** | **435 ms** | 455 ms | 142 ms | 27,6 ms | 6,8 MB |
+  | Firefox | sem | 8.969 ms | 9.020 ms | 893 ms | 31,2 ms | 1,5 MB |
+  | Firefox | 3 | 4.072 ms | 4.079 ms | 1.175 ms | 28,2 ms | 5,4 MB |
+  | Firefox | 4 | 3.764 ms | 3.774 ms | 1.308 ms | 30,2 ms | 6,8 MB |
+  | WebKit | sem | 1.520 ms | 1.570 ms | 150 ms | 8,9 ms (IndexedDB) | 1,5 MB |
+  | WebKit | 3 | **falhou** (abaixo) | — | — | — | — |
+
+  - **Meta 2 atingida: 435 ms ≤ 700 ms no Chromium do CI** (2,16× com 4
+    Workers). O pool está aprovado por essa medida.
+  - **A linha de base mudou sem explicação:** sem pool, 939 ms aqui contra
+    1.453 ms no 7B.4 (91 contra 141 ms por partida), com o motor igual
+    (bench em +0,00%). Runner ou o caminho novo do `WorldHost`; não
+    investigado. Por regra de três, num runner como o do 7B.4 o pool de 4
+    ficaria em ~670 ms.
+  - A memória do Worker de banco (SQLite) não é medida pelo teste.
+  - Temporada inteira (rodou sem ser pedida, ver 7B.4c): 21,3 s no
+    Chromium, 147,6 s no Firefox, 28,1 s no WebKit.
+  - **WebKit, pool de 3: um Worker de partida ficou mudo.** O teste de
+    medição exige zero Workers retirados e recebeu `"play 0: o Worker de
+    partida não respondeu em 30.0 s"` (`0` é o id da partida). O Worker
+    tinha subido e respondido ao `load`; ficou sem responder à primeira
+    partida. A retirada funcionou como desenhada. No mesmo job o WebKit
+    passou os testes de pool da suíte e uma temporada com pool de 4.
+    **Causa indeterminada**; três candidatas que o código não distingue:
+    mensagem que não desserializa (ninguém escuta `messageerror`), Worker
+    morto ou travado depois do `ready` (o `error` só é escutado na
+    partida a frio), resposta enviada e não entregue.
+- **7B.4c — pool observável (desenho aprovado em 2026-10-06).** Entra
+  antes da tela. Só frontend (TypeScript): motor, Rust, página da partida
+  e goldens não mudam; bench esperado em +0,00%.
+  - **Confirmação de recebimento.** O Worker de partida responde
+    `started {id}` assim que recebe o `play`, antes de jogar, e depois
+    `played` como antes. A espera fica dividida em duas — entrega da
+    mensagem e execução da partida —, o que separa "nunca recebeu" de
+    "recebeu e travou" de "respondeu e se perdeu". Uma mensagem a mais por
+    partida.
+  - **Observabilidade durante toda a vida do Worker.**
+    - `messageerror` nos dois lados da porta: no Worker de partida vira
+      uma resposta `failed`; no Worker de mundo retira o Worker na hora.
+    - `error` e `messageerror` do Worker na main. O evento `error` só
+      existe na main: entra uma mensagem de controle nova, da main para o
+      Worker de mundo, dizendo qual Worker de partida falhou e por quê.
+    - O motivo da retirada diz a fase: `play 0: sem confirmação em …`,
+      `play 0: confirmado, sem resultado em …`, `play 0: messageerror`,
+      `play 0: o Worker falhou: …`.
+    - A reação é a que já existia: registrar, retirar, e o Worker de mundo
+      joga a partida.
+  - **Prazo de confirmação: 5 s, fixo.** O Worker está livre quando recebe
+    o `play` e confirmar leva milissegundos; 5 s toleram uma pausa do
+    navegador. É o prazo que reduz os 30 s do caso do WebKit a 5 s, se a
+    mensagem não chegou.
+  - **Prazo da partida depois de confirmada: adaptativo.** 10× a mediana
+    das últimas 20 partidas jogadas pelo pool, com piso de 3 s e teto de
+    30 s; sem histórico, 30 s.
+    - **Por que não 10 s fixos:** um Worker retirado não volta naquela
+      sessão. Num aparelho em que a partida passa de 10 s, o prazo fixo
+      retira todos os Workers e a sessão inteira segue sem pool. O
+      adaptativo acompanha o aparelho: 3 s (pelo piso) no Chromium e no
+      WebKit do CI, ~13 s no Firefox do CI, até 30 s num aparelho muito
+      lento.
+    - Custo: o caso raro de 30 s na primeira partida (Worker que confirma
+      e trava antes de haver histórico) e o histórico das últimas 20.
+  - **Repetição no WebKit do CI.** Uma falha em uma execução não dá taxa.
+    O passo de medição roda 20 vezes só no WebKit (`--repeat-each`), ~8
+    min a mais no job; com 20, uma falha de taxa 1 em 10 aparece em 88%
+    das vezes. A asserção de zero retirados continua e cada repetição
+    imprime os motivos de retirada. Chromium e Firefox: uma medição.
+    **Não reproduzir no WebKit do Playwright no Windows:** é outra
+    compilação que a do Linux do CI.
+  - **Correção que entra junto: a temporada inteira rodava em todo push.**
+    O CI define `FM_WORLD_SEASON` como string vazia e o teste só pulava
+    com `undefined`. Corrigido no commit da repetição (senão rodaria 20
+    vezes no WebKit).
+  - **Sub-commits:** (1) este SPEC; (2) confirmação de recebimento e
+    observabilidade, com testes; (3) prazo adaptativo, com o teste do
+    histórico; (4) repetição no WebKit e a correção do `FM_WORLD_SEASON`;
+    (5) medições.
 
 ## FASE 7 (numeração antiga; agora parte da Fase 9) — UI + Overlays Táticos
 - **Ordem (2026-10-05):** vem depois da fase "Bola longa + contraparte

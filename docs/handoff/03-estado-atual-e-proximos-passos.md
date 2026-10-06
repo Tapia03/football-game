@@ -50,10 +50,15 @@ ficam vermelhos por infra.
   Consequências: **os e2e do 7B.4b.4 e do 7B.4b.5 nunca rodaram no CI**, e
   **a medição do pool no CI não existe**. Localmente, `cargo test
   --workspace --release` e o clippy passam em `b9326d5`.
-- **Pergunta feita ao dono, sem resposta ainda:** reexecutar só os jobs
-  cancelados desse run (`gh run rerun 37370161249 --failed`) para obter o
-  número, ou medir no próximo push. Os jobs cancelados dos runs anteriores
-  não são reexecutados (decisão do dono).
+- **O dono autorizou reexecutar só os jobs cancelados desse run** (os dos
+  runs anteriores não são reexecutados). O rerun (2026-10-06) rodou tudo:
+  suíte normal verde nos três navegadores; **pool medido no Chromium do CI
+  em 435 ms (meta 2 atingida)**; e a medição do WebKit falhou com um Worker
+  de partida mudo por 30 s, de causa indeterminada.
+- **Em andamento: 7B.4c, pool observável** (desenho no SPEC): confirmação
+  de recebimento, `error` e `messageerror` escutados a vida toda, prazo
+  adaptativo, medição repetida 20 vezes no WebKit do CI. A tela espera isto
+  fechar.
 
 ## O que o `fm-world` já faz
 
