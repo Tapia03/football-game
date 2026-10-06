@@ -144,6 +144,24 @@ para orientar a próxima rodada de refinamento.
     piso 3 s, teto 30 s), medição repetida 20 vezes no WebKit do CI, e a
     correção do `FM_WORLD_SEASON` (a temporada rodava em todo push).
     **A tela (commit 6) espera isto fechar.**
+    - **Feito:** sub-commits 1 a 4 (SPEC, confirmação e observabilidade,
+      prazos, repetição no WebKit). Bench em +0,00% em todos.
+    - **Custo:** nenhum mensurável. Chromium do CI com pool de 4: 667 ms
+      antes, 674 ms com a confirmação, 660 ms com o prazo adaptativo (sem
+      pool: 1.442–1.495 ms). A meta 2 (≤ 700 ms) é atendida, com folga
+      pequena no runner lento (435 ms no runner rápido).
+    - **Em aberto — WebKit do CI:** com o prazo adaptativo (`76ffa87`) a
+      suíte falhou: um Worker de partida foi retirado durante a primeira
+      rodada com pool de 4, em poucos segundos, e **o motivo não foi
+      impresso**. Pode ser falso positivo do prazo novo (piso de 3 s com
+      os Workers frios e os núcleos disputados), o Worker mudo de novo, ou
+      outra coisa. O push dos sub-commits 4 e 5 existe para imprimir o
+      motivo. **O piso, o teto e o multiplicador só mudam por decisão do
+      dono, com o motivo e o tempo na mão.**
+    - **Runners do GitHub normalizados em 2026-10-06:** a regra provisória
+      de "cancelado por infra não conta" deixou de ser necessária. Os
+      sub-commits 4 e 5 foram num push só, por tempo de retorno do CI
+      (exceção pontual).
   - **Fica para o commit 6** (o "commit 5" do desenho original; o pool
     entrou antes; desenho apresentado em 2026-10-05, ainda não
     aprovado): a tela `?view=world` e a navegação saves ↔ mundo;

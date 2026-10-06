@@ -55,10 +55,17 @@ ficam vermelhos por infra.
   suíte normal verde nos três navegadores; **pool medido no Chromium do CI
   em 435 ms (meta 2 atingida)**; e a medição do WebKit falhou com um Worker
   de partida mudo por 30 s, de causa indeterminada.
-- **Em andamento: 7B.4c, pool observável** (desenho no SPEC): confirmação
-  de recebimento, `error` e `messageerror` escutados a vida toda, prazo
-  adaptativo, medição repetida 20 vezes no WebKit do CI. A tela espera isto
+- **Em andamento: 7B.4c, pool observável** (desenho e resultados no SPEC):
+  confirmação de recebimento, `error` e `messageerror` escutados a vida
+  toda, prazo adaptativo, medição repetida 20 vezes no WebKit do CI. O
+  código está feito e não custou tempo mensurável (Chromium do CI com pool
+  de 4: 660–674 ms). **Em aberto:** com o prazo adaptativo, o WebKit do CI
+  retirou um Worker na primeira rodada de um teste da suíte, sem imprimir o
+  motivo; o push seguinte existe para imprimi-lo. Os números do prazo (piso
+  3 s, teto 30 s, 10×) só mudam por decisão do dono. A tela espera isto
   fechar.
+- Os runners do GitHub voltaram ao normal em 2026-10-06; a regra provisória
+  acima deixou de ser necessária.
 
 ## O que o `fm-world` já faz
 

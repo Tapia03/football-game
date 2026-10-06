@@ -3329,6 +3329,77 @@ depois. O jogo ainda não tem nome ("o jogo", "o projeto").
     observabilidade, com testes; (3) prazo adaptativo, com o teste do
     histórico; (4) repetição no WebKit e a correção do `FM_WORLD_SEASON`;
     (5) medições.
+- **7B.4c implementado (2026-10-06), como ficou e o que o CI mostrou até
+  o push dos sub-commits 4 e 5.**
+  - **Confirmação e fases:** `started {id}` antes de jogar; a classe
+    `Player` espera a confirmação e depois o resultado, e o motivo da
+    retirada diz qual das duas faltou.
+  - **Quem escuta o quê:** `messageerror` nos dois lados da porta;
+    `error` e `messageerror` do Worker na página, que avisa o Worker de
+    mundo por `player-failed {player, why}` (o índice é o lugar do Worker
+    na lista entregue no `start`). Worker que falha sem partida em mãos é
+    retirado com o motivo `fora de partida: …`.
+  - **Prazos no código (`frontend/src/world/pool.ts`):** confirmação
+    `CONFIRM_MS` = 5 s; resultado `resultDeadlineMs(histórico, teto)` =
+    10× a mediana das últimas 20 partidas jogadas pelos Workers do pool,
+    piso de 3 s, teto de 30 s; sem histórico, o teto. O histórico usa o
+    tempo que cada Worker mediu na própria partida. `world.stats` diz o
+    prazo em vigor.
+  - **O que o desenho não dizia e ficou assim:** o `load` (o mundo
+    inteiro entregue a cada Worker) continua com o prazo do teto, 30 s; a
+    opção `matchTimeoutMs` do cliente passou a ser esse teto; o prazo do
+    resultado é o que vale no instante em que a partida é entregue.
+  - **Ganchos de teste novos, no bundle como os outros:** `crashPlayer`
+    (o Worker de partida lança um erro, como um defeito lançaria).
+  - **Achado na leitura:** a função que sobe um Worker (`spawn`, em
+    `world/client.ts`) deixa um ouvinte de `error` que **termina o Worker
+    em qualquer erro, mesmo depois de pronto**. Antes do 7B.4c, um erro
+    não capturado num Worker de partida o matava em silêncio e o sintoma
+    era exatamente o prazo de 30 s. Agora o erro é também avisado ao
+    Worker de mundo. O ouvinte ficou como estava.
+  - **Testes:** Worker que lança erro é ouvido pela página e retirado na
+    hora, com o mesmo save (três navegadores, dois armazenamentos); a
+    função do prazo, pura, com o piso, o teto, a mediana e o caso sem
+    histórico. **Não testado:** `messageerror` (não há como provocar um
+    num teste) e a retirada por falta de confirmação isolada da por falta
+    de resultado (o teste do Worker morto aceita as duas).
+  - **Custo no tempo de rodada (Chromium do CI, pool de 4, runner de 4
+    núcleos):**
+
+    | Run | Código | Sem pool | Pool de 4 |
+    |---|---|---|---|
+    | `0e4735f` | antes do 7B.4c | 1.442 ms | 667 ms |
+    | `f60740b` | com a confirmação | 1.495 ms | 674 ms |
+    | `76ffa87` | com o prazo adaptativo | 1.442 ms | 660 ms |
+
+    A mensagem de confirmação e o histórico não aparecem na medição: a
+    diferença entre runs é maior que qualquer efeito deles. (No run do
+    rerun de `b9326d5` o runner era mais rápido: 939 e 435 ms.) **A meta 2
+    (≤ 700 ms) é atendida nos quatro runs, com folga pequena nos três do
+    runner lento.**
+  - **WebKit do CI, o que se sabe:** com o código antigo, a medição
+    falhou uma vez (Worker mudo, 30 s) e passou duas. **Com o prazo
+    adaptativo (`76ffa87`) a suíte falhou:** no teste "1, 2 e 4 Workers,
+    ou nenhum, dão o mesmo save", com pool de 4, um Worker foi retirado
+    durante a primeira rodada, em poucos segundos. **O motivo não foi
+    impresso** (o teste reprovava antes de ler `world.stats`). Hipóteses
+    em aberto: falso positivo do prazo — o prazo cai do teto para o piso
+    de 3 s assim que a primeira partida termina, e nos runs anteriores a
+    primeira rodada com pool de 4 neste teste levou 2,6 e 3,5 s, com os
+    Workers frios e a suíte em paralelo nos 4 núcleos —; ou o Worker mudo
+    de novo, agora cortado em 3 ou 5 s; ou `messageerror` / erro do
+    Worker. **O piso, o teto e o multiplicador não são mexidos sem o
+    motivo e a decisão do dono.**
+  - **Para obter o motivo (sub-commit 4):** o teste da suíte imprime os
+    motivos de retirada e o prazo antes das asserções; o passo de medição
+    roda mesmo quando a suíte falha; as 20 repetições do WebKit imprimem
+    uma linha cada.
+  - **Exceção pontual por tempo de retorno do CI (2026-10-06):** os
+    sub-commits 4 e 5 foram empurrados juntos (cada run leva ~20 min por
+    causa do Firefox). Não é precedente. Os runners do GitHub voltaram ao
+    normal neste dia; a regra provisória do incidente deixou de ser
+    necessária.
+  - **Resultado do push dos sub-commits 4 e 5: a registrar.**
 
 ## FASE 7 (numeração antiga; agora parte da Fase 9) — UI + Overlays Táticos
 - **Ordem (2026-10-05):** vem depois da fase "Bola longa + contraparte
